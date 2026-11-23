@@ -6,6 +6,7 @@
 #include <pbl/kernel/assert.h>
 
 #include <applib/applib_malloc.auto.h>
+#include <applib/ui/menu_layer_private.h>
 #include <applib/ui/menu_text_scroll.h>
 #include <kernel/ui/kernel_ui.h>
 #include <resource/resource_ids.auto.h>
@@ -123,12 +124,15 @@ static int32_t prv_draw_selection_icon(const OptionMenu *option_menu, GContext *
 
   const SystemThemeOptionMenuStyle *const style = prv_get_style();
   icon_frame.origin.x -= style->right_icon_spacing;
+#if PBL_ROUND
+  icon_frame = menu_cell_round_follow_bezel(ctx, icon_frame);
+#endif
 
   const GBitmap *const icon =
       is_chosen ? &option_menu->chosen_image : &option_menu->not_chosen_image;
   graphics_context_set_compositing_mode(ctx, GCompOpTint);
   graphics_draw_bitmap_in_rect(ctx, icon, &icon_frame);
-  return icon_frame.size.w + left_icon_spacing + style->right_icon_spacing;
+  return grect_get_max_x(cell_layer_bounds) - icon_frame.origin.x + left_icon_spacing;
 }
 
 static void prv_draw_row_callback(GContext *ctx, const Layer *cell_layer, MenuIndex *cell_index,
@@ -143,9 +147,17 @@ static void prv_draw_row_callback(GContext *ctx, const Layer *cell_layer, MenuIn
 
   if (option_menu->icons_enabled) {
     const bool is_chosen = (cell_index->row == option_menu->choice);
-    const int32_t left_inset_x = PBL_IF_RECT_ELSE(0, ROUND_ICON_TEXT_INSET);
+    int32_t left_inset_x = PBL_IF_RECT_ELSE(0, ROUND_ICON_TEXT_INSET);
     const int32_t right_inset_x =
         prv_draw_selection_icon(option_menu, ctx, &remaining_rect, is_chosen);
+#if PBL_ROUND
+    // Keep the text as clear of the bezel on the left as the icon is on the right
+    const GRect icon_row = {
+      .origin.y = (cell_layer_bounds->size.h - option_menu->chosen_image.bounds.size.h) / 2,
+      .size = option_menu->chosen_image.bounds.size,
+    };
+    left_inset_x += menu_cell_round_chord_inset(ctx, icon_row);
+#endif
     remaining_rect = grect_inset(remaining_rect, GEdgeInsets(0, right_inset_x, 0, left_inset_x));
   }
 
