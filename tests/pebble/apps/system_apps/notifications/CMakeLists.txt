@@ -7,3 +7,9 @@ pbl_clar_test(test_notifications_history
     lib/util/string.c
   OVERRIDES dummy_board
 )
+
+pbl_clar_test(test_notifications_shade
+  SOURCES
+    pebble/apps/system/notifications_shade.c
+  OVERRIDES dummy_board
+)
