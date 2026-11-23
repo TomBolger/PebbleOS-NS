@@ -366,3 +366,77 @@ void test_notifications_history__actioned_and_dismissed_notifications_are_not_gr
   cl_assert_equal_i(prv_row(0)->group.count, 2);
   prv_assert_id(notifications_history_row_get_latest_id(prv_row(0)), 2);
 }
+
+static void prv_add_app(uint8_t id, time_t timestamp, const char *app_name, bool ios) {
+  static const Uuid s_android_notifications_source = UUID_NOTIFICATIONS_DATA_SOURCE;
+  Attribute attributes[] = {
+    {.id = AttributeIdAppName, .cstring = (char *)app_name},
+    {.id = AttributeIdSender, .cstring = "Anna"},
+  };
+  TimelineItem item = {
+    .header =
+        {
+          .id = prv_id(id),
+          .parent_id = ios ? (Uuid)UUID_INVALID_INIT : s_android_notifications_source,
+          .timestamp = timestamp,
+          .type = TimelineItemTypeNotification,
+          .ancs_notif = ios,
+        },
+    .attr_list = {
+      .num_attributes = app_name ? 2 : 1,
+      .attributes = app_name ? attributes : &attributes[1],
+    },
+  };
+  notifications_history_add_item(&s_history, &item);
+}
+
+void test_notifications_history__by_app_stacks_each_app_from_any_phone(void) {
+  notifications_history_deinit(&s_history);
+  notifications_history_init_by_app(&s_history);
+
+  prv_add_app(1, 100, "Messages", true);
+  prv_add_app(2, 200, "Mail", true);
+  prv_add_app(3, 300, "Messages", true);
+  prv_add_app(4, 400, "Signal", false);
+  prv_add_app(5, 500, "Signal", false);
+
+  cl_assert_equal_i(notifications_history_get_row_count(&s_history), 3);
+  cl_assert_equal_s(prv_row(0)->group.sender, "Signal");
+  cl_assert_equal_i(prv_row(0)->group.count, 2);
+  cl_assert_equal_s(prv_row(1)->group.sender, "Messages");
+  cl_assert_equal_i(prv_row(1)->group.count, 2);
+  prv_assert_id(notifications_history_row_get_latest_id(prv_row(1)), 3);
+  cl_assert_equal_s(prv_row(2)->group.sender, "Mail");
+  cl_assert(!notifications_history_row_is_collapsed_group(prv_row(2)));
+}
+
+// Grouping by app ignores the senders and the age range
+void test_notifications_history__by_app_ignores_sender_and_range(void) {
+  notifications_history_deinit(&s_history);
+  notifications_history_init_by_app(&s_history);
+
+  prv_add(1, 100, "Anna");
+  prv_add(2, 200, "Anna");
+  prv_add_app(3, 0, "Mail", false);
+  prv_add_app(4, 1, "Mail", false);
+
+  cl_assert_equal_i(notifications_history_get_row_count(&s_history), 3);
+  cl_assert(!prv_row(0)->is_group);
+  cl_assert(!prv_row(1)->is_group);
+  cl_assert_equal_s(prv_row(2)->group.sender, "Mail");
+  cl_assert_equal_i(prv_row(2)->group.count, 2);
+}
+
+void test_notifications_history__by_app_without_app_name_remains_individual(void) {
+  notifications_history_deinit(&s_history);
+  notifications_history_init_by_app(&s_history);
+
+  prv_add_app(1, 100, nullptr, false);
+  prv_add_app(2, 200, "  ", false);
+  prv_add_app(3, 300, nullptr, false);
+
+  cl_assert_equal_i(notifications_history_get_row_count(&s_history), 3);
+  for (uint16_t i = 0; i < 3; i++) {
+    cl_assert(!prv_row(i)->is_group);
+  }
+}

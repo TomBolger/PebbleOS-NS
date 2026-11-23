@@ -74,6 +74,8 @@ struct NotificationGroupWindow {
   Uuid *notification_ids;
   uint16_t count;
   char *sender;
+  //! The group is an app's notifications: rows tell who each one is from
+  bool by_app;
   char time_buffer[TIME_STRING_REQUIRED_LENGTH];
 };
 
@@ -118,9 +120,11 @@ static void prv_load_notification_storage(NotificationsData *data) {
 
   char sender[ATTRIBUTE_TITLE_MAX_LEN + 1];
   char title[ATTRIBUTE_TITLE_MAX_LEN + 1];
+  char app_name[ATTRIBUTE_TITLE_MAX_LEN + 1];
   Attribute attributes[] = {
     {.id = AttributeIdSender, .cstring = sender},
     {.id = AttributeIdTitle, .cstring = title},
+    {.id = AttributeIdAppName, .cstring = app_name},
   };
   AttributeList attr_list = {
     .num_attributes = PBL_ARRAY_SIZE(attributes),
@@ -205,6 +209,11 @@ static void prv_loaded_notification_list_deinit(LoadedNotificationNode *loaded_l
 }
 
 static void prv_notifications_history_init(NotificationsData *data) {
+  if (alerts_preferences_get_notification_group_by_app()) {
+    notifications_history_init_by_app(&data->history);
+    return;
+  }
+
   const NotificationGroupingRange range = alerts_preferences_get_notification_grouping_range();
   time_t cutoff = 0;
   time_t window = 0;
@@ -261,6 +270,10 @@ static uint16_t prv_group_window_get_num_rows(MenuLayer *menu_layer, uint16_t se
 
 static int16_t prv_group_window_get_cell_height(MenuLayer *menu_layer, MenuIndex *cell_index,
                                                 void *context) {
+  NotificationGroupWindow *group_window = context;
+  if (group_window->by_app) {
+    return menu_cell_basic_cell_height();
+  }
   const GFont subtitle_font = system_theme_get_font(TextStyleFont_MenuCellSubtitle);
   const GFont caption_font = system_theme_get_font(TextStyleFont_Caption);
   const int16_t saved_height =
@@ -289,6 +302,19 @@ static void prv_group_window_draw_row(GContext *ctx, const Layer *cell_layer, Me
   }
   if (PBL_IS_EMPTY_STRING(message)) {
     message = attribute_get_string(&notification->attr_list, AttributeIdTitle, "[Empty]");
+  }
+
+  if (group_window->by_app) {
+    const char *from = attribute_get_string(&notification->attr_list, AttributeIdTitle, "");
+    if (PBL_IS_EMPTY_STRING(from) || (from == message)) {
+      from = message;
+      message = nullptr;
+    }
+    menu_cell_basic_draw_custom(ctx, cell_layer, system_theme_get_font(TextStyleFont_MenuCellTitle),
+                                from, nullptr, nullptr,
+                                system_theme_get_font(TextStyleFont_MenuCellSubtitle), message,
+                                nullptr, false, GTextOverflowModeTrailingEllipsis);
+    return;
   }
 
   clock_get_since_time(group_window->time_buffer, sizeof(group_window->time_buffer),
@@ -351,6 +377,7 @@ static void prv_group_window_unload(Window *window) {
 static void prv_push_group_window(NotificationsData *data, const NotificationHistoryRow *row) {
   NotificationGroupWindow *group_window = app_zalloc_check(sizeof(*group_window));
   group_window->notifications_data = data;
+  group_window->by_app = data->history.group_by_app;
   group_window->count = row->group.count;
   const size_t sender_size = strlen(row->group.sender) + 1;
   group_window->sender = app_malloc_check(sender_size);

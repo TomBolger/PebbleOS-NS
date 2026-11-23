@@ -36,6 +36,8 @@ typedef struct NotificationHistoryRow {
 typedef struct NotificationHistory {
   NotificationHistoryRow *rows;
   bool group_by_sender;
+  //! Groups by app instead of sender, for notifications from any phone
+  bool group_by_app;
   time_t grouping_cutoff;
   uint32_t next_sequence;
 } NotificationHistory;
@@ -47,6 +49,7 @@ static inline bool notifications_history_is_hidden(const CommonTimelineItemHeade
 
 void notifications_history_init(NotificationHistory *history, bool group_by_sender,
                                 time_t grouping_cutoff);
+void notifications_history_init_by_app(NotificationHistory *history);
 void notifications_history_deinit(NotificationHistory *history);
 
 void notifications_history_add_header(NotificationHistory *history,

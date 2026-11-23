@@ -35,6 +35,16 @@ static int prv_member_comparator(void *a, void *b) {
                              &((NotificationHistoryMember *)b)->entry);
 }
 
+static const char *prv_group_app_for_item(const TimelineItem *item, char *buffer,
+                                          size_t buffer_size) {
+  const char *app_name = attribute_get_string(&item->attr_list, AttributeIdAppName, "");
+  strncpy(buffer, app_name, buffer_size - 1);
+  buffer[buffer_size - 1] = '\0';
+  string_strip_trailing_whitespace(buffer, buffer);
+  char *start = (char *)string_strip_leading_whitespace(buffer);
+  return PBL_IS_EMPTY_STRING(start) ? nullptr : start;
+}
+
 static const char *prv_group_sender_for_item(const TimelineItem *item, char *buffer,
                                              size_t buffer_size) {
   static const Uuid s_android_notifications_source = UUID_NOTIFICATIONS_DATA_SOURCE;
@@ -149,6 +159,13 @@ void notifications_history_init(NotificationHistory *history, bool group_by_send
   };
 }
 
+void notifications_history_init_by_app(NotificationHistory *history) {
+  *history = (NotificationHistory){
+    .group_by_sender = true,
+    .group_by_app = true,
+  };
+}
+
 void notifications_history_deinit(NotificationHistory *history) {
   NotificationHistoryRow *row = history->rows;
   while (row) {
@@ -178,7 +195,9 @@ void notifications_history_add_item(NotificationHistory *history, const Timeline
   }
   char buffer[ATTRIBUTE_TITLE_MAX_LEN + 1];
   const char *sender = nullptr;
-  if (history->group_by_sender && (item->header.timestamp >= history->grouping_cutoff)) {
+  if (history->group_by_app) {
+    sender = prv_group_app_for_item(item, buffer, sizeof(buffer));
+  } else if (history->group_by_sender && (item->header.timestamp >= history->grouping_cutoff)) {
     sender = prv_group_sender_for_item(item, buffer, sizeof(buffer));
   }
   if (!sender) {
