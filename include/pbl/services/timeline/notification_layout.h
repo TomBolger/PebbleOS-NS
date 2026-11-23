@@ -28,11 +28,7 @@
  * @brief Banner height of notification and reminder layouts on rectangular displays, excluding
  * the status bar; the top and bottom banners have the same size.
  */
-#define LAYOUT_BANNER_HEIGHT_RECT                                                               \
-  PREFERRED_CONTENT_SIZE_SWITCH(                                                                \
-      PreferredContentSizeDefault,     /* This is the same as Medium until Small is designed */ \
-      /* small */ 36, /* medium */ 36, /* large */                                              \
-      29, /* This is the same as Large until ExtraLarge is designed */ /* extralarge */ 29)
+#define LAYOUT_BANNER_HEIGHT_RECT 36
 /** @brief Height of the top banner on round displays, including the status bar. */
 #define LAYOUT_TOP_BANNER_HEIGHT_ROUND 60
 /** @brief Height of the bottom banner on round displays. */
