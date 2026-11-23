@@ -149,6 +149,22 @@ bool alerts_preferences_get_notification_dismissal_sync(void);
  */
 void alerts_preferences_set_notification_dismissal_sync(bool enable);
 
+/**
+ * @brief Get whether notifications are stacked by app in history, as the phone does.
+ *
+ * Takes precedence over grouping by sender.
+ *
+ * @return true if enabled, false otherwise (default).
+ */
+bool alerts_preferences_get_notification_group_by_app(void);
+
+/**
+ * @brief Set whether notifications are stacked by app in history.
+ *
+ * @param enable true to enable.
+ */
+void alerts_preferences_set_notification_group_by_app(bool enable);
+
 /** @brief Age range within which notifications from the same sender are grouped. */
 typedef enum {
   /** Grouping disabled (default). */

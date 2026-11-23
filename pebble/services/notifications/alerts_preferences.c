@@ -115,6 +115,9 @@ static bool s_notification_respect_phone_silence = false;
 #define PREF_KEY_NOTIF_DISMISSAL_SYNC "notifDismissalSync"
 static bool s_notification_dismissal_sync = false;
 
+#define PREF_KEY_NOTIF_GROUP_BY_APP "notifGroupByApp"
+static bool s_notification_group_by_app = false;
+
 #define PREF_KEY_NOTIF_GROUPING_RANGE "notifGroupingRange"
 static NotificationGroupingRange s_notification_grouping_range = NotificationGroupingRange_Never;
 
@@ -483,6 +486,7 @@ void alerts_preferences_init(void) {
   RESTORE_PREF(PREF_KEY_NOTIF_BACKLIGHT, s_notification_backlight);
   RESTORE_PREF(PREF_KEY_NOTIF_RESPECT_PHONE_SILENCE, s_notification_respect_phone_silence);
   RESTORE_PREF(PREF_KEY_NOTIF_DISMISSAL_SYNC, s_notification_dismissal_sync);
+  RESTORE_PREF(PREF_KEY_NOTIF_GROUP_BY_APP, s_notification_group_by_app);
   RESTORE_PREF(PREF_KEY_NOTIF_GROUPING_RANGE, s_notification_grouping_range);
   RESTORE_PREF(PREF_KEY_NOTIF_STATUS_BAR_STYLE, s_notification_status_bar_style);
   RESTORE_PREF(PREF_KEY_NOTIF_TEXT_SIZE, s_notification_content_size);
@@ -597,6 +601,15 @@ bool alerts_preferences_get_notification_dismissal_sync(void) {
 void alerts_preferences_set_notification_dismissal_sync(bool enable) {
   s_notification_dismissal_sync = enable;
   SET_PREF(PREF_KEY_NOTIF_DISMISSAL_SYNC, s_notification_dismissal_sync);
+}
+
+bool alerts_preferences_get_notification_group_by_app(void) {
+  return s_notification_group_by_app;
+}
+
+void alerts_preferences_set_notification_group_by_app(bool enable) {
+  s_notification_group_by_app = enable;
+  SET_PREF(PREF_KEY_NOTIF_GROUP_BY_APP, s_notification_group_by_app);
 }
 
 NotificationGroupingRange alerts_preferences_get_notification_grouping_range(void) {
@@ -1002,6 +1015,7 @@ void alerts_preferences_handle_blob_db_event(PebbleBlobDBEvent *event) {
   RELOAD_IF_MATCH(PREF_KEY_NOTIF_BACKLIGHT, s_notification_backlight);
   RELOAD_IF_MATCH(PREF_KEY_NOTIF_RESPECT_PHONE_SILENCE, s_notification_respect_phone_silence);
   RELOAD_IF_MATCH(PREF_KEY_NOTIF_DISMISSAL_SYNC, s_notification_dismissal_sync);
+  RELOAD_IF_MATCH(PREF_KEY_NOTIF_GROUP_BY_APP, s_notification_group_by_app);
   RELOAD_IF_MATCH(PREF_KEY_NOTIF_GROUPING_RANGE, s_notification_grouping_range);
   RELOAD_IF_MATCH(PREF_KEY_NOTIF_STATUS_BAR_STYLE, s_notification_status_bar_style);
   RELOAD_IF_MATCH(PREF_KEY_NOTIF_TEXT_SIZE, s_notification_content_size);
