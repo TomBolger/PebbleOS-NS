@@ -357,6 +357,37 @@ void test_swap_layer_touch__liftoff_reaching_edge_without_overpull_no_swap(void)
 }
 
 // =============================================================================================
+// Press and hold: the swap curve ends at the hold speed.
+// =============================================================================================
+
+void test_swap_layer_touch__hold_swap_curve(void) {
+  const int32_t max = ANIMATION_NORMALIZED_MAX;
+  // 260 px/s over 240 ms is 62.4 px of travel at the end speed: slope = 62400 / distance.
+  cl_assert_equal_i(swap_layer_hold_swap_end_slope(156), 400);
+  // Short distances are capped so the curve never overshoots.
+  cl_assert_equal_i(swap_layer_hold_swap_end_slope(10), 2500);
+  cl_assert_equal_i(swap_layer_hold_swap_end_slope(0), 0);
+
+  for (int32_t slope = 0; slope <= 2500; slope += 500) {
+    cl_assert_equal_i(swap_layer_hold_swap_progress(0, slope), 0);
+    cl_assert_equal_i(swap_layer_hold_swap_progress(max, slope), max);
+    // Monotonic.
+    int32_t last = 0;
+    for (int32_t t = 0; t <= max; t += max / 32) {
+      const int32_t p = swap_layer_hold_swap_progress(t, slope);
+      cl_assert(p >= last);
+      last = p;
+    }
+  }
+  // Starts at rest: the first step moves far less than a linear one would.
+  cl_assert(swap_layer_hold_swap_progress(max / 32, 400) < max / 32 / 4);
+  // Ends at the requested slope: the last step is about slope / 1000 of a linear step.
+  const int32_t last_step = swap_layer_hold_swap_progress(max, 2000) -
+                            swap_layer_hold_swap_progress(max - max / 64, 2000);
+  cl_assert(last_step > (max / 64) * 19 / 10 && last_step < (max / 64) * 21 / 10);
+}
+
+// =============================================================================================
 // The settle target (page quantization for round text flow).
 // =============================================================================================
 
