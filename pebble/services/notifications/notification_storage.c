@@ -760,11 +760,28 @@ uint16_t notification_storage_get_count(void) {
 
 //! Reads the string attributes requested in attr_list from the payload following the header,
 //! leaving the file positioned after the payload
+// Size of the numeric attributes the list iterator can read, 0 for strings.
+static size_t prv_numeric_attribute_size(AttributeId id) {
+  switch (id) {
+    case AttributeIdNotificationSection:
+      return sizeof(uint8_t);
+    case AttributeIdStackId:
+      return sizeof(uint32_t);
+    default:
+      return 0;
+  }
+}
+
 static bool prv_read_string_attributes(const SerializedTimelineItemHeader *header,
                                        AttributeList *attr_list, size_t buffer_size,
                                        struct pbl_fs_file *file) {
   for (uint8_t i = 0; i < attr_list->num_attributes; i++) {
-    attr_list->attributes[i].cstring[0] = '\0';
+    Attribute *attribute = &attr_list->attributes[i];
+    if (prv_numeric_attribute_size(attribute->id)) {
+      attribute->uint32 = 0;
+    } else {
+      attribute->cstring[0] = '\0';
+    }
   }
 
   uint32_t remaining = header->payload_length;
@@ -781,6 +798,23 @@ static bool prv_read_string_attributes(const SerializedTimelineItemHeader *heade
     remaining -= attribute.length;
 
     Attribute *dest = attribute_find(attr_list, attribute.id);
+    const size_t numeric_size = dest ? prv_numeric_attribute_size(dest->id) : 0;
+    if (numeric_size) {
+      const size_t length = PBL_MIN(attribute.length, numeric_size);
+      uint32_t value = 0;
+      if (pbl_fs_read(file, (uint8_t *)&value, length) != (ssize_t)length) {
+        return false;
+      }
+      if (numeric_size == sizeof(uint8_t)) {
+        dest->uint8 = (uint8_t)value;
+      } else {
+        dest->uint32 = value;
+      }
+      if (pbl_fs_seek(file, attribute.length - length, PBL_FS_SEEK_CUR) < 0) {
+        return false;
+      }
+      continue;
+    }
     const size_t length = dest ? PBL_MIN(attribute.length, buffer_size - 1) : 0;
     if ((length > 0) && (pbl_fs_read(file, (uint8_t *)dest->cstring, length) != (ssize_t)length)) {
       return false;

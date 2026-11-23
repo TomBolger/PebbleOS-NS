@@ -1187,3 +1187,56 @@ void test_notification_storage__rewrite_skips_deleted(void) {
   compare_notifications(&e4, &r);
   free(r.allocated_buffer);
 }
+
+static bool prv_section_stack_callback(void *data, const CommonTimelineItemHeader *header,
+                                       const TimelineItem *item) {
+  uint32_t *found = data;
+  cl_assert(item);
+  const uint8_t section = attribute_get_uint8(&item->attr_list, AttributeIdNotificationSection, 0);
+  const uint32_t stack = attribute_get_uint32(&item->attr_list, AttributeIdStackId, 0);
+  found[header->id.byte0] = ((uint32_t)section << 24) | (stack & 0xFFFFFF);
+  return true;
+}
+
+void test_notification_storage__iterate_strings_after_reads_section_and_stack(void) {
+  Attribute with_attributes[] = {
+    {.id = AttributeIdTitle, .cstring = "Sender"},
+    {.id = AttributeIdNotificationSection, .uint8 = (3 << 2) | 2},
+    {.id = AttributeIdStackId, .uint32 = 0x123456},
+  };
+  TimelineItem grouped = {
+    .header =
+        {
+          .id = UuidMake(1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0),
+          .timestamp = 100,
+          .type = TimelineItemTypeNotification,
+          .layout = LayoutIdGeneric,
+        },
+    .attr_list = {
+      .num_attributes = PBL_ARRAY_SIZE(with_attributes),
+      .attributes = with_attributes,
+    },
+  };
+  TimelineItem plain = grouped;
+  plain.header.id = UuidMake(2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
+  plain.attr_list.num_attributes = 1;
+  notification_storage_store(&grouped);
+  notification_storage_store(&plain);
+
+  char title[16];
+  Attribute read[] = {
+    {.id = AttributeIdNotificationSection},
+    {.id = AttributeIdTitle, .cstring = title},
+    {.id = AttributeIdStackId},
+  };
+  AttributeList read_list = {
+    .num_attributes = PBL_ARRAY_SIZE(read),
+    .attributes = read,
+  };
+  uint32_t found[3] = {};
+  notification_storage_iterate_strings_after(0, &read_list, sizeof(title),
+                                             prv_section_stack_callback, found);
+  cl_assert_equal_i(found[1], ((uint32_t)((3 << 2) | 2) << 24) | 0x123456);
+  // Absent numeric attributes read as 0, not as what the previous notification had.
+  cl_assert_equal_i(found[2], 0);
+}
