@@ -13,8 +13,11 @@
 static const int16_t s_ladder[] = {14, 18, 24, 28};
 
 uint8_t notification_style_text_size(void) {
-  const int step = (int)alerts_preferences_get_notification_content_size() -
-                   (int)PreferredContentSizeDefault;
+  PreferredContentSize size = alerts_preferences_get_notification_content_size();
+  if (size == NotificationContentSizeSystem) {
+    size = system_theme_get_content_size();
+  }
+  const int step = (int)size - (int)PreferredContentSizeDefault;
   return (step < 0) ? 0 : ((step > 0) ? 2 : 1);
 }
 
