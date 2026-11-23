@@ -260,6 +260,15 @@ GPoint pan_recognizer_get_total_delta(const Recognizer *recognizer) {
   return gpoint_sub(data->state.last_point, data->state.touch_down_point);
 }
 
+GPoint pan_recognizer_get_touch_down_point(const Recognizer *recognizer) {
+  const PanRecognizerData *data =
+      recognizer_get_impl_data((Recognizer *)recognizer, &s_pan_recognizer_impl);
+  if (!data) {
+    return GPointZero;
+  }
+  return data->state.touch_down_point;
+}
+
 GPoint pan_recognizer_get_delta_since_start(const Recognizer *recognizer) {
   const PanRecognizerData *data =
       recognizer_get_impl_data((Recognizer *)recognizer, &s_pan_recognizer_impl);
