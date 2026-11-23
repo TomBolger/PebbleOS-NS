@@ -22,8 +22,13 @@
 #ifdef CONFIG_TOUCH
 #include <pbl/util/testing.h>
 
+#include <applib/ui/recognizer/pan.h>
 #include <applib/ui/recognizer/touch_nav.h>
 #include <kernel/pebble_tasks.h>
+#include <pbl/kernel/time.h>
+#include <syscall/syscall.h>
+
+#include <string.h>
 #endif
 
 // Initial pixel scroll amount: the banner, so the first press reaches the text
@@ -973,20 +978,36 @@ bool swap_layer_attempt_layer_swap(SwapLayer *swap_layer, ScrollDirection direct
 // gesture surface (and the unit-test entry points).
 //
 // A pan drives the content offset live and 1:1 (base captured at pan Start, throttled by the core),
-// clamped to [0, max_scroll]. On liftoff a pull past the clamped edge by more than SWAP_OVERPULL_PX
-// swaps to the neighbouring notification through the same physical-button path
-// (prv_attempt_swap); a normal drag settles. A tap or left swipe emulates SELECT; a right
-// swipe emulates BACK. The notification body may not be loaded when the widget registers, so the
-// can_start op gates the gesture on a non-NULL current layout (prv_get_current_notification_offset
-// dereferences it), declining the whole gesture until a notification is present.
+// resisting beyond [0, max_scroll] (rubber band). On liftoff a pull past an edge by more than
+// SWAP_OVERPULL_PX swaps to the neighbouring notification; otherwise the content coasts on with the
+// release velocity and eases to a stop inside the range. A pan that starts in the bottom edge strip
+// moving up jumps to the top of the next notification instead of scrolling. A tap only stops the
+// motion; a left swipe emulates SELECT and a right swipe BACK. The notification body may not be
+// loaded when the widget registers, so the can_start op gates the gesture on a non-NULL current
+// layout (prv_get_current_notification_offset dereferences it), declining the whole gesture until a
+// notification is present.
 ///////////////////////
 
 // Finger travel, in pixels, before a pan counts as a drag. Below this a liftoff is a no-op, so a
 // normal scroll to the edge (or a jittery tap) cannot accidentally scroll or swap.
 #define DRAG_THRESHOLD_PX 10
-// How far the finger must pull PAST the clamped edge to swap to the neighbouring notification. Kept
+// How far the finger must pull PAST an edge to swap to the neighbouring notification. Kept
 // separate from DRAG_THRESHOLD_PX so reaching the edge without over-pulling never swaps.
-#define SWAP_OVERPULL_PX 40
+#define SWAP_OVERPULL_PX 56
+// Beyond an edge the content follows the finger at this fraction.
+#define RUBBER_BAND_DIVISOR 3
+// Momentum: how quickly a flick slows down, in px/s^2, and how long it may coast.
+#define FLING_DECELERATION 2600
+#define FLING_MIN_MS 180
+#define FLING_MAX_MS 900
+// The release velocity is measured over the last VELOCITY_WINDOW_MS, and is zero if the finger was
+// still for more than FLING_STALE_MS before lifting.
+#define VELOCITY_WINDOW_MS 120
+#define FLING_STALE_MS 90
+// A swipe up starting in the bottom EDGE_ZONE_PX of the screen and moving at least EDGE_SWIPE_PX
+// jumps to the top of the next notification.
+#define EDGE_ZONE_PX 26
+#define EDGE_SWIPE_PX 40
 
 // Provided by the owning shells; forward-declared to avoid pulling the kernel modal header in.
 struct TouchNavState *modal_manager_get_touch_nav_state(void);
@@ -1014,6 +1035,58 @@ bool swap_layer_touch_is_gesture_target(const SwapLayer *swap_layer) {
 }
 
 // ---------------------------------------------------------------------------------------------
+// Pure gesture math
+
+int16_t swap_layer_touch_rubber_band(int16_t raw, int16_t max_dy) {
+  if (raw < 0) {
+    return raw / RUBBER_BAND_DIVISOR;
+  }
+  if (raw > max_dy) {
+    return max_dy + (raw - max_dy) / RUBBER_BAND_DIVISOR;
+  }
+  return raw;
+}
+
+int32_t swap_layer_touch_release_velocity(const int16_t *y, const uint32_t *ms, uint8_t count,
+                                          uint32_t release_ms) {
+  if (count < 2) {
+    return 0;
+  }
+  const uint8_t newest = count - 1;
+  if (release_ms - ms[newest] > FLING_STALE_MS) {
+    return 0;
+  }
+  uint8_t oldest = 0;
+  while (oldest < newest && ms[newest] - ms[oldest] > VELOCITY_WINDOW_MS) {
+    oldest++;
+  }
+  const int32_t dt = (int32_t)(ms[newest] - ms[oldest]);
+  if (dt <= 0) {
+    return 0;
+  }
+  return ((int32_t)(y[newest] - y[oldest]) * 1000) / dt;
+}
+
+int16_t swap_layer_touch_fling_target(int16_t offset, int32_t velocity, int16_t max_dy,
+                                      uint32_t *duration_ms) {
+  const int32_t speed = PBL_ABS(velocity);
+  int32_t travel = (speed * speed) / (2 * FLING_DECELERATION);
+  // Finger moving down (positive velocity) scrolls back toward the top.
+  if (velocity > 0) {
+    travel = -travel;
+  }
+  if (duration_ms) {
+    *duration_ms = PBL_CLAMP((uint32_t)((speed * 1000) / FLING_DECELERATION), FLING_MIN_MS,
+                             FLING_MAX_MS);
+  }
+  return (int16_t)PBL_CLAMP((int32_t)offset + travel, 0, max_dy);
+}
+
+bool swap_layer_touch_is_edge_swipe(int16_t start_y, int16_t total_dy, int16_t screen_h) {
+  return (start_y >= screen_h - EDGE_ZONE_PX) && (total_dy < 0);
+}
+
+// ---------------------------------------------------------------------------------------------
 // The scroll point and the two-threshold liftoff decision
 
 void swap_layer_touch_scroll_by(SwapLayer *swap_layer, int16_t dy) {
@@ -1025,18 +1098,7 @@ void swap_layer_touch_scroll_by(SwapLayer *swap_layer, int16_t dy) {
   const int16_t offset = prv_get_current_notification_offset(swap_layer); // >= 0
   const int16_t max_dy = prv_get_max_scroll_dy(swap_layer);               // >= 0
   // offset == -origin.y; dy is the requested change to origin.y, so the new offset is offset - dy.
-  const int16_t new_offset = PBL_CLAMP(offset - dy, 0, max_dy);
-
-  GRect current_frame = swap_layer->current->layer.frame;
-  current_frame.origin.y = -new_offset;
-  prv_layout_set_frame(swap_layer->current, &current_frame);
-
-  // Pull the next layout right under the current one so its peek tracks the finger.
-  if (swap_layer->next) {
-    GRect next_frame = swap_layer->next->layer.frame;
-    next_frame.origin.y = current_frame.origin.y + current_frame.size.h;
-    prv_layout_set_frame(swap_layer->next, &next_frame);
-  }
+  prv_set_offset(swap_layer, PBL_CLAMP(offset - dy, 0, max_dy));
 
   // Refresh the auto-close timer: without this a long notification closes under the finger
   // mid-read.
@@ -1073,45 +1135,95 @@ int16_t swap_layer_touch_settle_offset(int16_t base_offset, int16_t delta_y, int
   return target;
 }
 
-// Apply a live drag: move to clamp(base_offset - delta_y). Sub-threshold movement is a no-op so the
-// notification does not creep on a tap.
-static void prv_swap_touch_apply_drag(SwapLayer *swap_layer, int16_t base_offset, int16_t delta_y) {
-  if (!swap_layer->current || PBL_ABS(delta_y) < DRAG_THRESHOLD_PX) {
-    // No notification loaded yet (registration can happen before the layout loads), or
-    // sub-threshold.
-    return;
-  }
-  const int16_t requested_offset = base_offset - delta_y;
-  const int16_t cur = prv_get_current_notification_offset(swap_layer);
-  // dy is in origin.y units so the resulting offset lands on requested_offset (before the point's
-  // own clamp handles an over-pull).
-  swap_layer_touch_scroll_by(swap_layer, cur - requested_offset);
+static uint32_t prv_now_ms(void) {
+  return (uint32_t)((sys_get_ticks() * 1000) / PBL_TICK_HZ);
 }
 
-// Liftoff: swap to a neighbour on over-pull (same path as the physical UP/DOWN buttons), otherwise
-// settle (animated) to the clamped offset.
+static void prv_touch_add_sample(SwapLayer *swap_layer, int16_t y) {
+  if (swap_layer->touch.count == SWAP_LAYER_TOUCH_SAMPLES) {
+    memmove(&swap_layer->touch.y[0], &swap_layer->touch.y[1],
+            sizeof(swap_layer->touch.y[0]) * (SWAP_LAYER_TOUCH_SAMPLES - 1));
+    memmove(&swap_layer->touch.ms[0], &swap_layer->touch.ms[1],
+            sizeof(swap_layer->touch.ms[0]) * (SWAP_LAYER_TOUCH_SAMPLES - 1));
+    swap_layer->touch.count--;
+  }
+  swap_layer->touch.y[swap_layer->touch.count] = y;
+  swap_layer->touch.ms[swap_layer->touch.count] = prv_now_ms();
+  swap_layer->touch.count++;
+}
+
+// Apply a live drag: move to base_offset - delta_y, rubber-banded beyond the edges. Sub-threshold
+// movement is a no-op so the notification does not creep on a tap.
+static void prv_swap_touch_apply_drag(SwapLayer *swap_layer, int16_t base_offset, int16_t delta_y) {
+  if (!swap_layer->current) {
+    // No notification loaded yet (registration can happen before the layout loads).
+    return;
+  }
+  const int16_t count = swap_layer->touch.count;
+  if (count == 0 || swap_layer->touch.y[count - 1] != delta_y) {
+    prv_touch_add_sample(swap_layer, delta_y);
+  }
+  if (swap_layer->touch.edge || PBL_ABS(delta_y) < DRAG_THRESHOLD_PX) {
+    return;
+  }
+  prv_finish_animation(swap_layer);
+  const int16_t max_dy = prv_get_max_scroll_dy(swap_layer);
+  prv_set_offset(swap_layer, swap_layer_touch_rubber_band(base_offset - delta_y, max_dy));
+  prv_announce_interaction(swap_layer);
+}
+
+//! Coast from wherever the content is (possibly past an edge) with the release velocity.
+static void prv_swap_touch_fling(SwapLayer *swap_layer, int32_t velocity) {
+  const int16_t cur = prv_get_current_notification_offset(swap_layer);
+  const int16_t max_dy = prv_get_max_scroll_dy(swap_layer);
+  uint32_t duration_ms;
+  const int16_t target = swap_layer_touch_fling_target(cur, velocity, max_dy, &duration_ms);
+  prv_scroll_for(swap_layer, cur - target, AnimationCurveEaseOut, duration_ms);
+}
+
+// Liftoff: swap to a neighbour on over-pull, otherwise coast to a stop within the range.
 static void prv_swap_touch_liftoff(SwapLayer *swap_layer, int16_t base_offset, int16_t delta_y) {
   if (!swap_layer->current) {
     return;
   }
+  const uint32_t now = prv_now_ms();
+  const int16_t count = swap_layer->touch.count;
+  if (count == 0 || swap_layer->touch.y[count - 1] != delta_y) {
+    prv_touch_add_sample(swap_layer, delta_y);
+    swap_layer->touch.ms[swap_layer->touch.count - 1] = now;
+  }
+
+  if (swap_layer->touch.edge) {
+    swap_layer->touch.edge = false;
+    const TouchNavState *state = prv_task_touch_nav_state();
+    const int16_t total_dy =
+        (state && state->widget_pan) ? pan_recognizer_get_total_delta(state->widget_pan).y : delta_y;
+    if (total_dy <= -EDGE_SWIPE_PX) {
+      prv_attempt_swap(swap_layer, ScrollDirectionDown, true /* full_swap */);
+    }
+    prv_announce_interaction(swap_layer);
+    return;
+  }
+
   const int16_t max_dy = prv_get_max_scroll_dy(swap_layer);
+  bool swapped = false;
   switch (swap_layer_touch_liftoff_action(base_offset, delta_y, max_dy)) {
     case SwapTouchLiftoff_SwapPrev:
-      prv_attempt_swap(swap_layer, ScrollDirectionUp, false /* full_swap */);
+      swapped = prv_attempt_swap(swap_layer, ScrollDirectionUp, false /* full_swap */);
       break;
     case SwapTouchLiftoff_SwapNext:
-      prv_attempt_swap(swap_layer, ScrollDirectionDown, false /* full_swap */);
+      swapped = prv_attempt_swap(swap_layer, ScrollDirectionDown, true /* full_swap */);
       break;
-    case SwapTouchLiftoff_Settle: {
-      // Cards are laid out in a fixed column on both shapes, so they settle anywhere.
-      const int16_t target_offset =
-          swap_layer_touch_settle_offset(base_offset, delta_y, max_dy, 0 /* page_h */);
-      const int16_t cur = prv_get_current_notification_offset(swap_layer);
-      prv_scroll(swap_layer, cur - target_offset, AnimationCurveEaseOut);
-      break;
-    }
+    case SwapTouchLiftoff_Settle:
     case SwapTouchLiftoff_None:
       break;
+  }
+  if (!swapped) {
+    // A failed swap may have started a scroll to the edge; coast from where the finger left it.
+    prv_stop_scroll_in_place(swap_layer);
+    const int32_t velocity = swap_layer_touch_release_velocity(
+        swap_layer->touch.y, swap_layer->touch.ms, swap_layer->touch.count, now);
+    prv_swap_touch_fling(swap_layer, velocity);
   }
   prv_announce_interaction(swap_layer);
 }
@@ -1156,12 +1268,31 @@ static bool prv_swap_ops_can_start(void *w) {
   return ((SwapLayer *)w)->current != nullptr;
 }
 
+static void prv_swap_ops_touchdown(void *w) {
+  // Catch-to-stop: a finger on the screen stops a coasting card where it is, and a held button.
+  SwapLayer *swap_layer = w;
+  swap_layer_stop_hold(swap_layer);
+  swap_layer->touch.count = 0;
+  swap_layer->touch.edge = false;
+  if (swap_layer->current) {
+    prv_stop_scroll_in_place(swap_layer);
+  }
+}
+
 static void prv_swap_ops_pan_started(void *w) {
   SwapLayer *swap_layer = w;
   // Stop any running swap/scroll animation so the finger takes over, and refresh the auto-close
   // timer so a long notification cannot close under the finger while it is being dragged. The base
   // offset is latched by the core via get_base_offset next.
-  prv_finish_animation(swap_layer);
+  prv_stop_scroll_in_place(swap_layer);
+  swap_layer->touch.count = 0;
+  prv_touch_add_sample(swap_layer, 0);
+  const TouchNavState *state = prv_task_touch_nav_state();
+  if (state && state->widget_pan) {
+    const GPoint start = pan_recognizer_get_touch_down_point(state->widget_pan);
+    const GPoint total = pan_recognizer_get_total_delta(state->widget_pan);
+    swap_layer->touch.edge = swap_layer_touch_is_edge_swipe(start.y, total.y, PBL_DISPLAY_HEIGHT);
+  }
   prv_announce_interaction(swap_layer);
 }
 
@@ -1176,33 +1307,32 @@ static void prv_swap_ops_pan_update(void *w, GPoint base, GPoint delta) {
 }
 
 static void prv_swap_ops_pan_snap(void *w, GPoint base, GPoint final_delta, GPoint velocity) {
-  // The notification swap has page semantics; the liftoff decision is displacement-based.
+  // The release velocity comes from the swap layer's own samples, which know when the finger
+  // stopped moving.
   (void)velocity;
   prv_swap_touch_liftoff((SwapLayer *)w, base.y, final_delta.y);
 }
 
 static void prv_swap_ops_pan_cancel(void *w) {
-  // Settle to the clamped offset with no swap (the live drag already left it clamped). Per the pan
-  // engine this does not fire on pre-emption (the pan recognizer never emits Cancelled there),
-  // which preserves the pre-refactor behaviour; it is reached only on an explicit mid-gesture
-  // cancel.
+  // Settle back inside the range with no swap. Per the pan engine this does not fire on
+  // pre-emption (the pan recognizer never emits Cancelled there); it is reached only on an
+  // explicit mid-gesture cancel.
   SwapLayer *swap_layer = w;
   if (!swap_layer->current) {
     return;
   }
+  swap_layer->touch.edge = false;
   const int16_t cur = prv_get_current_notification_offset(swap_layer);
   const int16_t max_dy = prv_get_max_scroll_dy(swap_layer);
-  // Same page alignment as the liftoff settle: a cancelled pan must not rest off-grid on round.
-  const int16_t target =
-      swap_layer_touch_settle_offset(cur, 0, max_dy, 0 /* page_h */);
+  const int16_t target = swap_layer_touch_settle_offset(cur, 0, max_dy, 0 /* page_h */);
   prv_scroll(swap_layer, cur - target, AnimationCurveEaseOut);
 }
 
 static void prv_swap_ops_tap(void *w, GPoint point_on_screen) {
-  // A tap on the notification body intentionally does nothing. The action menu is opened by a left
-  // swipe (prv_swap_ops_swipe -> SELECT); a bare tap must not open it by accident. The handler is
-  // kept in the vtable (rather than NULL) so the tap gesture is still consumed here instead of
-  // leaking to another handler.
+  // A tap on the notification body only stops the motion (see touchdown). The action menu is
+  // opened by a left swipe (prv_swap_ops_swipe -> SELECT); a bare tap must not open it by accident.
+  // The handler is kept in the vtable (rather than NULL) so the tap gesture is still consumed here
+  // instead of leaking to another handler.
   (void)w;
   (void)point_on_screen;
 }
@@ -1224,6 +1354,7 @@ static void prv_swap_ops_swipe(void *w, SwipeDirection dir) {
 
 static const TouchNavWidgetOps s_swap_touch_nav_ops = {
   .can_start = prv_swap_ops_can_start,
+  .touchdown = prv_swap_ops_touchdown,
   .pan_started = prv_swap_ops_pan_started,
   .get_base_offset = prv_swap_ops_get_base_offset,
   .pan_update = prv_swap_ops_pan_update,
