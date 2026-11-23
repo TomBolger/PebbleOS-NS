@@ -13,3 +13,10 @@ PBL_WEAK bool ancs_notifications_is_bulk_action_mode_enabled(void) {
 
 PBL_WEAK void ancs_notifications_handle_session_lost(void) {
 }
+
+PBL_WEAK bool ancs_notifications_is_mirroring(void) {
+  return false;
+}
+
+PBL_WEAK void ancs_notifications_handle_snapshot(const uint32_t *uids, size_t count) {
+}
