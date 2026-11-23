@@ -215,23 +215,27 @@ static void prv_update_status_bar_color(SwapLayer *swap_layer) {
 // ARROW LAYER FUNCTIONS
 /////////////////////////
 
-//! Hides or shows the arrow (or two arrows, on S4) depending on where the layouts sit within the
-//! primary layer.
+//! Moves the arrow with the current layout: it rests at the bottom of the layout's first screen,
+//! arrives with it on a swap and slides off the bottom as soon as it is scrolled.
 static void prv_update_arrow(SwapLayer *swap_layer) {
   bool hide_it = true;
+  GRect arrow_frame = swap_layer->arrow_layer.layer.frame;
+  const GRect *layer_frame = &swap_layer->layer.frame;
+  arrow_frame.origin.y = layer_frame->size.h - LAYOUT_ARROW_HEIGHT;
 
-  // If there is a current layout, then we will need to compute whether to show the arrow
-  // If there is no current layout, then we should hide it.
   if (swap_layer->current) {
     const GRect *cur_frame = &swap_layer->current->layer.frame;
-    const GRect *layer_frame = &swap_layer->layer.frame;
     const bool viewing_entire_notif = (cur_frame->size.h == layer_frame->size.h);
-    const bool at_top = (cur_frame->origin.y == 0);
-    if (at_top && (!viewing_entire_notif || swap_layer->next)) {
-      hide_it = false;
+    if (!viewing_entire_notif || swap_layer->next) {
+      // The layout's own top while it is below the top, else how far it has been scrolled
+      const int16_t shift = PBL_ABS(cur_frame->origin.y);
+      arrow_frame.origin.y += shift;
+      hide_it = (cur_frame->origin.y < 0 && shift >= LAYOUT_ARROW_HEIGHT) ||
+                (arrow_frame.origin.y >= layer_frame->size.h);
     }
   }
 
+  layer_set_frame(&swap_layer->arrow_layer.layer, &arrow_frame);
   layer_set_hidden(&swap_layer->arrow_layer.layer, hide_it);
 }
 
