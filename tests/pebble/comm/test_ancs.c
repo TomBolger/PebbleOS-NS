@@ -25,6 +25,11 @@ PebblePhoneCaller *phone_call_util_create_caller(const char *number, const char 
   return nullptr;
 }
 
+static bool s_dismissal_sync;
+bool alerts_preferences_get_notification_dismissal_sync(void) {
+  return s_dismissal_sync;
+}
+
 // Fakes
 ///////////////////////////////////////////////////////////
 
@@ -323,6 +328,7 @@ static int prv_handle_write(uint8_t chr, const uint8_t *buffer, uint16_t length)
 #define TEST_SIZE  (FILESYSTEM_FILE_TEST_SPACE_END - FILESYSTEM_FILE_TEST_SPACE_BEGIN)
 
 void test_ancs__initialize(void) {
+  s_dismissal_sync = false;
   s_block_event_callback = false;
   s_num_requested_notif_attributes = 0;
   s_num_requested_app_attributes = 0;
@@ -863,6 +869,101 @@ void test_ancs__pre_existing_window_ends_after_10_s(void) {
   fake_rtc_increment_ticks(10 * PBL_TICK_HZ);
   prv_send_pre_existing_complete_dict();
   cl_assert_equal_i(fake_notification_storage_get_store_count(), 1);
+}
+
+extern void prv_snapshot_done(void *unused);
+
+//! The snapshot is taken until its timer fires, by prv_snapshot_done().
+static void prv_subscribe_notification_source(void) {
+  s_block_event_callback = true;
+  fake_gattc_service_subscribed(ChrNotificationSource, true, 0);
+}
+
+// Mirroring, the notification center is stored on the first connection too, without alerting.
+void test_ancs__mirror_stores_pre_existing_on_first_connection(void) {
+  s_dismissal_sync = true;
+  pbl_realtime_set(COMPLETE_DICT_TIME + 3 * 60 * 60);
+  prv_subscribe_data_source();
+  prv_subscribe_notification_source();
+  prv_send_pre_existing_complete_dict();
+
+  cl_assert_equal_i(fake_notification_storage_get_store_count(), 1);
+  cl_assert_equal_i(fake_kernel_services_notifications_alert_count(), 0);
+}
+
+// Mirroring, the ones seen before the disconnection are kept, without alerting.
+void test_ancs__mirror_stores_pre_existing_from_before_disconnection(void) {
+  s_dismissal_sync = true;
+  prv_reconnect(COMPLETE_DICT_TIME + 10 * 60, COMPLETE_DICT_TIME + 20 * 60);
+  prv_send_pre_existing_complete_dict();
+
+  cl_assert_equal_i(fake_notification_storage_get_store_count(), 1);
+  cl_assert_equal_i(fake_kernel_services_notifications_alert_count(), 0);
+}
+
+// Notifications removed from the phone while disconnected leave the watch, the others stay.
+void test_ancs__mirror_snapshot_drops_notifications_gone_from_phone(void) {
+  const uint32_t complete_dict_uid =
+      ((GetNotificationAttributesMsg *)s_complete_dict)->notification_uid;
+  const Uuid still_there = {0x01};
+  const Uuid gone = {0x02};
+  const Uuid from_android = {0x03};
+  fake_notification_storage_add_header(&still_there, complete_dict_uid, true);
+  fake_notification_storage_add_header(&gone, complete_dict_uid + 1, true);
+  fake_notification_storage_add_header(&from_android, 0, false);
+
+  s_dismissal_sync = true;
+  prv_subscribe_data_source();
+  prv_subscribe_notification_source();
+  prv_send_pre_existing_complete_dict();
+  prv_snapshot_done(nullptr);
+
+  cl_assert(!fake_notification_storage_is_removed(&still_there));
+  cl_assert(fake_notification_storage_is_removed(&gone));
+  cl_assert(!fake_notification_storage_is_removed(&from_android));
+}
+
+// A notification center left empty clears the iOS notifications from the watch.
+void test_ancs__mirror_empty_snapshot_drops_all_ios_notifications(void) {
+  const Uuid gone = {0x02};
+  const Uuid from_android = {0x03};
+  fake_notification_storage_add_header(&gone, 7, true);
+  fake_notification_storage_add_header(&from_android, 0, false);
+
+  s_dismissal_sync = true;
+  prv_subscribe_data_source();
+  prv_subscribe_notification_source();
+  prv_snapshot_done(nullptr);
+
+  cl_assert(fake_notification_storage_is_removed(&gone));
+  cl_assert(!fake_notification_storage_is_removed(&from_android));
+}
+
+// Without mirroring, nothing is dropped on reconnection.
+void test_ancs__no_snapshot_without_mirroring(void) {
+  const Uuid gone = {0x02};
+  fake_notification_storage_add_header(&gone, 7, true);
+
+  prv_subscribe_data_source();
+  prv_subscribe_notification_source();
+  prv_snapshot_done(nullptr);
+
+  cl_assert(!fake_notification_storage_is_removed(&gone));
+}
+
+// The snapshot ends with the session that took it.
+void test_ancs__snapshot_dropped_on_disconnection(void) {
+  const Uuid gone = {0x02};
+  fake_notification_storage_add_header(&gone, 7, true);
+
+  s_dismissal_sync = true;
+  prv_subscribe_data_source();
+  prv_subscribe_notification_source();
+  ancs_handle_services_changed();
+  fake_gattc_service_discovered(-ENOENT);
+  prv_snapshot_done(nullptr);
+
+  cl_assert(!fake_notification_storage_is_removed(&gone));
 }
 
 // No Longer Supported
