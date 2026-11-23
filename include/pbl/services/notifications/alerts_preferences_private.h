@@ -154,7 +154,7 @@ void alerts_preferences_set_notification_dismissal_sync(bool enable);
  *
  * Takes precedence over grouping by sender.
  *
- * @return true if enabled, false otherwise (default).
+ * @return true if enabled (default), false otherwise.
  */
 bool alerts_preferences_get_notification_group_by_app(void);
 
@@ -164,6 +164,35 @@ bool alerts_preferences_get_notification_group_by_app(void);
  * @param enable true to enable.
  */
 void alerts_preferences_set_notification_group_by_app(bool enable);
+
+/**
+ * @brief Get whether the notification history is split into the phone's sections
+ * (Conversations, Notifications, Silent and its categories).
+ *
+ * @return true if enabled (default), false otherwise.
+ */
+bool alerts_preferences_get_notification_sections(void);
+
+/**
+ * @brief Set whether the notification history is split into the phone's sections.
+ *
+ * @param enable true to enable.
+ */
+void alerts_preferences_set_notification_sections(bool enable);
+
+/**
+ * @brief Get which notification history sections are closed, one bit per section.
+ *
+ * @return The closed sections; by default only Silent.
+ */
+uint8_t alerts_preferences_get_notification_collapsed_sections(void);
+
+/**
+ * @brief Set which notification history sections are closed.
+ *
+ * @param sections One bit per section.
+ */
+void alerts_preferences_set_notification_collapsed_sections(uint8_t sections);
 
 /** @brief Age range within which notifications from the same sender are grouped. */
 typedef enum {

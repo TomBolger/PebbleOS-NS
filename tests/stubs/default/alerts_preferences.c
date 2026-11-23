@@ -40,6 +40,16 @@ bool PBL_WEAK alerts_preferences_get_notification_group_by_app(void) {
   return false;
 }
 
+bool PBL_WEAK alerts_preferences_get_notification_sections(void) {
+  return false;
+}
+
+uint8_t PBL_WEAK alerts_preferences_get_notification_collapsed_sections(void) {
+  return 0;
+}
+
+void PBL_WEAK alerts_preferences_set_notification_collapsed_sections(uint8_t sections) {}
+
 NotificationStatusBarStyle PBL_WEAK alerts_preferences_get_notification_status_bar_style(void) {
   return NotificationStatusBarStyle_Default;
 }
