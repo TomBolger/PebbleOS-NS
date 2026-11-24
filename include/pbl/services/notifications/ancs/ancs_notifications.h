@@ -92,4 +92,21 @@ void ancs_notifications_handle_access_denied(void);
  */
 void ancs_notifications_handle_session_lost(void);
 
+/**
+ * @brief Whether the watch mirrors the iOS notification center.
+ *
+ * When it does, the whole notification center is stored on connection, and notifications
+ * removed from it while disconnected are dropped. Follows the notification dismissal sync
+ * preference.
+ */
+bool ancs_notifications_is_mirroring(void);
+
+/**
+ * @brief Drop stored iOS notifications that are no longer in the notification center.
+ *
+ * @param uids UIDs of every notification iOS told of since subscribing.
+ * @param count Number of UIDs.
+ */
+void ancs_notifications_handle_snapshot(const uint32_t *uids, size_t count);
+
 /** @} */

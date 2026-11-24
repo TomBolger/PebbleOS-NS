@@ -5,6 +5,7 @@
 #include <pbl/services/blob_db/ios_notif_pref_db.h>
 #include <pbl/services/notifications/alerts_preferences.h>
 #include <pbl/services/notifications/ancs/ancs_notifications.h>
+#include <pbl/util/size.h>
 
 #include <clar.h>
 
@@ -30,6 +31,11 @@ bool ancs_filtering_is_muted(const iOSNotifPrefs *app_notif_prefs) {
   return false;
 }
 
+static bool s_dismissal_sync;
+bool alerts_preferences_get_notification_dismissal_sync(void) {
+  return s_dismissal_sync;
+}
+
 bool ancs_filtering_matches_rules(const iOSNotifPrefs *app_notif_prefs,
                                   const struct pbl_bt_ancs_attr *title,
                                   const struct pbl_bt_ancs_attr *subtitle,
@@ -52,6 +58,7 @@ uint64_t pbl_uptime_ticks(void) {
 }
 
 void test_ancs_notifications__initialize(void) {
+  s_dismissal_sync = false;
   s_now = 1;
   fake_notification_storage_reset();
   fake_event_init();
@@ -246,4 +253,30 @@ void test_ancs_notifications__handle_phone_call_removed(void) {
   cl_assert_equal_i(event.phone.type, PhoneEventType_Hide);
   cl_assert_equal_i(event.phone.source, PhoneCallSource_ANCS);
   cl_assert_equal_i(event.phone.call_identifier, uid);
+}
+
+void test_ancs_notifications__mirroring_follows_dismissal_sync(void) {
+  cl_assert(!ancs_notifications_is_mirroring());
+  s_dismissal_sync = true;
+  cl_assert(ancs_notifications_is_mirroring());
+}
+
+// More gone than one removal batch: all of them go, only iOS ones, the rest stays.
+void test_ancs_notifications__snapshot_removes_every_gone_notification(void) {
+  const int num_ios = 12;
+  for (int i = 0; i < num_ios; i++) {
+    fake_notification_storage_add_header(&(Uuid){.byte0 = i + 1}, 100 + i, true);
+  }
+  const Uuid from_android = {.byte0 = 0x80};
+  fake_notification_storage_add_header(&from_android, 0, false);
+
+  const uint32_t still_there[] = {100, 105};
+  ancs_notifications_handle_snapshot(still_there, PBL_ARRAY_SIZE(still_there));
+
+  for (int i = 0; i < num_ios; i++) {
+    const bool kept = (i == 0) || (i == 5);
+    cl_assert_equal_b(fake_notification_storage_is_removed(&(Uuid){.byte0 = i + 1}), !kept);
+  }
+  cl_assert(!fake_notification_storage_is_removed(&from_android));
+  cl_assert_equal_i(fake_notification_storage_get_remove_count(), num_ios - 2);
 }
