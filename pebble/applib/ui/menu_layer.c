@@ -744,7 +744,8 @@ static void prv_prepare_and_draw_row(GContext *ctx, MenuLayer *menu_layer, Layer
 
 #if PBL_ROUND
 //! Round rows under the highlight are drawn as they are, then the highlight shape over them, then
-//! their highlighted content inside the shape, clipped to three boxes that fill most of it.
+//! their highlighted content over the shape's box, so nothing inside the shape is hidden. Only the
+//! box's corners outside the round ends, by the bezel, get highlighted content without the shape.
 static void prv_menu_layer_draw_row_round(MenuLayer *menu_layer, Layer *cell_layer,
                                           MenuCellSpan *cursor, GContext *ctx) {
   prv_prepare_and_draw_row(ctx, menu_layer, cell_layer, cursor, false);
@@ -757,26 +758,12 @@ static void prv_menu_layer_draw_row_round(MenuLayer *menu_layer, Layer *cell_lay
   }
   prv_fill_round_shape(ctx, menu_layer, &shape);
 
-  // The boxes reach the shape's outline at 30 and 60 degrees from its ends
-  const GRect box = shape.box;
-  const int16_t r = shape.radius;
-  const int16_t near = r - (r * 866 / 1000);
-  const int16_t half = r / 2;
-  const GRect inner[] = {
-    GRect(box.origin.x + half, box.origin.y + near, box.size.w - (2 * half),
-          box.size.h - (2 * near)),
-    GRect(box.origin.x + near, box.origin.y + half, half - near, box.size.h - (2 * half)),
-    GRect(grect_get_max_x(&box) - half, box.origin.y + half, half - near, box.size.h - (2 * half)),
-  };
   const GRect clip = ctx->draw_state.clip_box;
-  for (size_t i = 0; i < PBL_ARRAY_SIZE(inner); i++) {
-    GRect inner_clip = inner[i];
-    inner_clip.origin = gpoint_add(inner_clip.origin, ctx->draw_state.drawing_box.origin);
-    grect_clip(&inner_clip, &clip);
-    if (grect_is_empty(&inner_clip)) {
-      continue;
-    }
-    ctx->draw_state.clip_box = inner_clip;
+  GRect shape_clip = shape.box;
+  shape_clip.origin = gpoint_add(shape_clip.origin, ctx->draw_state.drawing_box.origin);
+  grect_clip(&shape_clip, &clip);
+  if (!grect_is_empty(&shape_clip)) {
+    ctx->draw_state.clip_box = shape_clip;
     prv_prepare_and_draw_row(ctx, menu_layer, cell_layer, cursor, true);
   }
   ctx->draw_state.clip_box = clip;
