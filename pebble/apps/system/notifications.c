@@ -35,6 +35,7 @@
 #include <applib/ui/dialogs/actionable_dialog.h>
 #include <applib/ui/dialogs/simple_dialog.h>
 #include <applib/ui/menu_cell_layer.h>
+#include <applib/ui/menu_layer_private.h>
 #include <applib/ui/ui.h>
 #include <kernel/ui/system_icons.h>
 #include <popups/notifications/notification_window.h>
@@ -85,9 +86,7 @@ static const unsigned int MAX_ACTIVE_NOTIFICATIONS = 10;
 #define STACK_LINE_WIDTH 2
 #define STACK_LINE_GAP 4
 //! Space between the stack line and where the selection highlight starts
-#define STACK_LINE_HIGHLIGHT_GAP 2
-//! Round: the highlight is never trimmed further in than this, so text is never cut into
-#define STACK_TRIM_MAX 60
+#define STACK_LINE_HIGHLIGHT_GAP PBL_IF_ROUND_ELSE(4, 2)
 
 static bool prv_loaded_notification_list_filter_cb(ListNode *node, void *data) {
   LoadedNotificationNode *loaded_notification = (LoadedNotificationNode *)node;
@@ -673,6 +672,7 @@ static void prv_draw_stack_line(GContext *ctx, const Layer *cell_layer, GRect bo
 #endif
 }
 
+#if PBL_RECT
 //! The menu slides its highlight by redrawing every row it touches as highlighted. When the
 //! selection is inside an open stack, trim every highlighted row the same way so the moving bar
 //! stays one shape and never peeks out beside the stack line.
@@ -687,36 +687,11 @@ static void prv_trim_highlight_strip(GContext *ctx, const Layer *cell_layer) {
   }
   const GRect bounds = cell_layer->bounds;
   graphics_context_set_fill_color(ctx, notification_style_bg());
-#if PBL_ROUND
-  const int32_t radius = PBL_DISPLAY_WIDTH / 2;
-  const int32_t inner = radius - STACK_LINE_EDGE - STACK_LINE_WIDTH;
-  const int16_t screen_y = layer_convert_point_to_screen(cell_layer, GPointZero).y;
-  int16_t run_start = 0;
-  int16_t run_x = -1;
-  for (int16_t y = 0; y <= bounds.size.h; y++) {
-    int16_t x = -1;
-    if (y < bounds.size.h) {
-      const int32_t dy = screen_y + y - PBL_DISPLAY_HEIGHT / 2;
-      x = ((dy * dy < inner * inner) ? radius - prv_isqrt(inner * inner - dy * dy) : radius) +
-          STACK_LINE_HIGHLIGHT_GAP;
-      if (x > STACK_TRIM_MAX) {
-        x = STACK_TRIM_MAX;
-      }
-    }
-    if (x != run_x) {
-      if (run_x > 0) {
-        graphics_fill_rect(ctx, &GRect(0, run_start, run_x, y - run_start));
-      }
-      run_start = y;
-      run_x = x;
-    }
-  }
-#else
   graphics_fill_rect(
-      ctx, &GRect(0, 0, STACK_LINE_EDGE + STACK_LINE_WIDTH + STACK_LINE_HIGHLIGHT_GAP,
-                  bounds.size.h));
-#endif
+      ctx,
+      &GRect(0, 0, STACK_LINE_EDGE + STACK_LINE_WIDTH + STACK_LINE_HIGHLIGHT_GAP, bounds.size.h));
 }
+#endif
 
 static void prv_draw_item_row(GContext *ctx, const Layer *cell_layer, GRect bounds,
                               const NotificationShadeRow *row, int16_t row_index) {
@@ -829,7 +804,9 @@ static void prv_draw_row_callback(GContext *ctx, const Layer *cell_layer, MenuIn
   if (!row) {
     return;
   }
+#if PBL_RECT
   prv_trim_highlight_strip(ctx, cell_layer);
+#endif
   // A row that is opening or closing is drawn at full size, sliding out from under the row above.
   GRect bounds = cell_layer->bounds;
   const int16_t full = prv_full_row_height(row);
@@ -847,8 +824,26 @@ static void prv_draw_row_callback(GContext *ctx, const Layer *cell_layer, MenuIn
 ///////////////////
 // Opening and closing headers and stacks
 
-static void prv_fold_reload(NotificationsData *data) {
+//! Round: inside an open stack, the highlight pill starts inside the stack's arc.
+static void prv_update_highlight_pill(NotificationsData *data) {
+#if PBL_ROUND
+  const NotificationShadeRow *selected =
+      notification_shade_row(&data->shade, menu_layer_get_selected_index(&data->menu_layer).row);
+  const bool in_stack = selected && selected->in_stack;
+  menu_layer_set_round_pill_left_margin(
+      &data->menu_layer, in_stack ? (STACK_LINE_EDGE + STACK_LINE_WIDTH + STACK_LINE_HIGHLIGHT_GAP -
+                                     MENU_ROUND_PILL_BEZEL_MARGIN)
+                                  : 0);
+#endif
+}
+
+static void prv_reload_rows(NotificationsData *data) {
   menu_layer_reload_data(&data->menu_layer);
+  prv_update_highlight_pill(data);
+}
+
+static void prv_fold_reload(NotificationsData *data) {
+  prv_reload_rows(data);
 }
 
 static void prv_save_collapsed_sections(NotificationsData *data) {
@@ -1002,7 +997,7 @@ static void prv_toggle_row(NotificationsData *data, uint16_t index) {
     }
   }
   prv_save_collapsed_sections(data);
-  menu_layer_reload_data(&data->menu_layer);
+  prv_reload_rows(data);
 }
 
 ///////////////////
@@ -1068,6 +1063,7 @@ static void prv_selection_changed(MenuLayer *menu_layer, MenuIndex new_index, Me
   if ((data->fold_first >= 0) && (old_index.row == data->fold_header)) {
     prv_fold_finish(data, true);
   }
+  prv_update_highlight_pill(data);
 }
 
 // Display the appropriate layer
@@ -1081,7 +1077,7 @@ static void prv_update_text_layer_visibility(NotificationsData *data) {
 //! list changes, without recentering.
 static void prv_reload_keeping_selection(NotificationsData *data, const Uuid *selected_id,
                                          int16_t fallback_row) {
-  menu_layer_reload_data(&data->menu_layer);
+  prv_reload_rows(data);
   const uint16_t count = notification_shade_row_count(&data->shade);
   if (count == 0) {
     return;
@@ -1265,6 +1261,7 @@ static void prv_window_load(Window *window) {
     first = 0;
   }
   menu_layer_set_selected_index(menu_layer, MenuIndex(0, first), MenuRowAlignNone, false);
+  prv_update_highlight_pill(data);
 }
 
 static void prv_push_window(NotificationsData *data) {
