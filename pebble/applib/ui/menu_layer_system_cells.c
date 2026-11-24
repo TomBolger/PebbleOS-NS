@@ -300,28 +300,15 @@ int16_t menu_cell_round_chord_inset(const GContext *ctx, GRect frame) {
 }
 
 GRect menu_cell_round_follow_bezel(const GContext *ctx, GRect frame) {
-  // Every row of a round menu with the pill is as tall, so right-aligned icons, such as radio
-  // buttons, line up in one column: as far in from the end of the pill of a row resting one row
-  // from the middle, the furthest a resting selection gets from it, as they are from the bezel in
-  // the middle of the display. Following each row's own chord instead staggered them. Rows
-  // further out, where the screen is narrower, keep the icon as far in from their own pill's end.
+  // A round icon needs its middle inside the pill's end, text its whole height
   const GRect row = ctx->draw_state.drawing_box;
-  const GSize display = GSize(PBL_DISPLAY_WIDTH, PBL_DISPLAY_HEIGHT);
-  const GRect bounds = GRect(row.origin.x, 0, row.size.w, display.h);
-  const GRect resting =
-      GRect(row.origin.x, (display.h / 2) - (row.size.h / 2) - row.size.h, row.size.w, row.size.h);
-  const int16_t gap = MENU_CELL_ROUND_BEZEL_MARGIN - MENU_ROUND_PILL_BEZEL_MARGIN;
-  MenuRoundShape column;
-  MenuRoundShape own;
-  int16_t max_x = (int16_t)(PBL_DISPLAY_WIDTH - menu_cell_round_chord_inset(ctx, frame) -
-                            MENU_CELL_ROUND_BEZEL_MARGIN);
-  if (menu_round_pill(display, bounds, resting, row.size.h, 0, &column)) {
-    max_x = (int16_t)(grect_get_max_x(&column.box) - gap);
-    if (menu_round_pill(display, bounds, row, row.size.h, 0, &own)) {
-      max_x = PBL_MIN(max_x, (int16_t)(grect_get_max_x(&own.box) - gap));
-    }
-  }
-  frame.origin.x = (int16_t)(max_x - frame.size.w - row.origin.x);
+  const int16_t top = row.origin.y + frame.origin.y;
+  const int16_t middle = top + (frame.size.h / 2);
+  const bool text = (frame.size.w == 0);
+  const int16_t end_x =
+      menu_round_row_end_x(GSize(PBL_DISPLAY_WIDTH, PBL_DISPLAY_HEIGHT), row, text ? top : middle,
+                           text ? (top + frame.size.h) : middle, MENU_ROUND_PILL_END_GAP);
+  frame.origin.x = (int16_t)(end_x - frame.size.w - row.origin.x);
   return frame;
 }
 
@@ -551,16 +538,30 @@ static PBL_ALWAYS_INLINE void prv_menu_cell_basic_draw_custom_two_columns_round(
     right_element_size = icon_size;
   }
 
-  // An icon sits against the bezel; the left column ends where it starts, and keeps clear of the
-  // bezel on its left too
-  int16_t bezel_shift_x = 0;
-  int16_t left_inset = 0;
-  if (!config->value && config->icon) {
-    GRect icon_frame = (GRect){.size = icon_size};
-    grect_align(&icon_frame, cell_layer_bounds, GAlignRight, false);
-    bezel_shift_x = icon_frame.origin.x - menu_cell_round_follow_bezel(ctx, icon_frame).origin.x;
-    left_inset = menu_cell_round_chord_inset(ctx, icon_frame);
+  // The icon or value sits inside the end of the row's pill; the left column ends where it starts.
+  // Beside an icon, the left column keeps clear of the bezel on its left too. A value is aligned by
+  // its right edge, a frame of no width on the title's line: the top of the title and subtitle
+  // centred in the cell.
+  GRect right_frame = (GRect){.size = right_element_size};
+  grect_align(&right_frame, cell_layer_bounds, GAlignRight, false);
+  if (config->value) {
+    const int16_t title_h = fonts_get_font_height(prv_get_cell_title_font(config));
+    int16_t lines_h = title_h;
+    if (config->subtitle) {
+      lines_h += fonts_get_font_height(prv_get_cell_subtitle_font(config));
+    }
+    if (lines_h > cell_layer_bounds->size.h) {
+      lines_h = title_h;
+    }
+    right_frame =
+        GRect(grect_get_max_x(cell_layer_bounds),
+              cell_layer_bounds->origin.y + ((cell_layer_bounds->size.h - lines_h) / 2), 0,
+              fonts_get_font_height(value_font) - fonts_get_font_cap_offset(value_font));
   }
+  const int16_t bezel_shift_x =
+      right_frame.origin.x - menu_cell_round_follow_bezel(ctx, right_frame).origin.x;
+  const int16_t left_inset =
+      (!config->value && config->icon) ? menu_cell_round_chord_inset(ctx, right_frame) : 0;
 
   // We reuse this rect to save stack space; here it is the rect of the left column content
   GRect rect = *cell_layer_bounds;
