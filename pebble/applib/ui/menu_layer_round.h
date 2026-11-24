@@ -37,16 +37,6 @@ bool menu_round_pill(GSize display, GRect bounds, GRect frame, int16_t rest_h, i
 //! no further out keeps the selection within a row of the middle, where the screen is wide.
 int16_t menu_round_end_space(int16_t frame_h, int16_t end_h, int16_t next_h);
 
-//! The focused height of the row \a i rows in from one end of a list, see menu_round_end_rows()
-typedef int16_t (*MenuRoundRowHeight)(uint16_t i, void *context);
-
-//! How many of the \a count rows at one end of a round list can be selected while the list rests
-//! at that end, \a space past it, in a frame \a frame_h tall: the end row, and the rows after it
-//! whose middle is not past the middle of the frame, \a row_h giving their focused heights. Laid
-//! out at that height whatever is selected, they stay still as the selection moves between them.
-uint16_t menu_round_end_rows(int16_t frame_h, int16_t space, uint16_t count,
-                             MenuRoundRowHeight row_h, void *context);
-
 //! Where a round centre-focused list rests, as the content offset, with the row at \a span_y,
 //! \a span_h tall, selected: centred, but stopping \a top_space above the content's top and
 //! \a bottom_space below its bottom, the content being \a content_h tall in a frame \a frame_h
