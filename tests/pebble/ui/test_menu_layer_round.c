@@ -36,7 +36,6 @@ void test_menu_layer_round__pill_in_the_middle_spans_the_display(void) {
   cl_assert_equal_i(pill.radius, pill.box.size.h / 2);
   cl_assert_equal_i(pill.box.origin.x, MENU_ROUND_PILL_BEZEL_MARGIN);
   cl_assert_equal_i(grect_get_max_x(&pill.box), 260 - MENU_ROUND_PILL_BEZEL_MARGIN);
-  cl_assert_equal_i(pill.circle_radius, 0);
 }
 
 void test_menu_layer_round__pill_follows_the_bezel(void) {
@@ -83,10 +82,10 @@ void test_menu_layer_round__no_pill_without_room(void) {
 
 void test_menu_layer_round__bubble(void) {
   const MenuRoundShape bubble = menu_round_bubble(DISPLAY, 80);
-  cl_assert_equal_i(bubble.circle_center.x, 130);
-  cl_assert_equal_i(bubble.circle_center.y + bubble.circle_radius, 80);
-  cl_assert_equal_i(bubble.circle_radius, MENU_ROUND_BUBBLE_RADIUS);
-  cl_assert(grect_is_empty(&bubble.box));
+  cl_assert(grect_equal(&bubble.box,
+                        &GRect(130 - MENU_ROUND_BUBBLE_RADIUS, 80 - 2 * MENU_ROUND_BUBBLE_RADIUS,
+                               2 * MENU_ROUND_BUBBLE_RADIUS, 2 * MENU_ROUND_BUBBLE_RADIUS)));
+  cl_assert_equal_i(bubble.radius, MENU_ROUND_BUBBLE_RADIUS);
 
   cl_assert_equal_i(menu_round_bubble_half_width(80, 80), 0);
   cl_assert_equal_i(menu_round_bubble_half_width(80, 100), 0);
@@ -95,71 +94,57 @@ void test_menu_layer_round__bubble(void) {
   cl_assert(menu_round_bubble_half_width(80, 40) > near_bottom);
 }
 
+static void prv_morph_ends(MenuRoundShape *bubble, MenuRoundShape *pill) {
+  *bubble = menu_round_bubble(DISPLAY, 80);
+  cl_assert(menu_round_pill(DISPLAY, BOUNDS, GRect(0, 104, 260, ROW_H), ROW_H, 0, pill));
+}
+
 void test_menu_layer_round__morph_ends(void) {
-  const MenuRoundShape bubble = menu_round_bubble(DISPLAY, 80);
+  MenuRoundShape bubble;
   MenuRoundShape pill;
-  cl_assert(menu_round_pill(DISPLAY, BOUNDS, GRect(0, 104, 260, ROW_H), ROW_H, 0, &pill));
+  prv_morph_ends(&bubble, &pill);
 
   const MenuRoundShape start = menu_round_morph(&bubble, &pill, 0);
-  cl_assert_equal_i(start.circle_radius, bubble.circle_radius);
-  cl_assert(gpoint_equal(&start.circle_center, &bubble.circle_center));
-  // The pill starts as a circle of its own height inside the bubble
-  cl_assert_equal_i(start.box.size.w, 2 * pill.radius);
+  cl_assert(grect_equal(&start.box, &bubble.box));
+  cl_assert_equal_i(start.radius, bubble.radius);
 
   const MenuRoundShape end = menu_round_morph(&bubble, &pill, MENU_ROUND_MORPH_PILL);
   cl_assert(grect_equal(&end.box, &pill.box));
-  cl_assert_equal_i(end.circle_radius, pill.radius);
-  // The circle ends inside the pill
-  const GRect end_bounds = menu_round_shape_bounds(&end);
-  cl_assert(grect_equal(&end_bounds, &pill.box) ||
-            (end_bounds.size.h <= pill.box.size.h + 1 && end_bounds.size.w == pill.box.size.w));
+  cl_assert_equal_i(end.radius, pill.radius);
 }
 
-void test_menu_layer_round__morph_is_round_at_the_bottom(void) {
-  const MenuRoundShape bubble = menu_round_bubble(DISPLAY, 80);
+void test_menu_layer_round__morph_is_one_rounded_box(void) {
+  MenuRoundShape bubble;
   MenuRoundShape pill;
-  cl_assert(menu_round_pill(DISPLAY, BOUNDS, GRect(0, 104, 260, ROW_H), ROW_H, 0, &pill));
-  int16_t last_bottom = INT16_MIN;
-  for (int32_t m = 0; m <= MENU_ROUND_MORPH_PILL; m += 50) {
+  prv_morph_ends(&bubble, &pill);
+  GRect last = bubble.box;
+  for (int32_t m = 0; m <= MENU_ROUND_MORPH_PILL; m += 25) {
     const MenuRoundShape shape = menu_round_morph(&bubble, &pill, m);
-    const int16_t bottom = shape.circle_center.y + shape.circle_radius;
-    // The circle and the pill share the bottom, so the bottom is always round
-    cl_assert_equal_i(bottom, grect_get_max_y(&shape.box));
-    // ... and it only moves down, towards the pill
-    cl_assert(bottom >= last_bottom);
-    last_bottom = bottom;
-    // The pill never pokes out of the circle until it starts spreading
-    if (m <= MENU_ROUND_MORPH_PILL_GROWS) {
-      cl_assert(shape.box.size.w <= 2 * shape.circle_radius + 1);
-    }
+    // Every step is a circle or a pill: fully round at its shorter sides
+    cl_assert_equal_i(shape.radius, PBL_MIN(shape.box.size.w, shape.box.size.h) / 2);
+    // ... that shrinks and drops steadily from the bubble to the pill
+    cl_assert(shape.box.size.w <= last.size.w);
+    cl_assert(shape.box.size.h <= last.size.h);
+    cl_assert(grect_get_max_y(&shape.box) >= grect_get_max_y(&last));
+    // ... staying centred across the display
+    cl_assert(PBL_ABS(shape.box.origin.x + shape.box.size.w / 2 - 130) <= 1);
+    last = shape.box;
   }
 }
 
 void test_menu_layer_round__morph_overshoot_keeps_the_size(void) {
-  const MenuRoundShape bubble = menu_round_bubble(DISPLAY, 80);
+  MenuRoundShape bubble;
   MenuRoundShape pill;
-  cl_assert(menu_round_pill(DISPLAY, BOUNDS, GRect(0, 104, 260, ROW_H), ROW_H, 0, &pill));
-  const MenuRoundShape past = menu_round_morph(&bubble, &pill, MENU_ROUND_MORPH_PILL + 50);
-  cl_assert(gsize_equal(&past.box.size, &pill.box.size));
-  cl_assert_equal_i(past.box.origin.y,
-                    pill.box.origin.y + 50 * MENU_ROUND_MORPH_OVERSHOOT_PX / MENU_ROUND_MORPH_PILL);
+  prv_morph_ends(&bubble, &pill);
+  const int32_t past = MENU_ROUND_MORPH_PILL + 50;
+  const MenuRoundShape after = menu_round_morph(&bubble, &pill, past);
+  cl_assert(gsize_equal(&after.box.size, &pill.box.size));
+  const int16_t drop = grect_get_max_y(&pill.box) - grect_get_max_y(&bubble.box);
+  cl_assert_equal_i(grect_get_max_y(&after.box),
+                    grect_get_max_y(&pill.box) + drop * 50 / MENU_ROUND_MORPH_PILL);
   const MenuRoundShape before = menu_round_morph(&bubble, &pill, -50);
-  cl_assert_equal_i(before.circle_radius, bubble.circle_radius);
-  cl_assert(before.circle_center.y < bubble.circle_center.y);
-}
-
-void test_menu_layer_round__shape_bounds(void) {
-  const MenuRoundShape shape = {
-    .box = GRect(10, 50, 100, 20),
-    .radius = 10,
-    .circle_center = GPoint(60, 40),
-    .circle_radius = 20,
-  };
-  const GRect bounds = menu_round_shape_bounds(&shape);
-  cl_assert_equal_i(bounds.origin.x, 10);
-  cl_assert_equal_i(bounds.origin.y, 20);
-  cl_assert_equal_i(grect_get_max_x(&bounds), 110);
-  cl_assert_equal_i(grect_get_max_y(&bounds), 70);
+  cl_assert(gsize_equal(&before.box.size, &bubble.box.size));
+  cl_assert(grect_get_max_y(&before.box) < grect_get_max_y(&bubble.box));
 }
 
 // 10 rows of ROW_H in a 260 px frame

@@ -20,18 +20,12 @@
 #define MENU_ROUND_BUBBLE_RADIUS 200
 //! A morph's progress when it reaches the pill, from the bubble at 0
 #define MENU_ROUND_MORPH_PILL 1000
-//! A morph's progress when the pill starts spreading out from the bottom of the circle
-#define MENU_ROUND_MORPH_PILL_GROWS 500
-//! How far, per whole morph past its end, the shape carries on before settling
-#define MENU_ROUND_MORPH_OVERSHOOT_PX 60
 
-//! The highlight: a rounded box, and while morphing from the bubble to a pill, a circle as well
+//! The highlight: a box with rounded corners. A pill and the bubble, a circle, are both boxes whose
+//! corner radius is half their shorter side.
 typedef struct {
   GRect box;
   int16_t radius;
-  GPoint circle_center;
-  //! 0 without a circle
-  int16_t circle_radius;
 } MenuRoundShape;
 
 //! The pill over a highlight \a frame, in screen coordinates: inset MENU_ROUND_PILL_INSET_Y from
@@ -43,22 +37,20 @@ typedef struct {
 bool menu_round_pill(GSize display, GRect bounds, GRect frame, int16_t rest_h, int16_t left_margin,
                      MenuRoundShape *pill);
 
-//! The bubble highlighting a header row: a circle hanging from above the \a display, centred
-//! across it, whose bottom is at \a bottom (screen coordinates).
+//! The bubble highlighting a header row: a circle, MENU_ROUND_BUBBLE_RADIUS in radius, hanging
+//! from above the \a display, centred across it, whose bottom is at \a bottom (screen
+//! coordinates).
 MenuRoundShape menu_round_bubble(GSize display, int16_t bottom);
 
 //! Half the width of the bubble whose bottom is at \a bottom, \a y down the screen (0 below it)
 int16_t menu_round_bubble_half_width(int16_t bottom, int16_t y);
 
-//! The shape \a progress of the way from \a bubble to \a pill (0 to MENU_ROUND_MORPH_PILL, past
-//! either end to overshoot): the bubble drops towards the pill as a circle, shrinking to the
-//! pill's height as its round bottom reaches the pill's bottom, while the pill spreads out from
-//! the circle's bottom over the last part of the way.
+//! The shape \a progress of the way from \a bubble to \a pill (0 to MENU_ROUND_MORPH_PILL): the
+//! box in between, its corner radius half its shorter side, so every step is a single circle or
+//! pill. Past either end, when easing overshoots, the shape keeps its size and its bottom carries
+//! on in its direction.
 MenuRoundShape menu_round_morph(const MenuRoundShape *bubble, const MenuRoundShape *pill,
                                 int32_t progress);
-
-//! The box around all of \a shape
-GRect menu_round_shape_bounds(const MenuRoundShape *shape);
 
 //! How far past one end a round list may rest so that, with the row at that end, \a end_h tall,
 //! selected, its neighbour, \a next_h tall, is in the middle of a frame \a frame_h tall. Resting

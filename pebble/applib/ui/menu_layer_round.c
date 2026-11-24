@@ -42,9 +42,10 @@ bool menu_round_pill(GSize display, GRect bounds, GRect frame, int16_t rest_h, i
 }
 
 MenuRoundShape menu_round_bubble(GSize display, int16_t bottom) {
+  const int16_t r = MENU_ROUND_BUBBLE_RADIUS;
   return (MenuRoundShape){
-    .circle_center = GPoint(display.w / 2, bottom - MENU_ROUND_BUBBLE_RADIUS),
-    .circle_radius = MENU_ROUND_BUBBLE_RADIUS,
+    .box = GRect((display.w / 2) - r, bottom - (2 * r), 2 * r, 2 * r),
+    .radius = r,
   };
 }
 
@@ -60,45 +61,18 @@ static int16_t prv_lerp(int16_t from, int16_t to, int32_t progress) {
 
 MenuRoundShape menu_round_morph(const MenuRoundShape *bubble, const MenuRoundShape *pill,
                                 int32_t progress) {
-  // Past either end the shape keeps its size and only carries on a little in its direction
+  const GRect *from = &bubble->box;
+  const GRect *to = &pill->box;
   const int32_t m = PBL_CLAMP(progress, 0, MENU_ROUND_MORPH_PILL);
-  const int16_t shift =
-      (int16_t)((progress - m) * MENU_ROUND_MORPH_OVERSHOOT_PX / MENU_ROUND_MORPH_PILL);
-
-  const int16_t radius = PBL_MAX(prv_lerp(bubble->circle_radius, pill->radius, m), 1);
-  const int16_t bottom =
-      prv_lerp(bubble->circle_center.y + bubble->circle_radius, grect_get_max_y(&pill->box), m) +
-      shift;
+  const int16_t w = prv_lerp(from->size.w, to->size.w, m);
+  const int16_t h = prv_lerp(from->size.h, to->size.h, m);
   const int16_t center_x =
-      prv_lerp(bubble->circle_center.x, pill->box.origin.x + (pill->box.size.w / 2), m);
-  const int32_t grow = (m <= MENU_ROUND_MORPH_PILL_GROWS)
-                           ? 0
-                           : (m - MENU_ROUND_MORPH_PILL_GROWS) * MENU_ROUND_MORPH_PILL /
-                                 (MENU_ROUND_MORPH_PILL - MENU_ROUND_MORPH_PILL_GROWS);
-  const int16_t pill_w = prv_lerp(2 * pill->radius, pill->box.size.w, grow);
+      prv_lerp(from->origin.x + (from->size.w / 2), to->origin.x + (to->size.w / 2), m);
+  const int16_t bottom = prv_lerp(grect_get_max_y(from), grect_get_max_y(to), progress);
   return (MenuRoundShape){
-    .box = GRect(center_x - (pill_w / 2), bottom - pill->box.size.h, pill_w, pill->box.size.h),
-    .radius = pill->radius,
-    .circle_center = GPoint(center_x, bottom - radius),
-    .circle_radius = radius,
+    .box = GRect(center_x - (w / 2), bottom - h, w, h),
+    .radius = PBL_MIN(w, h) / 2,
   };
-}
-
-GRect menu_round_shape_bounds(const MenuRoundShape *shape) {
-  if (shape->circle_radius == 0) {
-    return shape->box;
-  }
-  const int16_t r = shape->circle_radius;
-  const GRect circle =
-      GRect(shape->circle_center.x - r, shape->circle_center.y - r, (2 * r) + 1, (2 * r) + 1);
-  if (grect_is_empty(&shape->box)) {
-    return circle;
-  }
-  const int16_t left = PBL_MIN(circle.origin.x, shape->box.origin.x);
-  const int16_t top = PBL_MIN(circle.origin.y, shape->box.origin.y);
-  const int16_t right = PBL_MAX(grect_get_max_x(&circle), grect_get_max_x(&shape->box));
-  const int16_t bottom = PBL_MAX(grect_get_max_y(&circle), grect_get_max_y(&shape->box));
-  return GRect(left, top, right - left, bottom - top);
 }
 
 int16_t menu_round_end_space(int16_t frame_h, int16_t end_h, int16_t next_h) {
