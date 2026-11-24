@@ -7,6 +7,7 @@
 #include <stdint.h>
 #include <time.h>
 
+#include <pbl/services/timeline/item.h>
 #include <pbl/util/uuid.h>
 
 //! Sections and categories of the phone's notification shade, in the order they are listed.
@@ -66,6 +67,10 @@ typedef struct NotificationShade {
   uint8_t collapsed_groups;
   uint32_t open_stacks[NOTIFICATION_SHADE_MAX_OPEN_STACKS];
   uint32_t next_sequence;
+  //! Without a phone stack, notifications stack by app, or by sender since grouping_cutoff.
+  bool group_by_app;
+  bool group_by_sender;
+  time_t grouping_cutoff;
 } NotificationShade;
 
 //! Default collapsed groups: Silent starts closed.
@@ -74,6 +79,16 @@ typedef struct NotificationShade {
 void notification_shade_init(NotificationShade *shade, bool sections, bool stacks,
                              uint8_t collapsed_groups);
 void notification_shade_deinit(NotificationShade *shade);
+
+//! Sets the shade up as the preferences say: sections, stacks and grouping.
+void notification_shade_init_with_prefs(NotificationShade *shade);
+//! Adds every notification in storage and rebuilds. Works on any task: the shade is on the heap
+//! of the task calling.
+void notification_shade_load_storage(NotificationShade *shade);
+//! Adds a notification read from storage, with its strings in writable buffers, unless it is
+//! hidden. Call notification_shade_rebuild() once all are added.
+void notification_shade_add_item(NotificationShade *shade, const TimelineItem *item, char *app_name,
+                                 char *sender, char *title);
 
 //! Maps an AttributeIdNotificationSection value to the group it is listed in.
 uint8_t notification_shade_group_for_section(uint8_t section_attribute);
