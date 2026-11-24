@@ -46,6 +46,10 @@ int16_t menu_cell_round_chord_inset(const GContext *ctx, GRect frame);
 //! the middle, as far in as MENU_CELL_ROUND_BEZEL_MARGIN is from the bezel in the middle.
 GRect menu_cell_round_follow_bezel(const GContext *ctx, GRect frame);
 
+//! The highlight pill of \a menu_layer's selection as it is on screen now.
+//! @return false if the menu doesn't draw a pill, or there is no room for one
+bool menu_layer_get_round_highlight(MenuLayer *menu_layer, MenuRoundShape *shape);
+
 //! Moves the left end of the highlight pill \a margin further in from the bezel, e.g. to keep it
 //! clear of something drawn along the rim. 0 restores the default.
 void menu_layer_set_round_pill_left_margin(MenuLayer *menu_layer, uint8_t margin);
