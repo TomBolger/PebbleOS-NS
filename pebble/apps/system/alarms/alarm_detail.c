@@ -13,6 +13,7 @@
 #include <applib/ui/action_menu_window.h>
 #include <applib/ui/action_menu_window_private.h>
 #include <applib/ui/dialogs/simple_dialog.h>
+#include <applib/ui/pill_action_menu.h>
 #include <applib/ui/preferred_durations.h>
 #include <popups/health_tracking_ui.h>
 #include <resource/resource_ids.auto.h>
@@ -251,7 +252,7 @@ void prv_cleanup_alarm_detail_menu(ActionMenu *action_menu, const ActionMenuItem
   data = nullptr;
 }
 
-void alarm_detail_window_push(AlarmId alarm_id, AlarmInfo *alarm_info,
+void alarm_detail_window_push(AlarmId alarm_id, AlarmInfo *alarm_info, MenuLayer *menu_layer,
                               AlarmEditorCompleteCallback alarm_editor_callback,
                               void *callback_context) {
   AlarmDetailData *data = app_malloc_check(sizeof(AlarmDetailData));
@@ -372,5 +373,16 @@ void alarm_detail_window_push(AlarmId alarm_id, AlarmInfo *alarm_info,
   sound_level->default_selected_item = selected;
 #endif
 
+#if PBL_ROUND
+  // The alarm's pill moves into a circle on the left, with the actions beside it
+  const PillActionMenuConfig pill_config = {
+    .menu_layer = menu_layer,
+    .window = layer_get_window(menu_layer_get_layer(menu_layer)),
+    .icon_resource_id = RESOURCE_ID_ALARM_CLOCK_TINY,
+  };
+  if (pill_action_menu_open(&pill_config, &data->menu_config)) {
+    return;
+  }
+#endif
   app_action_menu_open(&data->menu_config);
 }
