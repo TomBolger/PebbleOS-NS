@@ -30,6 +30,9 @@ typedef struct MenuRenderIterator {
   Layer cell_layer;
 } MenuRenderIterator;
 
+//! The short pulse a menu plays where it cannot scroll further, or as it wraps around
+void menu_layer_play_scroll_vibe(void);
+
 #if PBL_ROUND
 #include "menu_layer_round.h"
 
