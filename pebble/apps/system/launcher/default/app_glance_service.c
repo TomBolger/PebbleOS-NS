@@ -363,7 +363,7 @@ void launcher_app_glance_service_draw_glance_for_app_node(LauncherAppGlanceServi
                                                           GContext *ctx, const GRect *frame,
                                                           bool is_highlighted,
                                                           int16_t screen_center_y,
-                                                          AppMenuNode *node) {
+                                                          bool is_round_header, AppMenuNode *node) {
   const bool use_glance_cache = prv_should_use_glance_cache_for_app_with_uuid(&node->uuid);
 
   LauncherAppGlance *glance = use_glance_cache
@@ -373,6 +373,7 @@ void launcher_app_glance_service_draw_glance_for_app_node(LauncherAppGlanceServi
   // Set the screen Y position for arc effect on round displays
   if (glance) {
     glance->screen_center_y = screen_center_y;
+    glance->is_round_header = is_round_header;
   }
 
   // Draw the glance in the provided frame
