@@ -107,14 +107,6 @@ typedef struct {
   ClickConfigProvider click_config_provider;
 } SwapLayerCallbacks;
 
-/** @brief Layer drawing the arrow hinting at more content. */
-typedef struct {
-  /** Layer. */
-  Layer layer;
-  /** Arrow image. */
-  GBitmap arrow_bitmap;
-} ArrowLayer;
-
 /**
  * @brief Data structure of a SwapLayer.
  *
@@ -128,8 +120,6 @@ typedef struct {
 typedef struct SwapLayer {
   /** Root layer. */
   Layer layer;
-  /** Arrow hinting at more content. */
-  ArrowLayer arrow_layer;
   /** Scroll or swap animation in progress. */
   Animation *animation;
   /** Previous layout. */
