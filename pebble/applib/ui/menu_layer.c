@@ -618,6 +618,15 @@ static void prv_fill_round_shape(GContext *ctx, const MenuLayer *menu_layer,
   graphics_fill_round_rect(ctx, &box, (uint16_t)shape->radius, GCornersAll);
 }
 
+bool menu_layer_get_round_highlight(MenuLayer *menu_layer, MenuRoundShape *shape) {
+  if (!prv_draws_round_pill(menu_layer)) {
+    return false;
+  }
+  GRect content;
+  layer_get_global_frame(&menu_layer->scroll_layer.content_sublayer, &content);
+  return prv_round_shape(menu_layer, content.origin, shape);
+}
+
 void menu_layer_set_round_pill_left_margin(MenuLayer *menu_layer, uint8_t margin) {
   if (menu_layer->round_pill_left_margin != margin) {
     menu_layer->round_pill_left_margin = margin;

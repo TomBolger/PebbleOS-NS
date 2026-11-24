@@ -247,3 +247,49 @@ void test_menu_layer_round__every_step_keeps_the_list_or_centres(void) {
     }
   }
 }
+
+static const MenuRoundShape s_pill = {.box = {{4, 100}, {252, 62}}, .radius = 31};
+static const MenuRoundShape s_circle = {.box = {{-221, -10}, {280, 280}}, .radius = 140};
+
+void test_menu_layer_round__morph_starts_and_ends_on_its_shapes(void) {
+  const MenuRoundShape start = menu_round_morph(&s_pill, &s_circle, 0);
+  cl_assert(grect_equal(&start.box, &s_pill.box));
+  cl_assert_equal_i(start.radius, s_pill.radius);
+  const MenuRoundShape end = menu_round_morph(&s_pill, &s_circle, 1000);
+  cl_assert(grect_equal(&end.box, &s_circle.box));
+  cl_assert_equal_i(end.radius, s_circle.radius);
+}
+
+//! Every step is a single pill or circle: corners as round as half the shorter side
+void test_menu_layer_round__morph_is_one_round_shape_every_step(void) {
+  int16_t prev_left = s_pill.box.origin.x;
+  for (int32_t progress = 0; progress <= 1000; progress += 50) {
+    const MenuRoundShape shape = menu_round_morph(&s_pill, &s_circle, progress);
+    cl_assert_equal_i(shape.radius, PBL_MIN(shape.box.size.w, shape.box.size.h) / 2);
+    // It moves left all the way
+    cl_assert(shape.box.origin.x <= prev_left);
+    prev_left = shape.box.origin.x;
+  }
+}
+
+void test_menu_layer_round__morph_overshoot_keeps_the_size(void) {
+  const MenuRoundShape past = menu_round_morph(&s_pill, &s_circle, 1100);
+  cl_assert_equal_i(past.box.size.w, s_circle.box.size.w);
+  cl_assert_equal_i(past.box.size.h, s_circle.box.size.h);
+  cl_assert_equal_i(past.radius, s_circle.radius);
+  // ... and carries on left, past the circle
+  cl_assert(past.box.origin.x < s_circle.box.origin.x);
+}
+
+void test_menu_layer_round__list_scroll(void) {
+  // The selection walks down to the middle from two rows above it...
+  cl_assert_equal_i(menu_round_list_scroll(0, 8, 38, 2), 0);
+  cl_assert_equal_i(menu_round_list_scroll(2, 8, 38, 2), 0);
+  // ... then the list scrolls a row at a time...
+  cl_assert_equal_i(menu_round_list_scroll(3, 8, 38, 2), 38);
+  // ... and stops with the last row two below the middle
+  cl_assert_equal_i(menu_round_list_scroll(7, 8, 38, 2), 3 * 38);
+  cl_assert_equal_i(menu_round_list_scroll(5, 8, 38, 2), 3 * 38);
+  // A short list never scrolls
+  cl_assert_equal_i(menu_round_list_scroll(2, 3, 38, 2), 0);
+}
