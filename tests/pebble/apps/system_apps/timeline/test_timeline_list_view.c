@@ -8,6 +8,7 @@
 #include <pbl/util/math.h>
 #include <pbl/util/units.h>
 
+#include <apps/system/timeline/animations.h>
 #include <apps/system/timeline/timeline.h>
 #include <fake_settings.h>
 #include <fixtures/screen_grid.h>
@@ -56,9 +57,13 @@ typedef struct TimelineItemConfig {
 } TimelineItemConfig;
 
 typedef struct ListViewConfig {
-  TimelineItemConfig *pins[2];
+  TimelineItemConfig *pins[6];
   bool past;
   bool day_separator;
+  //! Number of pins to scroll past before rendering
+  int num_scrolls;
+  //! Progress of the last scroll when rendering, or 0 to let it end
+  AnimationProgress scroll_progress;
 } ListViewConfig;
 
 static void prv_add_timeline_item(const TimelineItemConfig *config, bool past, uint8_t pin_index) {
@@ -89,7 +94,32 @@ static void prv_add_timeline_item(const TimelineItemConfig *config, bool past, u
 }
 
 #if PBL_ROUND
-static void prv_assert_title_centered(Window *window, TimelineLayout *layout) {
+//! Hides or shows what the compact list draws close to the selected pin: the other pins, the
+//! end-of-timeline fin and the day separator dot
+static void prv_set_neighbours_hidden(TimelineLayer *timeline_layer, bool hidden) {
+  if (!timeline_layer->compact) {
+    return;
+  }
+  static bool s_was_hidden[2];
+  Layer *indicators[] = {(Layer *)&timeline_layer->end_of_timeline,
+                         (Layer *)&timeline_layer->day_separator};
+  for (size_t i = 0; i < PBL_ARRAY_SIZE(indicators); i++) {
+    if (hidden) {
+      s_was_hidden[i] = layer_get_hidden(indicators[i]);
+    }
+    layer_set_hidden(indicators[i], hidden || s_was_hidden[i]);
+  }
+  TimelineList *list = &timeline_layer->list;
+  for (int i = 0; i < list->num_pins; i++) {
+    if (i != list->selected) {
+      layer_set_hidden((Layer *)list->pins[i]->layout, hidden);
+    }
+  }
+}
+
+static void prv_assert_title_centered(Window *window, TimelineLayer *timeline_layer) {
+  TimelineLayout *layout = timeline_layer_get_current_layout(timeline_layer);
+  prv_set_neighbours_hidden(timeline_layer, true);
   GTextNodeContainer *container = (GTextNodeContainer *)layout->view_node;
   GTextNode *time_node = container->nodes[0];
   GTextNodeText *other_text[3];
@@ -129,6 +159,7 @@ static void prv_assert_title_centered(Window *window, TimelineLayout *layout) {
   for (size_t i = 0; i < num_other_text; i++) {
     other_text[i]->color = colors[i];
   }
+  prv_set_neighbours_hidden(timeline_layer, false);
 }
 #endif
 
@@ -164,6 +195,26 @@ static void prv_create_list_view_and_render(ListViewConfig *config) {
   cl_assert_equal_i(icon_frame.origin.y + icon_frame.size.h / 2, PBL_DISPLAY_HEIGHT / 2);
 #endif
 
+  for (int i = 0; i < config->num_scrolls; i++) {
+    int new_idx;
+    bool has_new;
+    cl_assert(timeline_model_iter_next(&new_idx, &has_new));
+    if (has_new) {
+      timeline_layer_set_next_item(&timeline_layer, new_idx);
+    }
+    timeline_layer_move_data(&timeline_layer, 1);
+    Animation *animation = timeline_layer_create_up_down_animation(
+        &timeline_layer, TIMELINE_UP_DOWN_ANIMATION_DURATION_MS,
+        timeline_animation_interpolate_moook_soft);
+    if (i == config->num_scrolls - 1 && config->scroll_progress) {
+      // Stop the last scroll where it is
+      animation_schedule(animation);
+      fake_animation_update(animation, config->scroll_progress);
+      break;
+    }
+    fake_animation_complete(animation);
+  }
+
   if (config->day_separator) {
     // Simulate showing the day separator
     int new_idx;
@@ -182,8 +233,11 @@ static void prv_create_list_view_and_render(ListViewConfig *config) {
   window_set_on_screen(&window, true, true);
 
 #if PBL_ROUND
-  if (!config->day_separator) {
-    prv_assert_title_centered(&window, timeline_layer_get_current_layout(&timeline_layer));
+  // Scrolling the fixed slots brings the next pin's title near the middle, and pins only rest on
+  // the middle once they stop
+  if (!config->day_separator && !config->scroll_progress &&
+      (timeline_layer.compact || config->num_scrolls == 0)) {
+    prv_assert_title_centered(&window, &timeline_layer);
   }
 #endif
   window_render(&window, fake_graphics_context_get_context());
@@ -542,5 +596,76 @@ void test_timeline_list_view__left_hand_pin_and_fin_past(void) {
 void test_timeline_list_view__left_hand_all_day_future(void) {
   s_action_bar_on_right = false;
   prv_create_and_render_all_day(false /* past */);
+  FAKE_GRAPHICS_CONTEXT_CHECK_DEST_BITMAP_FILE();
+}
+
+// Compact list
+//////////////////////
+
+static TimelineItemConfig s_one_liners[] = {
+  {.relative_timestamp = 1 * PBL_SEC_PER_HOUR, .duration = 30, .title = "Standup"},
+  {.relative_timestamp = 2 * PBL_SEC_PER_HOUR, .duration = 30, .title = "Lunch"},
+  {.relative_timestamp = 3 * PBL_SEC_PER_HOUR, .duration = 30, .title = "Code review"},
+  {.relative_timestamp = 4 * PBL_SEC_PER_HOUR, .duration = 30, .title = "Gym"},
+  {.relative_timestamp = 5 * PBL_SEC_PER_HOUR, .duration = 30, .title = "Call Mom"},
+  {.relative_timestamp = 6 * PBL_SEC_PER_HOUR, .duration = 30, .title = "Dinner"},
+};
+
+static void prv_render_compact(TimelineItemConfig *pins, bool past, int num_scrolls,
+                               AnimationProgress scroll_progress) {
+  ListViewConfig config = {
+    .past = past,
+    .num_scrolls = num_scrolls,
+    .scroll_progress = scroll_progress,
+  };
+  for (int i = 0; i < (int)PBL_ARRAY_SIZE(config.pins); i++) {
+    pins[i].icon = TIMELINE_RESOURCE_TIMELINE_CALENDAR;
+    config.pins[i] = &pins[i];
+  }
+  prv_create_list_view_and_render(&config);
+}
+
+static void prv_check_compact(TimelineItemConfig *pins, int num_scrolls, const char *pbi_file) {
+  ScreenGrid grid;
+  screen_grid_init(&grid, 2);
+  for (PreferredContentSize size = grid.first_size; size <= grid.last_size; size++) {
+    system_theme_set_content_size(size);
+    for (int past = 0; past < 2; past++) {
+      prv_render_compact(pins, past, num_scrolls, 0 /* scroll_progress */);
+      screen_grid_add(&grid, fake_graphics_context_get_context(), size, past);
+    }
+  }
+  screen_grid_check(&grid, pbi_file);
+}
+
+void test_timeline_list_view__content_sizes_compact_one_liners(void) {
+  // With the smaller text sizes, a run of one-line pins fills the screen around the selected one
+  prv_check_compact(s_one_liners, 2 /* num_scrolls */, TEST_PBI_FILE);
+}
+
+void test_timeline_list_view__content_sizes_compact_tall_selected(void) {
+  TimelineItemConfig pins[PBL_ARRAY_SIZE(s_one_liners)];
+  memcpy(pins, s_one_liners, sizeof(pins));
+  pins[2].title = "Quarterly planning review with everybody";
+  pins[2].subtitle = "Building 4, Conference room Batavia";
+  // The selected pin shows its details and pushes its neighbours away
+  prv_check_compact(pins, 2 /* num_scrolls */, TEST_PBI_FILE);
+}
+
+void test_timeline_list_view__content_sizes_compact_first(void) {
+  // Nothing comes before the first pin, so the list starts at the screen edge
+  prv_check_compact(s_one_liners, 0 /* num_scrolls */, TEST_PBI_FILE);
+}
+
+void test_timeline_list_view__compact_mid_scroll(void) {
+  system_theme_set_content_size(PreferredContentSizeDefault - 1);
+  TimelineItemConfig pins[PBL_ARRAY_SIZE(s_one_liners)];
+  memcpy(pins, s_one_liners, sizeof(pins));
+  pins[1].title = "Physics 7A-201 lecture and lab";
+  pins[2].title = "Dentist";
+  pins[2].subtitle = "Dr. Vidal, Carrer de Mallorca 123, Barcelona";
+  // Halfway from the lecture to the dentist, the lecture folds away its second line and the
+  // dentist grows over its address while the pins stay stacked
+  prv_render_compact(pins, false /* past */, 2 /* num_scrolls */, ANIMATION_NORMALIZED_MAX / 2);
   FAKE_GRAPHICS_CONTEXT_CHECK_DEST_BITMAP_FILE();
 }

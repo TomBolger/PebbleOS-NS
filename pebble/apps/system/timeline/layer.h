@@ -48,6 +48,44 @@ typedef struct {
   void *timeline_layer;         // Necessary for the layer update proc to access the TimelineLayer
 } RelationshipBarLayer;
 
+//! Most pins the compact list keeps on each side of the selected pin
+#define TIMELINE_LIST_MAX_PINS_PER_SIDE 7
+#define TIMELINE_LIST_MAX_PINS          (2 * TIMELINE_LIST_MAX_PINS_PER_SIDE + 1)
+
+//! A pin of the compact list. It owns a copy of the timeline iterator, so it outlives the model's
+//! window of pins.
+typedef struct {
+  Iterator iter;
+  TimelineIterState state;
+  TimelineLayoutInfo info;
+  TimelineLayout *layout;
+  //! Offset from the pin's top of the point that rests on the selection anchor when selected
+  int16_t anchor_y;
+  //! Resting frame
+  GRect frame;
+  //! Frame the next up/down animation starts from
+  GRect from;
+} TimelineListPinView;
+
+//! The compact list: with the smaller text sizes, pins are as tall as their content, and the
+//! selected pin is shown with its neighbours on both sides instead of in fixed slots.
+typedef struct {
+  //! Pins in timeline order, the ones before the selected pin first
+  TimelineListPinView *pins[TIMELINE_LIST_MAX_PINS];
+  int num_pins;
+  int selected;
+  //! Pins that scrolled out and are destroyed once the up/down animation stops
+  TimelineListPinView *leaving[TIMELINE_LIST_MAX_PINS];
+  int num_leaving;
+  //! Nothing comes before the first pin in the current day
+  bool starts_day;
+  //! What follows the last pin: nothing, or a pin of another day
+  bool ends_timeline;
+  bool ends_day;
+  //! Interpolation of the running up/down animation
+  InterpolateInt64Function interpolate;
+} TimelineList;
+
 // The timeline layer is the view(controller, sort of) for the timeline -- it uses
 // TIMELINE_NUM_ITEMS_IN_TIMELINE_LAYER layout layers, timeline layouts and view slots
 // layouts[1] is the first item shown, layouts[0] and layouts[TIMELINE_NUM_VISIBLE_ITEMS + 1]
@@ -68,6 +106,9 @@ typedef struct {
   Animation *animation;
   RelationshipBarLayer relbar_layer;
   bool animating_intro_or_exit;
+  //! Lay the pins out as the compact list instead of in the fixed slots
+  bool compact;
+  TimelineList list;
 } TimelineLayer;
 
 void timeline_layer_reset(TimelineLayer *layer);

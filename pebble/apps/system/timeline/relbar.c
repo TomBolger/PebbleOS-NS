@@ -499,6 +499,10 @@ static void prv_update_rel_bars(TimelineLayer *layer) {
           prv_get_pin_relationship(info, timeline_layer_get_layout_info(layer, index + 1));
     }
   }
+  // The bars are drawn between the icons, so they need room there
+  if (prv_get_line_length(layer, nullptr, nullptr) <= 0) {
+    rel_bar_types[1] = RelationshipBarTypeNone;
+  }
   layer->relbar_layer.curr_rel_bar.rel_bar_type = rel_bar_types[1];
   TimelineLayoutInfo *current = timeline_layer_get_layout_info(layer, 1);
   if (current) {

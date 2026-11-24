@@ -4,10 +4,12 @@
 #include "layer.h"
 
 #include "animations.h"
+#include "list_layout.h"
 #include "model.h"
 #include "relbar.h"
 
 #include <stdint.h>
+#include <string.h>
 #include <time.h>
 
 #include <pbl/kernel/assert.h>
@@ -242,10 +244,10 @@ static void prv_get_indicator_frame(TimelineLayer *layer, int index, GRect *fram
   frame->size.h = display_frame.size.h;
 }
 
-static void prv_get_icon_frame_exact(TimelineLayer *layer, int index, GRect *icon_frame) {
+static void prv_get_pin_icon_frame(TimelineLayer *layer, const GRect *pin_frame,
+                                   GRect *icon_frame) {
   const TimelineLayerStyle *style = prv_get_style();
-  GRect frame;
-  prv_get_frame(layer, index, &frame);
+  GRect frame = *pin_frame;
   frame.origin.y += style->icon_offset_y;
   // On the right, grow the pin frame so the icon sits icon_right_margin from the screen edge.
   if (timeline_layer_sidebar_is_on_right()) {
@@ -253,6 +255,14 @@ static void prv_get_icon_frame_exact(TimelineLayer *layer, int index, GRect *ico
   }
   timeline_layout_get_icon_frame(&frame, layer->scroll_direction, icon_frame);
 }
+
+static void prv_get_icon_frame_exact(TimelineLayer *layer, int index, GRect *icon_frame) {
+  GRect frame;
+  prv_get_frame(layer, index, &frame);
+  prv_get_pin_icon_frame(layer, &frame, icon_frame);
+}
+
+static void prv_list_get_pin_icon_frame(TimelineLayer *layer, int offset, GRect *icon_frame);
 
 #if PBL_ROUND
 static void prv_get_icon_frame_centered(TimelineLayer *layer, int index, GRect *icon_frame) {
@@ -264,6 +274,10 @@ static void prv_get_icon_frame_centered(TimelineLayer *layer, int index, GRect *
 #endif
 
 void timeline_layer_get_icon_frame(TimelineLayer *layer, int index, GRect *icon_frame) {
+  if (layer->compact) {
+    prv_list_get_pin_icon_frame(layer, index - TIMELINE_LAYER_FIRST_VISIBLE_LAYOUT, icon_frame);
+    return;
+  }
   return PBL_IF_RECT_ELSE(prv_get_icon_frame_exact, prv_get_icon_frame_centered)(layer, index,
                                                                                  icon_frame);
 }
@@ -541,6 +555,712 @@ Animation *timeline_layer_create_day_sep_show(TimelineLayer *timeline_layer) {
   return anim;
 }
 
+///////////////////////////////////////////////////////////
+// Compact list
+///////////////////////////////////////////////////////////
+
+//! Space kept free at the screen edge the compact list starts from, above the pins' own padding
+#define LIST_EDGE_MARGIN 4
+//! Distance from the pins to the day separator dot and the end-of-timeline fin
+#define LIST_INDICATOR_SPACING 12
+
+static LayoutLayerMode prv_list_mode(bool selected) {
+  return selected ? LayoutLayerModePinnedFat : LayoutLayerModePinnedThin;
+}
+
+static int16_t prv_list_pin_height(const TimelineListPinView *pin) {
+  return TIMELINE_LAYOUT_COMPACT_PADDING_TOP + pin->layout->view_size.h;
+}
+
+//! The selected pin is expanded to show its details, the others show only their time and title
+static void prv_list_pin_set_selected(TimelineListPinView *pin, bool selected) {
+  LayoutLayer *layout = (LayoutLayer *)pin->layout;
+  if (layout->mode != prv_list_mode(selected)) {
+    layout_set_mode(layout, prv_list_mode(selected));
+  }
+  // The round arrow points at the title, the rect list centers the whole pin
+  pin->anchor_y = PBL_IF_ROUND_ELSE(
+      TIMELINE_LAYOUT_COMPACT_PADDING_TOP + timeline_layout_get_title_center_y(pin->layout),
+      prv_list_pin_height(pin) / 2);
+}
+
+static void prv_list_pin_free(TimelineListPinView *pin) {
+  timeline_item_free_allocated_buffer(&pin->state.pin);
+  app_free(pin);
+}
+
+static void prv_list_pin_destroy(TimelineListPinView *pin) {
+  TimelineLayout *layout = pin->layout;
+  layout->is_being_destroyed = true;
+  layer_remove_from_parent((Layer *)layout);
+  layout_destroy((LayoutLayer *)layout);
+  prv_list_pin_free(pin);
+}
+
+//! Loads the pin `step` pins away from a pin, or returns nullptr past the end of the timeline
+static TimelineListPinView *prv_list_pin_load(TimelineIterState *state, Iterator *iter, int step) {
+  TimelineListPinView *pin = app_zalloc_check(sizeof(TimelineListPinView));
+  timeline_iter_copy_state(&pin->state, state, &pin->iter, iter);
+  bool found = true;
+  if (step == 0) {
+    pin->state.pin.header.id = state->pin.header.id;
+    timeline_iter_refresh_pin(&pin->state);
+  } else {
+    found = (step > 0) ? iter_next(&pin->iter) : iter_prev(&pin->iter);
+  }
+  if (!found) {
+    prv_list_pin_free(pin);
+    return nullptr;
+  }
+  return pin;
+}
+
+static void prv_list_pin_create_layout(TimelineLayer *layer, TimelineListPinView *pin,
+                                       bool selected) {
+  TimelineItem *item = &pin->state.pin;
+  timeline_layout_init_info(&pin->info, item, pin->state.current_day);
+  pin->info.scroll_direction = layer->scroll_direction;
+  pin->info.app_id = item->header.parent_id;
+  pin->info.compact = true;
+
+  const TimelineLayerStyle *style = prv_get_style();
+  const GRect frame = {
+    .origin.x = style->left_margin,
+    .size.w = layer->layer.bounds.size.w - (style->left_margin + style->right_margin),
+  };
+  const LayoutLayerConfig config = {
+    .frame = &frame,
+    .attributes = &item->attr_list,
+    .mode = prv_list_mode(selected),
+    .app_id = &item->header.parent_id,
+    .context = &pin->info,
+  };
+  pin->layout = (TimelineLayout *)layout_create(item->header.layout, &config);
+  layer_add_child(&layer->layouts_layer, (Layer *)pin->layout);
+  layer_add_child(&layer->layouts_layer, (Layer *)&pin->layout->icon_layer);
+  prv_list_pin_set_selected(pin, selected);
+}
+
+static void prv_list_get_icon_frame(TimelineLayer *layer, const TimelineListPinView *pin,
+                                    const GRect *frame, GRect *icon_frame) {
+  // The icon sits by the content, below the pin's padding
+  GRect content_frame = *frame;
+  content_frame.origin.y += TIMELINE_LAYOUT_COMPACT_PADDING_TOP;
+  prv_get_pin_icon_frame(layer, &content_frame, icon_frame);
+#if PBL_ROUND
+  icon_frame->origin.y = frame->origin.y + pin->anchor_y - icon_frame->size.h / 2;
+#endif
+}
+
+static void prv_list_set_frame(TimelineLayer *layer, TimelineListPinView *pin, const GRect *frame) {
+  layer_set_frame((Layer *)pin->layout, frame);
+  GRect icon_frame;
+  prv_list_get_icon_frame(layer, pin, frame, &icon_frame);
+  layer_set_frame((Layer *)&pin->layout->icon_layer, &icon_frame);
+}
+
+//! Whether the pins after the selected one are below it on screen
+static bool prv_list_next_is_down(TimelineLayer *layer) {
+  return (prv_get_scroll_delta(layer) > 0);
+}
+
+//! Index of a timeline-ordered sequence on screen, from the top
+static int prv_list_screen_index(TimelineLayer *layer, int num_pins, int index) {
+  return prv_list_next_is_down(layer) ? index : (num_pins - 1 - index);
+}
+
+//! Adds pins on one side of the selected one until they cover the screen.
+//! @param reused Pins of the previous list on that side, nearest first
+//! @return number of pins written to side_out, nearest first
+static int prv_list_fill_side(TimelineLayer *layer, TimelineListPinView *selected, int step,
+                              TimelineListPinView **reused, int num_reused,
+                              TimelineListPinView **side_out, bool *ends_timeline_out,
+                              bool *ends_day_out) {
+  const int16_t height = layer->layer.bounds.size.h;
+  int16_t covered = 0;
+  int num_pins = 0;
+  TimelineListPinView *edge = selected;
+  *ends_timeline_out = false;
+  *ends_day_out = false;
+  while (covered < height && num_pins < TIMELINE_LIST_MAX_PINS_PER_SIDE) {
+    TimelineListPinView *pin;
+    if (num_pins < num_reused) {
+      pin = reused[num_pins];
+      prv_list_pin_set_selected(pin, false);
+    } else {
+      pin = prv_list_pin_load(&edge->state, &edge->iter, step);
+      if (!pin) {
+        *ends_timeline_out = true;
+        break;
+      }
+      // Pins of other days are behind the day separator
+      if (pin->state.current_day != layer->current_day) {
+        prv_list_pin_free(pin);
+        *ends_day_out = true;
+        break;
+      }
+      prv_list_pin_create_layout(layer, pin, false);
+    }
+    side_out[num_pins++] = pin;
+    covered += prv_list_pin_height(pin);
+    edge = pin;
+  }
+  return num_pins;
+}
+
+//! Fills the list around the model's current pin. Pins of the previous list that are still in it
+//! are kept, the others move to the leaving pins.
+static void prv_list_build(TimelineLayer *layer) {
+  TimelineList *list = &layer->list;
+  TimelineListPinView *old[TIMELINE_LIST_MAX_PINS];
+  const int num_old = list->num_pins;
+  memcpy(old, list->pins, sizeof(old));
+  list->num_pins = 0;
+
+  TimelineIterState *current = timeline_model_get_current_state();
+  int old_selected = -1;
+  for (int i = 0; current && i < num_old; i++) {
+    if (old[i]->state.node == current->node) {
+      old_selected = i;
+    }
+  }
+
+  int first_kept = num_old;
+  int last_kept = -1;
+  if (current) {
+    TimelineListPinView *selected;
+    if (old_selected >= 0) {
+      selected = old[old_selected];
+      prv_list_pin_set_selected(selected, true);
+      first_kept = last_kept = old_selected;
+    } else {
+      selected = prv_list_pin_load(current, timeline_model_get_current_iter(), 0);
+      prv_list_pin_create_layout(layer, selected, true);
+    }
+
+    // The previous list is contiguous, so its pins around the selected one are the nearest ones
+    TimelineListPinView *reused[TIMELINE_LIST_MAX_PINS_PER_SIDE];
+    int num_reused = 0;
+    for (int i = old_selected - 1;
+         old_selected >= 0 && i >= 0 && num_reused < TIMELINE_LIST_MAX_PINS_PER_SIDE; i--) {
+      reused[num_reused++] = old[i];
+    }
+    TimelineListPinView *before[TIMELINE_LIST_MAX_PINS_PER_SIDE];
+    bool before_ends_timeline;
+    bool before_ends_day;
+    const int num_before = prv_list_fill_side(layer, selected, -1, reused, num_reused, before,
+                                              &before_ends_timeline, &before_ends_day);
+    first_kept -= PBL_MIN(num_before, num_reused);
+
+    num_reused = 0;
+    for (int i = old_selected + 1;
+         old_selected >= 0 && i < num_old && num_reused < TIMELINE_LIST_MAX_PINS_PER_SIDE; i++) {
+      reused[num_reused++] = old[i];
+    }
+    TimelineListPinView *after[TIMELINE_LIST_MAX_PINS_PER_SIDE];
+    const int num_after = prv_list_fill_side(layer, selected, 1, reused, num_reused, after,
+                                             &list->ends_timeline, &list->ends_day);
+    last_kept += PBL_MIN(num_after, num_reused);
+    list->starts_day = (before_ends_timeline || before_ends_day);
+
+    for (int i = num_before - 1; i >= 0; i--) {
+      list->pins[list->num_pins++] = before[i];
+    }
+    list->selected = list->num_pins;
+    list->pins[list->num_pins++] = selected;
+    for (int i = 0; i < num_after; i++) {
+      list->pins[list->num_pins++] = after[i];
+    }
+  }
+
+  for (int i = 0; i < num_old; i++) {
+    if (i < first_kept || i > last_kept) {
+      list->leaving[list->num_leaving++] = old[i];
+    }
+  }
+}
+
+#if PBL_ROUND
+//! Narrows a pin so that its one-line text, aligned to the sidebar, ends before the display's
+//! edge on the line of the pin farthest from the middle
+static void prv_list_fit_to_display(TimelineLayer *layer, GRect *frame) {
+  const GRect *bounds = &layer->layer.bounds;
+  const int16_t center_y = bounds->size.h / 2;
+  const int16_t top = PBL_CLAMP(frame->origin.y + TIMELINE_LAYOUT_COMPACT_PADDING_TOP, 0,
+                                bounds->size.h);
+  const int16_t bottom = PBL_CLAMP(grect_get_max_y(frame), 0, bounds->size.h);
+  const int16_t distance_y = PBL_MAX(PBL_ABS(top - center_y), PBL_ABS(bottom - center_y));
+  const int16_t edge_x = timeline_list_round_edge_inset(bounds->size.w / 2, distance_y);
+  const int16_t inset = PBL_CLAMP(edge_x - prv_get_style()->left_margin, 0, frame->size.w / 2);
+  frame->size.w -= inset;
+  if (timeline_layer_sidebar_is_on_right()) {
+    frame->origin.x += inset;
+  }
+}
+#endif
+
+//! Places the pins at their resting frames
+static void prv_list_layout(TimelineLayer *layer) {
+  TimelineList *list = &layer->list;
+  const int num_pins = list->num_pins;
+  if (num_pins == 0) {
+    return;
+  }
+  TimelineListPin pins[TIMELINE_LIST_MAX_PINS];
+  for (int i = 0; i < num_pins; i++) {
+    const TimelineListPinView *pin = list->pins[i];
+    pins[prv_list_screen_index(layer, num_pins, i)] = (TimelineListPin){
+      .height = prv_list_pin_height(pin),
+      .anchor_y = pin->anchor_y,
+    };
+  }
+  const int16_t height = layer->layer.bounds.size.h;
+  const bool next_is_down = prv_list_next_is_down(layer);
+  // The round arrow stays in the middle; the rect list does not leave space before its first pin
+  const bool fill_start = PBL_IF_RECT_ELSE(list->starts_day, false);
+  const TimelineListGeometry geometry = {
+    .height = height,
+    .anchor_y = height / 2,
+    .margin = LIST_EDGE_MARGIN,
+    .fill_top = fill_start && next_is_down,
+    .fill_bottom = fill_start && !next_is_down,
+  };
+  int16_t tops[TIMELINE_LIST_MAX_PINS];
+  timeline_list_layout(&geometry, pins, num_pins,
+                       prv_list_screen_index(layer, num_pins, list->selected), tops);
+
+  const TimelineLayerStyle *style = prv_get_style();
+  for (int i = 0; i < num_pins; i++) {
+    const int screen_index = prv_list_screen_index(layer, num_pins, i);
+    list->pins[i]->frame = (GRect){
+      .origin = {style->left_margin, tops[screen_index]},
+      .size = {layer->layer.bounds.size.w - (style->left_margin + style->right_margin),
+               pins[screen_index].height},
+    };
+#if PBL_ROUND
+    // The selected pin's lines may wrap, so it keeps its width and its height
+    if (i != list->selected) {
+      prv_list_fit_to_display(layer, &list->pins[i]->frame);
+    }
+#endif
+  }
+}
+
+//! Stacks the frames of a timeline-ordered run of pins against the pins whose frames are known
+static void prv_list_stack(TimelineLayer *layer, TimelineListPinView **run, int num_pins,
+                           int first_known, int last_known, bool to_frames) {
+  if (first_known > last_known) {
+    return;
+  }
+  TimelineListPin pins[2 * TIMELINE_LIST_MAX_PINS];
+  int16_t tops[2 * TIMELINE_LIST_MAX_PINS];
+  for (int i = 0; i < num_pins; i++) {
+    const GRect *frame = to_frames ? &run[i]->frame : &run[i]->from;
+    const int screen_index = prv_list_screen_index(layer, num_pins, i);
+    pins[screen_index] = (TimelineListPin){.height = frame->size.h};
+    tops[screen_index] = frame->origin.y;
+  }
+  const int first = prv_list_screen_index(layer, num_pins, first_known);
+  const int last = prv_list_screen_index(layer, num_pins, last_known);
+  timeline_list_stack(pins, num_pins, PBL_MIN(first, last), PBL_MAX(first, last), tops);
+  for (int i = 0; i < num_pins; i++) {
+    GRect *frame = to_frames ? &run[i]->frame : &run[i]->from;
+    frame->origin.y = tops[prv_list_screen_index(layer, num_pins, i)];
+  }
+}
+
+//! Gives the pins that come in a frame to scroll from, and the pins that leave a frame to scroll
+//! to, by stacking them against the pins on screen before and after the move
+static void prv_list_place_offscreen(TimelineLayer *layer, TimelineListPinView **old, int num_old) {
+  TimelineList *list = &layer->list;
+  // The pins kept by the move are one run in both lists
+  int old_start = num_old;
+  int new_start = 0;
+  for (int i = 0; i < num_old && old_start == num_old; i++) {
+    for (int j = 0; j < list->num_pins; j++) {
+      if (old[i] == list->pins[j]) {
+        old_start = i;
+        new_start = j;
+        break;
+      }
+    }
+  }
+  int num_kept = 0;
+  while ((old_start + num_kept < num_old) && (new_start + num_kept < list->num_pins) &&
+         (old[old_start + num_kept] == list->pins[new_start + num_kept])) {
+    num_kept++;
+  }
+  // Pins coming in start the size they rest at, pins leaving keep theirs
+  for (int i = 0; i < list->num_pins; i++) {
+    if (i < new_start || i >= new_start + num_kept) {
+      list->pins[i]->from = list->pins[i]->frame;
+    }
+  }
+  for (int i = 0; i < num_old; i++) {
+    if (i < old_start || i >= old_start + num_kept) {
+      old[i]->frame = old[i]->from;
+    }
+  }
+  if (num_kept == 0) {
+    return;
+  }
+
+  // On each side of the kept pins, pins either come in or leave, so in timeline order the pins of
+  // both lists form one run: old before, new before, kept, old after, new after
+  TimelineListPinView *run[2 * TIMELINE_LIST_MAX_PINS];
+  int num_run = 0;
+  for (int i = 0; i < old_start; i++) {
+    run[num_run++] = old[i];
+  }
+  for (int i = 0; i < new_start + num_kept; i++) {
+    run[num_run++] = list->pins[i];
+  }
+  const int num_old_after = num_old - (old_start + num_kept);
+  for (int i = old_start + num_kept; i < num_old; i++) {
+    run[num_run++] = old[i];
+  }
+  for (int i = new_start + num_kept; i < list->num_pins; i++) {
+    run[num_run++] = list->pins[i];
+  }
+  const int first_old = (old_start > 0) ? 0 : new_start;
+  const int last_old = old_start + new_start + num_kept + num_old_after - 1;
+  const int first_new = old_start;
+  const int last_new = (num_old_after > 0) ? (old_start + new_start + num_kept - 1) : (num_run - 1);
+  prv_list_stack(layer, run, num_run, first_old, last_old, false /* to_frames */);
+  prv_list_stack(layer, run, num_run, first_new, last_new, true /* to_frames */);
+}
+
+static TimelineListPinView *prv_list_get_selected(TimelineLayer *layer) {
+  TimelineList *list = &layer->list;
+  return (list->num_pins > 0) ? list->pins[list->selected] : nullptr;
+}
+
+//! Pin `offset` pins after the selected one, or nullptr
+static TimelineListPinView *prv_list_get_pin(TimelineLayer *layer, int offset) {
+  TimelineList *list = &layer->list;
+  const int index = list->selected + offset;
+  return (list->num_pins > 0 && index >= 0 && index < list->num_pins) ? list->pins[index] : nullptr;
+}
+
+static void prv_list_get_pin_icon_frame(TimelineLayer *layer, int offset, GRect *icon_frame) {
+  TimelineListPinView *pin = prv_list_get_pin(layer, offset);
+  if (!pin) {
+    *icon_frame = GRectZero;
+    return;
+  }
+  prv_list_get_icon_frame(layer, pin, &pin->frame, icon_frame);
+}
+
+//! The pin at the edge of the list in the given direction on screen
+static TimelineListPinView *prv_list_get_edge_pin(TimelineLayer *layer, bool down) {
+  TimelineList *list = &layer->list;
+  if (list->num_pins == 0) {
+    return nullptr;
+  }
+  const bool last = (down == prv_list_next_is_down(layer));
+  return list->pins[last ? list->num_pins - 1 : 0];
+}
+
+//! Places an indicator of a height at a distance from the edge pin of the list in a direction
+static void prv_list_place_indicator_frame(const GRect *edge_frame, bool down, int16_t height,
+                                           GRect *frame) {
+  frame->origin.y = down ? (grect_get_max_y(edge_frame) + LIST_INDICATOR_SPACING)
+                         : (edge_frame->origin.y - LIST_INDICATOR_SPACING - height);
+}
+
+static void prv_list_place_day_sep(TimelineLayer *layer, const GRect *edge_frame, bool down) {
+  GRect frame;
+  prv_get_day_sep_frame(layer, 2, &frame);
+  // The dot is drawn in the middle of the frame
+  prv_list_place_indicator_frame(edge_frame, down, 0 /* height */, &frame);
+  frame.origin.y -= frame.size.h / 2;
+  layer_set_frame((Layer *)&layer->day_separator, &frame);
+  layer_set_hidden((Layer *)&layer->day_separator, false);
+}
+
+//! Whether the end-of-timeline fin follows the list, and where
+static bool prv_list_get_fin_frame(TimelineLayer *layer, GRect *frame) {
+  const bool down = prv_list_next_is_down(layer);
+  TimelineListPinView *edge = prv_list_get_edge_pin(layer, down);
+  if (!edge || !layer->list.ends_timeline) {
+    return false;
+  }
+  prv_get_end_of_timeline_frame(layer, 2, frame);
+  const KinoReel *reel = kino_layer_get_reel(&layer->end_of_timeline);
+  const int16_t fin_height = reel ? kino_reel_get_size((KinoReel *)reel).h : 0;
+  prv_list_place_indicator_frame(&edge->frame, down, fin_height, frame);
+  return true;
+}
+
+static void prv_list_place_indicators(TimelineLayer *layer) {
+  layer_set_hidden((Layer *)&layer->day_separator, true);
+  const bool down = prv_list_next_is_down(layer);
+  TimelineListPinView *edge = prv_list_get_edge_pin(layer, down);
+  if (edge && layer->list.ends_day) {
+    prv_list_place_day_sep(layer, &edge->frame, down);
+  }
+
+  GRect fin_frame;
+  const bool has_fin = prv_list_get_fin_frame(layer, &fin_frame);
+  const bool was_hidden = layer_get_hidden((Layer *)&layer->end_of_timeline);
+  layer_set_hidden((Layer *)&layer->end_of_timeline, !has_fin);
+  if (has_fin) {
+    layer_set_frame((Layer *)&layer->end_of_timeline, &fin_frame);
+    if (was_hidden) {
+      kino_layer_rewind(&layer->end_of_timeline);
+    }
+    kino_layer_play(&layer->end_of_timeline);
+  }
+}
+
+static void prv_list_destroy_leaving(TimelineLayer *layer) {
+  TimelineList *list = &layer->list;
+  for (int i = 0; i < list->num_leaving; i++) {
+    prv_list_pin_destroy(list->leaving[i]);
+  }
+  list->num_leaving = 0;
+}
+
+static void prv_list_move(TimelineLayer *layer) {
+  TimelineList *list = &layer->list;
+  prv_list_destroy_leaving(layer);
+  for (int i = 0; i < list->num_pins; i++) {
+    list->pins[i]->from = ((Layer *)list->pins[i]->layout)->frame;
+  }
+  TimelineIterState *current = timeline_model_get_current_state();
+  if (current && current->current_day != layer->current_day) {
+    // The pins scroll out ahead of the day separator, which comes in where the dot was
+    const bool down = (layer->move_delta > 0);
+    TimelineListPinView *edge = prv_list_get_edge_pin(layer, down);
+    if (edge) {
+      prv_list_place_day_sep(layer, &edge->from, down);
+    }
+    const int16_t shift = -layer->move_delta * layer->layer.bounds.size.h;
+    for (int i = 0; i < list->num_pins; i++) {
+      TimelineListPinView *pin = list->pins[i];
+      pin->frame = pin->from;
+      pin->frame.origin.y += shift;
+      list->leaving[list->num_leaving++] = pin;
+    }
+    list->num_pins = 0;
+    return;
+  }
+
+  // The dot comes back once the pins rest
+  layer_set_hidden((Layer *)&layer->day_separator, true);
+  TimelineListPinView *old[TIMELINE_LIST_MAX_PINS];
+  const int num_old = list->num_pins;
+  memcpy(old, list->pins, sizeof(old));
+  TimelineListPinView *was_selected = prv_list_get_selected(layer);
+  prv_list_build(layer);
+  prv_list_layout(layer);
+  prv_list_place_offscreen(layer, old, num_old);
+  // The pin that was selected keeps its details while its frame shrinks over them, and takes its
+  // resting mode when the pins stop
+  if (was_selected && was_selected != prv_list_get_selected(layer)) {
+    layout_set_mode((LayoutLayer *)was_selected->layout, prv_list_mode(true));
+  }
+}
+
+static void prv_list_reset(TimelineLayer *layer) {
+  TimelineList *list = &layer->list;
+  prv_list_destroy_leaving(layer);
+  // Pins are reloaded in case they changed
+  for (int i = 0; i < list->num_pins; i++) {
+    prv_list_pin_destroy(list->pins[i]);
+  }
+  list->num_pins = 0;
+  TimelineIterState *current = timeline_model_get_current_state();
+  if (current) {
+    layer->current_day = current->current_day;
+  }
+  prv_list_build(layer);
+  prv_list_layout(layer);
+  // Pins slide in from the way of the last move, as after the day separator
+  const int16_t slide = layer->move_delta * layer->layer.bounds.size.h / 2;
+  for (int i = 0; i < list->num_pins; i++) {
+    TimelineListPinView *pin = list->pins[i];
+    prv_list_set_frame(layer, pin, &pin->frame);
+    pin->from = pin->frame;
+    pin->from.origin.y += slide;
+  }
+  prv_list_place_indicators(layer);
+}
+
+static Animation *prv_list_create_end_of_timeline_animation(TimelineLayer *layer, uint32_t duration,
+                                                            InterpolateInt64Function interpolate) {
+  Layer *fin = (Layer *)&layer->end_of_timeline;
+  GRect to;
+  if (!prv_list_get_fin_frame(layer, &to)) {
+    layer_set_hidden(fin, true);
+    return nullptr;
+  }
+  GRect from = fin->frame;
+  if (layer_get_hidden(fin)) {
+    // Come in with the selected pin
+    const TimelineListPinView *selected = prv_list_get_selected(layer);
+    from = to;
+    from.origin.y += selected->from.origin.y - selected->frame.origin.y;
+    layer_set_hidden(fin, false);
+    kino_layer_rewind(&layer->end_of_timeline);
+    kino_layer_play(&layer->end_of_timeline);
+  }
+  PropertyAnimation *prop_animation = property_animation_create_layer_frame(fin, &from, &to);
+  Animation *animation = property_animation_get_animation(prop_animation);
+  animation_set_duration(animation, duration);
+  animation_set_custom_interpolation(animation, interpolate);
+  animation_set_handlers(animation,
+                         (AnimationHandlers){
+                           .stopped = timeline_animation_layer_stopped_cut_to_end,
+                         },
+                         prop_animation);
+  return animation;
+}
+
+//! Calls a function for each pin on screen or scrolling out
+static void prv_list_each_pin(TimelineLayer *layer,
+                              void (*callback)(TimelineLayer *layer, TimelineListPinView *pin)) {
+  TimelineList *list = &layer->list;
+  for (int i = 0; i < list->num_pins + list->num_leaving; i++) {
+    callback(layer, (i < list->num_pins) ? list->pins[i] : list->leaving[i - list->num_pins]);
+  }
+}
+
+//! Pins on screen and scrolling out, from the top of the screen
+static int prv_list_get_stack(TimelineLayer *layer, TimelineListPinView **stack) {
+  TimelineList *list = &layer->list;
+  int num_pins = 0;
+  for (int i = 0; i < list->num_pins + list->num_leaving; i++) {
+    TimelineListPinView *pin =
+        (i < list->num_pins) ? list->pins[i] : list->leaving[i - list->num_pins];
+    int j = num_pins++;
+    for (; j > 0 && stack[j - 1]->from.origin.y > pin->from.origin.y; j--) {
+      stack[j] = stack[j - 1];
+    }
+    stack[j] = pin;
+  }
+  return num_pins;
+}
+
+//! Moves the pins as one stack: each pin ends where the next one starts, so a pin that grows
+//! pushes the next one exactly as much. Interpolating each frame on its own would not keep them
+//! together, as the interpolation overshoots by a fixed distance.
+static void prv_list_frames_update(Animation *animation, AnimationProgress progress) {
+  TimelineLayer *layer = animation_get_context(animation);
+  const InterpolateInt64Function interpolate = layer->list.interpolate;
+  TimelineListPinView *stack[2 * TIMELINE_LIST_MAX_PINS];
+  const int num_pins = prv_list_get_stack(layer, stack);
+  if (num_pins == 0) {
+    return;
+  }
+  const TimelineListPinView *last = stack[num_pins - 1];
+  int16_t bottom =
+      interpolate(progress, grect_get_max_y(&last->from), grect_get_max_y(&last->frame));
+  for (int i = num_pins - 1; i >= 0; i--) {
+    TimelineListPinView *pin = stack[i];
+    GRect frame = {
+      .origin.x = interpolate(progress, pin->from.origin.x, pin->frame.origin.x),
+      .origin.y = interpolate(progress, pin->from.origin.y, pin->frame.origin.y),
+      .size.w = interpolate(progress, pin->from.size.w, pin->frame.size.w),
+    };
+    frame.size.h = bottom - frame.origin.y;
+    layer_set_frame((Layer *)pin->layout, &frame);
+    bottom = frame.origin.y;
+  }
+}
+
+static void prv_list_start_pin_move(TimelineLayer *layer, TimelineListPinView *pin,
+                                    uint32_t duration) {
+  GRect icon_from;
+  GRect icon_to;
+  prv_list_get_icon_frame(layer, pin, &pin->from, &icon_from);
+  prv_list_get_icon_frame(layer, pin, &pin->frame, &icon_to);
+  prv_list_set_frame(layer, pin, &pin->from);
+  // A pin growing into the selected one reveals its details as its frame grows
+  layer_set_clips((Layer *)pin->layout, true);
+  timeline_layout_animate_icon_up_down(pin->layout, &icon_from, &icon_to, duration,
+                                       layer->list.interpolate);
+}
+
+static void prv_list_finish_pin_move(TimelineLayer *layer, TimelineListPinView *pin) {
+  prv_list_set_frame(layer, pin, &pin->frame);
+  timeline_layout_finish_icon_up_down(pin->layout);
+  // At rest, glyphs may reach past the frame
+  layer_set_clips((Layer *)pin->layout, false);
+}
+
+#define MAX_LIST_UP_DOWN_ANIMATIONS (2 * TIMELINE_LIST_MAX_PINS + 3)
+
+static void prv_list_add_animation(Animation **animations, int *num_animations,
+                                   Animation *animation) {
+  if (animation) {
+    animations[(*num_animations)++] = animation;
+  }
+}
+
+static Animation *prv_list_create_up_down_animation(TimelineLayer *layer, uint32_t duration,
+                                                    InterpolateInt64Function interpolate) {
+  TimelineList *list = &layer->list;
+  list->interpolate = interpolate;
+
+  Animation *animations[MAX_LIST_UP_DOWN_ANIMATIONS] = {};
+  int num_animations = 0;
+  static const AnimationImplementation s_frames_implementation = {
+    .update = prv_list_frames_update,
+  };
+  Animation *frames = animation_create();
+  animation_set_implementation(frames, &s_frames_implementation);
+  animation_set_handlers(frames, (AnimationHandlers){}, layer);
+  animation_set_duration(frames, duration);
+  prv_list_add_animation(animations, &num_animations, frames);
+  for (int i = 0; i < list->num_pins + list->num_leaving; i++) {
+    TimelineListPinView *pin =
+        (i < list->num_pins) ? list->pins[i] : list->leaving[i - list->num_pins];
+    prv_list_start_pin_move(layer, pin, duration);
+    prv_list_add_animation(
+        animations, &num_animations,
+        (Animation *)kino_layer_create_play_section_animation(
+            &pin->layout->icon_layer, 0, TIMELINE_UP_DOWN_ANIMATION_DURATION_MS));
+  }
+  prv_list_add_animation(animations, &num_animations,
+                         prv_list_create_end_of_timeline_animation(layer, duration, interpolate));
+#if PBL_RECT
+  prv_list_add_animation(animations, &num_animations,
+                         timeline_relbar_layer_create_animation(layer, duration, interpolate));
+#endif
+  return animation_spawn_create_from_array(animations, num_animations);
+}
+
+static void prv_list_up_down_stopped(TimelineLayer *layer) {
+  TimelineList *list = &layer->list;
+  prv_list_each_pin(layer, prv_list_finish_pin_move);
+  for (int i = 0; i < list->num_pins; i++) {
+    prv_list_pin_set_selected(list->pins[i], (i == list->selected));
+  }
+  prv_list_destroy_leaving(layer);
+  if (!timeline_layer_should_animate_day_separator(layer)) {
+    prv_list_place_indicators(layer);
+  }
+}
+
+static void prv_list_set_hidden(TimelineLayer *layer, bool hidden) {
+  TimelineList *list = &layer->list;
+  for (int i = 0; i < list->num_pins + list->num_leaving; i++) {
+    TimelineListPinView *pin =
+        (i < list->num_pins) ? list->pins[i] : list->leaving[i - list->num_pins];
+    prv_set_layout_hidden(pin->layout, hidden);
+  }
+}
+
+static void prv_list_deinit(TimelineLayer *layer) {
+  TimelineList *list = &layer->list;
+  prv_list_destroy_leaving(layer);
+  for (int i = 0; i < list->num_pins; i++) {
+    prv_list_pin_destroy(list->pins[i]);
+  }
+  list->num_pins = 0;
+}
+
 #define MAX_UP_DOWN_ANIMATIONS (2 * TIMELINE_NUM_ITEMS_IN_TIMELINE_LAYER + 1)
 
 static Animation *prv_create_up_down_animation(TimelineLayer *layer, uint32_t duration,
@@ -611,6 +1331,10 @@ static void prv_place_end_of_timeline(TimelineLayer *timeline_layer) {
 
 static void prv_up_down_stopped(Animation *animation, bool is_finished, void *context) {
   TimelineLayer *layer = context;
+  if (layer->compact) {
+    prv_list_up_down_stopped(layer);
+    return;
+  }
   prv_update_pins_mode(layer);
   prv_set_layouts_to_final_position(layer);
   prv_destroy_nonvisible_items(layer);
@@ -630,13 +1354,20 @@ static void prv_mode_change_update(Animation *animation, AnimationProgress norma
 
 Animation *timeline_layer_create_up_down_animation(TimelineLayer *layer, uint32_t duration,
                                                    InterpolateInt64Function interpolate) {
-  Animation *animation = prv_create_up_down_animation(layer, duration, interpolate);
+  Animation *animation =
+      (layer->compact ? prv_list_create_up_down_animation : prv_create_up_down_animation)(
+          layer, duration, interpolate);
 
   animation_set_handlers(animation,
                          (AnimationHandlers){
                            .stopped = prv_up_down_stopped,
                          },
                          layer);
+
+  if (layer->compact) {
+    // Compact pins change mode as the move starts; wrap so the caller's handlers keep this one
+    return animation_spawn_create_from_array(&animation, 1);
+  }
 
   static const AnimationImplementation s_mode_change_impl = {
     .update = prv_mode_change_update,
@@ -732,7 +1463,18 @@ static void prv_update_proc(struct Layer *layer, GContext *ctx) {
 #endif
   const TimelineLayerStyle *style = prv_get_style();
   const GSize arrow_size = style->sidebar_arrow_size;
-  const int16_t arrow_base_center_y = PBL_IF_RECT_ELSE(16, bounds->size.h / 2);
+  int16_t arrow_base_center_y = PBL_IF_RECT_ELSE(16, bounds->size.h / 2);
+#if PBL_RECT
+  // The compact list moves the selected pin, so the arrow follows its icon
+  TimelineListPinView *selected =
+      timeline_layer->compact ? prv_list_get_selected(timeline_layer) : nullptr;
+  if (selected) {
+    GRect icon_frame;
+    prv_list_get_icon_frame(timeline_layer, selected, &((Layer *)selected->layout)->frame,
+                            &icon_frame);
+    arrow_base_center_y = icon_frame.origin.y + icon_frame.size.h / 2;
+  }
+#endif
   const int16_t toward_content = sidebar_on_right ? -1 : 1;
   const int16_t arrow_point_x_offset =
       PBL_IF_RECT_ELSE(toward_content, -toward_content) * arrow_size.w;
@@ -745,7 +1487,7 @@ static void prv_update_proc(struct Layer *layer, GContext *ctx) {
     }
   };
 
-  if (timeline_layer->scroll_direction == TimelineScrollDirectionUp) {
+  if (timeline_layer->scroll_direction == TimelineScrollDirectionUp && !timeline_layer->compact) {
     // arrow is in a different position for past & future, but only on rectangular displays
     gpath_move_to(
         &arrow_path,
@@ -768,6 +1510,10 @@ static void prv_update_proc(struct Layer *layer, GContext *ctx) {
 
 // when we create a new next or previous item, we want it out of view so we can animate it in
 void timeline_layer_set_next_item(TimelineLayer *layer, int index) {
+  if (layer->compact) {
+    // The compact list loads the pins it needs as it moves
+    return;
+  }
   PBL_LOG_DBG("Setting next item with index %d", index);
   TimelineIterState *iter_state = timeline_model_get_iter_state_with_timeline_idx(index);
   if (!iter_state) {
@@ -780,6 +1526,9 @@ void timeline_layer_set_next_item(TimelineLayer *layer, int index) {
 }
 
 void timeline_layer_set_prev_item(TimelineLayer *layer, int index) {
+  if (layer->compact) {
+    return;
+  }
   PBL_LOG_DBG("Setting prev item with index %d", index);
   TimelineIterState *iter_state = timeline_model_get_iter_state_with_timeline_idx(index);
   if (!iter_state) {
@@ -809,6 +1558,11 @@ bool timeline_layer_should_animate_day_separator(TimelineLayer *layer) {
 
 void timeline_layer_move_data(TimelineLayer *layer, int delta) {
   PBL_ASSERTN(delta == 1 || delta == -1);
+  if (layer->compact) {
+    layer->move_delta = delta * prv_get_scroll_delta(layer);
+    prv_list_move(layer);
+    return;
+  }
   if (delta == 1) {
     if (layer->layouts[s_nonvisible_items[0]]) {
       prv_destroy_layout(layer, s_nonvisible_items[0]);
@@ -838,18 +1592,30 @@ void timeline_layer_move_data(TimelineLayer *layer, int delta) {
 }
 
 TimelineLayout *timeline_layer_get_current_layout(TimelineLayer *timeline_layer) {
+  if (timeline_layer->compact) {
+    TimelineListPinView *selected = prv_list_get_selected(timeline_layer);
+    return selected ? selected->layout : nullptr;
+  }
   return timeline_layer->layouts[TIMELINE_LAYER_FIRST_VISIBLE_LAYOUT];
 }
 
 void timeline_layer_get_current_icon_frame(TimelineLayer *layer, GRect *frame_out) {
+  if (layer->compact) {
+    prv_list_get_pin_icon_frame(layer, 0, frame_out);
+    return;
+  }
   GRect frame;
   prv_get_frame(layer, TIMELINE_LAYER_FIRST_VISIBLE_LAYOUT, &frame);
   timeline_layout_get_icon_frame(&frame, layer->scroll_direction, frame_out);
 }
 
 TimelineLayoutInfo *timeline_layer_get_layout_info(TimelineLayer *layer, int index) {
+  if (layer->compact) {
+    TimelineListPinView *pin = prv_list_get_pin(layer, index - TIMELINE_LAYER_FIRST_VISIBLE_LAYOUT);
+    return pin ? &pin->info : nullptr;
+  }
   return (index >= 0 && index < TIMELINE_NUM_ITEMS_IN_TIMELINE_LAYER) ? layer->layouts_info[index]
-                                                                     : nullptr;
+                                                                      : nullptr;
 }
 
 void timeline_layer_reset(TimelineLayer *layer) {
@@ -864,6 +1630,14 @@ void timeline_layer_reset(TimelineLayer *layer) {
     .res_id = TIMELINE_RESOURCE_DAY_SEPARATOR,
   };
   peek_layer_set_icon(&layer->day_separator, &timeline_res);
+
+  if (layer->compact) {
+    prv_list_reset(layer);
+#if PBL_RECT
+    timeline_relbar_layer_reset(layer);
+#endif
+    return;
+  }
 
   // reset the layouts
   prv_reset_layouts(layer);
@@ -952,10 +1726,15 @@ static Animation *prv_create_bounce_back_animation(Layer *layer, const GRect *to
 }
 
 Animation *timeline_layer_create_bounce_back_animation(TimelineLayer *layer, GPoint direction) {
-  Animation *animations[TIMELINE_NUM_VISIBLE_ITEMS + 2] = {};
+  Animation *animations[TIMELINE_LIST_MAX_PINS + 2] = {};
   int num_animations = 0;
 
-  for (int i = 0; i < TIMELINE_NUM_VISIBLE_ITEMS; i++) {
+  for (int i = 0; layer->compact && i < layer->list.num_pins; i++) {
+    TimelineListPinView *pin = layer->list.pins[i];
+    animations[num_animations++] =
+        prv_create_bounce_back_animation((Layer *)pin->layout, &pin->frame, direction);
+  }
+  for (int i = 0; !layer->compact && i < TIMELINE_NUM_VISIBLE_ITEMS; i++) {
     TimelineLayout *layout = layer->layouts[s_visible_items[i]];
     if (layout) {
       GRect frame;
@@ -978,6 +1757,7 @@ Animation *timeline_layer_create_bounce_back_animation(TimelineLayer *layer, GPo
 }
 
 void timeline_layer_set_layouts_hidden(TimelineLayer *layer, bool hidden) {
+  prv_list_set_hidden(layer, hidden);
   for (int i = 0; i < TIMELINE_NUM_ITEMS_IN_TIMELINE_LAYER; i++) {
     TimelineLayout *layout = layer->layouts[i];
     if (layout) {
@@ -997,6 +1777,8 @@ void timeline_layer_init(TimelineLayer *layer, const GRect *frame_ref,
   layer_set_update_proc(&layer->layer, prv_update_proc);
   TimelineIterState *state = timeline_model_get_current_state();
   layer->current_day = PBL_NULL_SAFE_FIELD_ACCESS(state, current_day, 0);
+  // Smaller text leaves room for more pins than the fixed slots show
+  layer->compact = (system_theme_get_content_size() < PreferredContentSizeDefault);
   const TimelineLayerStyle *style = prv_get_style();
   // The arrow is inverted on round, so hide it by extending the width of the sidebar
   layer->sidebar_width = frame_ref->size.w + PBL_IF_ROUND_ELSE(style->sidebar_arrow_size.w, 0);
@@ -1046,6 +1828,7 @@ void timeline_layer_init(TimelineLayer *layer, const GRect *frame_ref,
 
 void timeline_layer_deinit(TimelineLayer *layer) {
   animation_unschedule_all();
+  prv_list_deinit(layer);
   for (int i = 0; i < TIMELINE_NUM_ITEMS_IN_TIMELINE_LAYER; i++) {
     if (layer->layouts[i]) {
       prv_destroy_layout(layer, i);
