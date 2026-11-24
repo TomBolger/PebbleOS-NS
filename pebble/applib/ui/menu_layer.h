@@ -511,10 +511,20 @@ typedef struct MenuLayer {
   //! \ref menu_layer_set_highlight_colors.
   bool highlight_colors_follow_theme : 1;
 
+  //! @internal
+  //! Round only: draw the highlight as a pill inside the bezel instead of a full-width bar. Set by
+  //! default for system UI. Packs into \ref normal_colors_follow_theme's byte.
+  bool round_pill_highlight : 1;
+
+  //! @internal
+  //! Round only: extra room between the bezel and the left end of the highlight pill, see
+  //! menu_layer_set_round_pill_left_margin(). Carved from \ref padding.
+  uint8_t round_pill_left_margin;
+
   //! Add some padding to keep track of the \ref MenuLayer size budget.
   //! As long as the size stays within this budget, 2.x apps can safely use the 3.x MenuLayer type.
   //! The actual size check is generated from applib_malloc.json, not asserted here.
-  uint8_t padding[14];
+  uint8_t padding[13];
 } MenuLayer;
 
 //! Padding used below the last item in pixels

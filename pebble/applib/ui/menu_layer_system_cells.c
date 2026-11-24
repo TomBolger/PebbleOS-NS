@@ -300,9 +300,28 @@ int16_t menu_cell_round_chord_inset(const GContext *ctx, GRect frame) {
 }
 
 GRect menu_cell_round_follow_bezel(const GContext *ctx, GRect frame) {
-  const int16_t max_x = (int16_t)(PBL_DISPLAY_WIDTH - menu_cell_round_chord_inset(ctx, frame) -
-                                  MENU_CELL_ROUND_BEZEL_MARGIN);
-  frame.origin.x = (int16_t)(max_x - frame.size.w - ctx->draw_state.drawing_box.origin.x);
+  // Every row of a round menu with the pill is as tall, so right-aligned icons, such as radio
+  // buttons, line up in one column: as far in from the end of the pill of a row resting one row
+  // from the middle, the furthest a resting selection gets from it, as they are from the bezel in
+  // the middle of the display. Following each row's own chord instead staggered them. Rows
+  // further out, where the screen is narrower, keep the icon as far in from their own pill's end.
+  const GRect row = ctx->draw_state.drawing_box;
+  const GSize display = GSize(PBL_DISPLAY_WIDTH, PBL_DISPLAY_HEIGHT);
+  const GRect bounds = GRect(row.origin.x, 0, row.size.w, display.h);
+  const GRect resting =
+      GRect(row.origin.x, (display.h / 2) - (row.size.h / 2) - row.size.h, row.size.w, row.size.h);
+  const int16_t gap = MENU_CELL_ROUND_BEZEL_MARGIN - MENU_ROUND_PILL_BEZEL_MARGIN;
+  MenuRoundShape column;
+  MenuRoundShape own;
+  int16_t max_x = (int16_t)(PBL_DISPLAY_WIDTH - menu_cell_round_chord_inset(ctx, frame) -
+                            MENU_CELL_ROUND_BEZEL_MARGIN);
+  if (menu_round_pill(display, bounds, resting, row.size.h, 0, &column)) {
+    max_x = (int16_t)(grect_get_max_x(&column.box) - gap);
+    if (menu_round_pill(display, bounds, row, row.size.h, 0, &own)) {
+      max_x = PBL_MIN(max_x, (int16_t)(grect_get_max_x(&own.box) - gap));
+    }
+  }
+  frame.origin.x = (int16_t)(max_x - frame.size.w - row.origin.x);
   return frame;
 }
 

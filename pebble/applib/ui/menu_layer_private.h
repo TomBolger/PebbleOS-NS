@@ -31,16 +31,24 @@ typedef struct MenuRenderIterator {
 } MenuRenderIterator;
 
 #if PBL_ROUND
-//! Gap between a right-aligned cell icon and the bezel on round displays
-#define MENU_CELL_ROUND_BEZEL_MARGIN 8
+#include "menu_layer_round.h"
+
+//! Gap between a right-aligned cell icon and the bezel on round displays, keeping the icon well
+//! inside the end of the highlight pill
+#define MENU_CELL_ROUND_BEZEL_MARGIN 11
 
 //! How much narrower the display is at \a frame's row, in the cell being drawn, than across its
 //! middle, on each side.
 int16_t menu_cell_round_chord_inset(const GContext *ctx, GRect frame);
 
-//! Moves \a frame, an icon on the right of the cell being drawn, so it sits
-//! MENU_CELL_ROUND_BEZEL_MARGIN in from the bezel at its row, following the curve of the display.
+//! Moves \a frame, an icon on the right of the cell being drawn, into the column right-aligned
+//! icons share in every row: inside the round end of the pill of a row as tall resting a row from
+//! the middle, as far in as MENU_CELL_ROUND_BEZEL_MARGIN is from the bezel in the middle.
 GRect menu_cell_round_follow_bezel(const GContext *ctx, GRect frame);
+
+//! Moves the left end of the highlight pill \a margin further in from the bezel, e.g. to keep it
+//! clear of something drawn along the rim. 0 restores the default.
+void menu_layer_set_round_pill_left_margin(MenuLayer *menu_layer, uint8_t margin);
 #endif
 
 #ifdef CONFIG_TOUCH
