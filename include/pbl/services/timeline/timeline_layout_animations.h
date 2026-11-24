@@ -36,6 +36,30 @@ void timeline_layout_transition_card_to_pin(TimelineLayout *card_timeline_layout
                                             TimelineLayout *pin_timeline_layout);
 
 /**
+ * @brief Morph the icon of a layout from one frame to another as its pin scrolls.
+ *
+ * The icon morphs as its layer's reel plays, and keeps morphing until
+ * timeline_layout_finish_icon_up_down() leaves it at rest. Does nothing if the icon cannot be
+ * loaded.
+ *
+ * @param layout Layout whose icon moves.
+ * @param icon_from Start frame of the icon.
+ * @param icon_to End frame of the icon.
+ * @param duration Duration in milliseconds.
+ * @param interpolate Interpolation function.
+ */
+void timeline_layout_animate_icon_up_down(TimelineLayout *layout, const GRect *icon_from,
+                                          const GRect *icon_to, uint32_t duration,
+                                          InterpolateInt64Function interpolate);
+
+/**
+ * @brief Leave the icon morphed by timeline_layout_animate_icon_up_down() at rest at its end frame.
+ *
+ * @param layout Layout whose icon moved.
+ */
+void timeline_layout_finish_icon_up_down(TimelineLayout *layout);
+
+/**
  * @brief Create an animation moving a layout and its icon between two frames.
  *
  * @param layout Layout to move.
