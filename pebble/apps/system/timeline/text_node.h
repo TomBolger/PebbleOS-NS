@@ -58,6 +58,8 @@ typedef struct {
   uint8_t content_inset;
   bool text_flow;
   bool paging;
+  //! What text flows inside instead of the display, or nullptr
+  const GPerimeter *perimeter;
 } GTextNodeDrawConfig;
 
 typedef struct GTextNode GTextNode;
