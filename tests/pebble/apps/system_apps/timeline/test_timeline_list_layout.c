@@ -66,7 +66,7 @@ static void prv_assert_out_at_edges(const TimelineListPin *pins, const int16_t *
 
 static void prv_arrange(const TimelineListGeometry *geometry, const TimelineListPin *pins,
                         int num_pins, int selected, int16_t *tops, bool *shown) {
-  timeline_list_arrange(geometry, pins, num_pins, selected, 0 /* scroll */, tops, shown);
+  timeline_list_arrange(geometry, pins, num_pins, selected, tops, shown);
 }
 
 void test_timeline_list_layout__selected_rests_on_anchor(void) {
@@ -177,59 +177,6 @@ void test_timeline_list_layout__neighbours_stay_together(void) {
   prv_assert_stacked(pins, 2, tops);
   cl_assert_equal_i(tops[4] + 20, HEIGHT - EDGE);
   prv_assert_stacked(pins + 3, 2, tops + 3);
-}
-
-void test_timeline_list_layout__whole_screen_anchored(void) {
-  // A selected pin that does not fit below its anchor takes the screen from there, page after page
-  TimelineListPin pin = prv_pin(200);
-  pin.anchor_y = 20;
-  const TimelineListPin pins[] = {prv_cut_pin(30), pin, prv_cut_pin(30)};
-  bool whole;
-  const int16_t top = timeline_list_selected_top(&s_centered, pins, 3, 1, &whole);
-  cl_assert(whole);
-  cl_assert_equal_i(top + 20, HEIGHT / 2);
-  const int16_t page = timeline_list_page_height(&s_centered);
-  cl_assert_equal_i(page, HEIGHT);
-  const int16_t max_scroll = timeline_list_max_scroll(top + 200, page);
-  cl_assert_equal_i(max_scroll, HEIGHT);
-  // The next pin comes in at its end
-  int16_t tops[3];
-  bool shown[3];
-  timeline_list_arrange(&s_centered, pins, 3, 1, max_scroll, tops, shown);
-  cl_assert_equal_i(tops[1], top - max_scroll);
-  cl_assert(shown[2]);
-  cl_assert(!shown[0]);
-}
-
-void test_timeline_list_layout__whole_screen_top(void) {
-  TimelineListGeometry geometry = s_top;
-  geometry.page_top = -4;
-  const TimelineListPin pins[] = {prv_pin(30), prv_pin(2 * HEIGHT - 100), prv_pin(30)};
-  bool whole;
-  cl_assert_equal_i(timeline_list_selected_top(&geometry, pins, 3, 1, &whole), -4);
-  cl_assert(whole);
-  int16_t tops[3];
-  bool shown[3];
-  prv_arrange(&geometry, pins, 3, 1, tops, shown);
-  cl_assert(!shown[0] && !shown[2]);
-  const int16_t max_scroll = timeline_list_max_scroll(-4 + pins[1].height, HEIGHT);
-  timeline_list_arrange(&geometry, pins, 3, 1, max_scroll, tops, shown);
-  cl_assert_equal_i(tops[1], -4 - max_scroll);
-  cl_assert(shown[2]);
-  // A pin that fits on the screen but not between the margins takes the whole screen too
-  const TimelineListPin fits[] = {prv_pin(30), prv_pin(HEIGHT - MARGIN), prv_pin(30)};
-  cl_assert_equal_i(timeline_list_selected_top(&geometry, fits, 3, 1, &whole), -4);
-  cl_assert(whole);
-}
-
-void test_timeline_list_layout__max_scroll(void) {
-  // Text that fits on a page does not scroll
-  cl_assert_equal_i(timeline_list_max_scroll(100, 120), 0);
-  cl_assert_equal_i(timeline_list_max_scroll(120, 120), 0);
-  // One line past the page is a whole page more, so that pages line up with the page frame
-  cl_assert_equal_i(timeline_list_max_scroll(121, 120), 120);
-  cl_assert_equal_i(timeline_list_max_scroll(240, 120), 120);
-  cl_assert_equal_i(timeline_list_max_scroll(241, 120), 240);
 }
 
 void test_timeline_list_layout__stack_around_run(void) {
