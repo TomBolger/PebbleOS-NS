@@ -33,6 +33,10 @@ void clock_face_push_static(const WeatherLocationForecast *days, size_t num_days
 
 void clock_face_dismiss(bool animated);
 
+// Sunrise and sunset in the watch's local minutes from midnight, or -1 if unknown. Clear hours
+// between sunset and sunrise show the moon in its current phase instead of the sun.
+void clock_face_set_sun_times(int sunrise_min, int sunset_min);
+
 // Update hourly temperatures for a given day (24 signed values).
 // The update is applied only if the clock is currently showing that day.
 void clock_face_update_hourly_temps_for_day(int day_index, const int8_t *temps, size_t count);
