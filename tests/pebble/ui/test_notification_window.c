@@ -289,7 +289,7 @@ void test_notification_window__cleanup(void) {
 extern NotificationWindowData s_notification_window_data;
 
 //! Static function in swap_layer.c used to scroll
-void prv_attempt_scroll(SwapLayer *swap_layer, ScrollDirection direction, bool is_repeating);
+void prv_attempt_scroll(SwapLayer *swap_layer, ScrollDirection direction);
 
 static void prv_render_notification_window(unsigned int num_down_scrolls) {
   Window *window = &s_notification_window_data.window;
@@ -304,7 +304,7 @@ static void prv_render_notification_window(unsigned int num_down_scrolls) {
   // Scroll down the specified number of times
   SwapLayer *swap_layer = &s_notification_window_data.swap_layer;
   for (int i = 0; i < num_down_scrolls; i++) {
-    prv_attempt_scroll(swap_layer, ScrollDirectionDown, false /* is_repeating */);
+    prv_attempt_scroll(swap_layer, ScrollDirectionDown);
     fake_animation_complete(swap_layer->animation);
     swap_layer->animation = nullptr;
   }
