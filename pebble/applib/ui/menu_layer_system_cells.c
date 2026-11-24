@@ -325,15 +325,13 @@ GRect menu_cell_round_follow_bezel(const GContext *ctx, GRect frame) {
   return frame;
 }
 
-static PBL_ALWAYS_INLINE bool prv_should_render_subtitle_round(const MenuCellLayerConfig *config,
-                                                               bool is_selected) {
-  // If the cell isn't selected and there's no value text, then no subtitle text should be shown
-  return ((is_selected || config->value) && (config->subtitle != nullptr));
+int16_t menu_cell_round_subtitle_height(void) {
+  return fonts_get_font_height(prv_get_cell_font(TextStyleFont_MenuCellSubtitle));
 }
 
 static PBL_ALWAYS_INLINE GRect prv_menu_cell_basic_draw_custom_one_column_round(
     GContext *ctx, const GRect *cell_layer_bounds, const MenuCellLayerConfig *config,
-    GTextAlignment text_alignment, GAlign container_alignment, bool is_selected) {
+    GTextAlignment text_alignment, GAlign container_alignment) {
   if (!cell_layer_bounds) {
     return GRectZero;
   }
@@ -353,7 +351,9 @@ static PBL_ALWAYS_INLINE GRect prv_menu_cell_basic_draw_custom_one_column_round(
   GSize icon_frame_size = GSizeZero;
 
   const GFont subtitle_font = prv_get_cell_subtitle_font(config);
-  const bool render_subtitle = prv_should_render_subtitle_round(config, is_selected);
+  // Shown on every row it fits in, as on rectangular displays: a round list with the pill lays its
+  // rows out tall enough for it, see menu_layer_set_round_subtitle_height()
+  const bool render_subtitle = (config->subtitle != nullptr);
   if (render_subtitle) {
     subtitle_text_frame_height = fonts_get_font_height(subtitle_font);
   }
@@ -531,8 +531,7 @@ static PBL_ALWAYS_INLINE GRect prv_menu_cell_basic_draw_custom_one_column_round(
 }
 
 static PBL_ALWAYS_INLINE void prv_menu_cell_basic_draw_custom_two_columns_round(
-    GContext *ctx, const GRect *cell_layer_bounds, const MenuCellLayerConfig *config,
-    bool is_selected) {
+    GContext *ctx, const GRect *cell_layer_bounds, const MenuCellLayerConfig *config) {
   if (!cell_layer_bounds) {
     return;
   }
@@ -568,7 +567,7 @@ static PBL_ALWAYS_INLINE void prv_menu_cell_basic_draw_custom_two_columns_round(
   prv_grect_inset(&rect, &GEdgeInsets(0, right_element_size.w + bezel_shift_x, 0, left_inset));
   // We overwrite rect to store the rect of the title text frame drawn in the one-column function
   rect = prv_menu_cell_basic_draw_custom_one_column_round(ctx, &rect, config, GTextAlignmentLeft,
-                                                          GAlignLeft, is_selected);
+                                                          GAlignLeft);
   // Don't draw the right element if we couldn't draw the title in the left column
   if (grect_equal(&rect, &GRectZero)) {
     return;
@@ -612,11 +611,10 @@ static PBL_ALWAYS_INLINE void prv_menu_cell_basic_draw_custom_round(
   prv_grect_inset(&cell_layer_bounds, &GEdgeInsets(0, horizontal_inset + config->horizontal_inset));
 
   if (draw_two_columns) {
-    prv_menu_cell_basic_draw_custom_two_columns_round(ctx, &cell_layer_bounds, config,
-                                                      cell_is_selected);
+    prv_menu_cell_basic_draw_custom_two_columns_round(ctx, &cell_layer_bounds, config);
   } else {
-    prv_menu_cell_basic_draw_custom_one_column_round(
-        ctx, &cell_layer_bounds, config, GTextAlignmentCenter, GAlignCenter, cell_is_selected);
+    prv_menu_cell_basic_draw_custom_one_column_round(ctx, &cell_layer_bounds, config,
+                                                     GTextAlignmentCenter, GAlignCenter);
   }
 }
 #endif // PBL_ROUND

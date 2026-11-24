@@ -10,6 +10,7 @@
 #include <applib/ui/app_window_stack.h>
 #include <applib/ui/dialogs/simple_dialog.h>
 #include <applib/ui/menu_layer.h>
+#include <applib/ui/menu_layer_private.h>
 #include <applib/ui/window.h>
 #include <process_management/app_manager.h>
 #include <process_management/app_menu_data_source.h>
@@ -141,6 +142,10 @@ static void prv_window_load(Window *window) {
   const GRect menu_layer_frame = PBL_IF_RECT_ELSE(
       window->layer.bounds, grect_inset_internal(window->layer.bounds, 0, STATUS_BAR_LAYER_HEIGHT));
   menu_layer_init(menu_layer, &menu_layer_frame);
+#if PBL_ROUND
+  // Every row shows its subtitle, so the rows are laid out tall enough for it
+  menu_layer_set_round_subtitle_height(menu_layer, menu_cell_round_subtitle_height());
+#endif
   app_menu_data_source_init(&data->data_source,
                             &(AppMenuDataSourceCallbacks){
                               .changed = prv_reload_menu_data,

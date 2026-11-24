@@ -14,6 +14,7 @@
 #include <applib/app_malloc.h>
 #include <applib/event_service_client.h>
 #include <applib/ui/menu_layer.h>
+#include <applib/ui/menu_layer_private.h>
 #include <applib/ui/option_menu_window.h>
 #include <applib/ui/ui.h>
 #include <kernel/events.h>
@@ -188,6 +189,10 @@ static void prv_settings_window_load(Window *window) {
   // Create the menu
   MenuLayer *menu_layer = &data->menu_layer;
   menu_layer_init(menu_layer, &bounds);
+#if PBL_ROUND
+  // Every row shows its subtitle, so the rows are laid out tall enough for it
+  menu_layer_set_round_subtitle_height(menu_layer, menu_cell_round_subtitle_height());
+#endif
   menu_layer_set_callbacks(menu_layer, data,
                            &(MenuLayerCallbacks){
                              .get_num_rows = prv_get_num_rows_callback,

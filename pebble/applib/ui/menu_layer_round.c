@@ -40,3 +40,31 @@ bool menu_round_pill(GSize display, GRect bounds, GRect frame, int16_t rest_h, i
   };
   return true;
 }
+
+int16_t menu_round_end_space(int16_t frame_h, int16_t end_h, int16_t next_h) {
+  return PBL_MAX((int16_t)((frame_h / 2) - end_h - (next_h / 2)), 0);
+}
+
+int16_t menu_round_row_height(int16_t frame_h, int16_t focused_h, int16_t unfocused_h,
+                              int16_t subtitle_h) {
+  const int16_t fitting = (int16_t)(frame_h / MENU_ROUND_VISIBLE_ROWS);
+  if ((unfocused_h >= fitting) || (focused_h > (frame_h / 2))) {
+    // A card, taller than that even unselected, or a page, taller than half the frame selected:
+    // it keeps its full height
+    return focused_h;
+  }
+  return (int16_t)(PBL_MIN(focused_h, fitting) + subtitle_h);
+}
+
+int16_t menu_round_rest_offset(int16_t frame_h, int16_t content_h, int16_t span_y, int16_t span_h,
+                               int16_t top_space, int16_t bottom_space) {
+  // The content may have been measured before the selected row took its height
+  content_h = PBL_MAX(content_h, (int16_t)(span_y + span_h));
+  const int16_t highest = top_space;
+  const int16_t lowest = (int16_t)(frame_h - content_h - bottom_space);
+  if (lowest >= highest) {
+    return (int16_t)((lowest + highest) / 2);
+  }
+  const int16_t centred = (int16_t)((frame_h / 2) - span_y - (span_h / 2));
+  return PBL_CLAMP(centred, lowest, highest);
+}

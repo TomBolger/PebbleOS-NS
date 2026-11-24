@@ -504,8 +504,38 @@ static inline int16_t prv_menu_layer_get_header_height(MenuLayer *menu_layer,
   }
 }
 
+#if PBL_ROUND
+//! Height of \a index in a round list with the pill, whatever is selected, see
+//! menu_round_row_height()
+static int16_t prv_round_focused_height(MenuLayer *menu_layer, MenuIndex index) {
+  const int16_t frame_h = menu_layer->scroll_layer.layer.frame.size.h;
+  if (!menu_layer->callbacks.get_cell_height) {
+    const int16_t h = menu_cell_basic_cell_height();
+    return menu_round_row_height(frame_h, h, h, menu_layer->round_subtitle_height);
+  }
+  const MenuIndex selected_index = menu_layer->selection.index;
+  menu_layer->selection.index = index;
+  const int16_t focused =
+      menu_layer->callbacks.get_cell_height(menu_layer, &index, menu_layer->callback_context);
+  menu_layer->selection.index.section = MENU_INDEX_NOT_FOUND;
+  const int16_t unfocused =
+      menu_layer->callbacks.get_cell_height(menu_layer, &index, menu_layer->callback_context);
+  menu_layer->selection.index = selected_index;
+  return menu_round_row_height(frame_h, focused, unfocused, menu_layer->round_subtitle_height);
+}
+
+static bool prv_draws_round_pill(const MenuLayer *menu_layer);
+#endif
+
 static inline int16_t prv_menu_layer_get_cell_height(MenuLayer *menu_layer, MenuIndex *cell_index,
                                                      bool provide_correct_selection_index) {
+#if PBL_ROUND
+  // A round list with the pill lays every row out at its focused height, whatever is selected:
+  // rows stay put while the selection moves, and are spaced alike above and below it.
+  if (menu_layer->center_focused && prv_draws_round_pill(menu_layer)) {
+    return prv_round_focused_height(menu_layer, *cell_index);
+  }
+#endif
   if (menu_layer->callbacks.get_cell_height) {
     const MenuIndex prev_selection_index = menu_layer->selection.index;
     if (!provide_correct_selection_index) {
@@ -592,6 +622,13 @@ void menu_layer_set_round_pill_left_margin(MenuLayer *menu_layer, uint8_t margin
   if (menu_layer->round_pill_left_margin != margin) {
     menu_layer->round_pill_left_margin = margin;
     layer_mark_dirty(menu_layer_get_layer(menu_layer));
+  }
+}
+
+void menu_layer_set_round_subtitle_height(MenuLayer *menu_layer, uint8_t height) {
+  if (menu_layer->round_subtitle_height != height) {
+    menu_layer->round_subtitle_height = height;
+    menu_layer_reload_data(menu_layer);
   }
 }
 #endif
@@ -1383,20 +1420,48 @@ static void prv_menu_layer_update_selection_highlight(MenuLayer *menu_layer, boo
   }
 }
 
-//! Content offset at which \a span rests on a center-focused menu: centred. On round, a list
-//! that scrolls stops at its ends instead, so the first and last rows rest at the top and bottom
-//! edges with no blank space around them, and a list that fits is centred as a whole.
+#if PBL_ROUND
+//! Focused height of the row \a row of \a section, or 0 if there is none
+static int16_t prv_round_row_height(MenuLayer *menu_layer, uint16_t section, int32_t row) {
+  if ((row < 0) || (row >= prv_menu_layer_get_num_rows(menu_layer, section))) {
+    return 0;
+  }
+  return prv_round_focused_height(menu_layer, MenuIndex(section, (uint16_t)row));
+}
+
+//! Round menus with the pill rest past their ends far enough that the first and last rows stop
+//! with their neighbour in the middle, keeping the pill where the screen is wide. Others stop at
+//! their ends. The space follows from the rows' focused heights, the heights they always have,
+//! so it is the same for every selection.
+static void prv_round_end_spaces(MenuLayer *menu_layer, int16_t *top, int16_t *bottom) {
+  *top = 0;
+  *bottom = 0;
+  const uint16_t sections = prv_menu_layer_get_num_sections(menu_layer);
+  if (!prv_draws_round_pill(menu_layer) || (sections == 0)) {
+    return;
+  }
+  const int16_t frame_h = menu_layer->scroll_layer.layer.frame.size.h;
+  *top = menu_round_end_space(frame_h, prv_round_row_height(menu_layer, 0, 0),
+                              prv_round_row_height(menu_layer, 0, 1));
+  const uint16_t last_section = sections - 1;
+  const int32_t last = (int32_t)prv_menu_layer_get_num_rows(menu_layer, last_section) - 1;
+  *bottom = menu_round_end_space(frame_h, prv_round_row_height(menu_layer, last_section, last),
+                                 prv_round_row_height(menu_layer, last_section, last - 1));
+}
+#endif
+
+//! Content offset at which \a span rests on a center-focused menu: centred, but on round, the
+//! list stops at its ends, see prv_round_end_spaces().
 static int16_t prv_center_focus_rest_offset_y(MenuLayer *menu_layer, const MenuCellSpan *span) {
   const int16_t frame_h = menu_layer->scroll_layer.layer.frame.size.h;
-  const int16_t y = (int16_t)((frame_h / 2) - span->y - (span->h / 2));
 #if PBL_ROUND
-  const int16_t content_h = scroll_layer_get_content_size(&menu_layer->scroll_layer).h;
-  if (content_h <= frame_h) {
-    return (int16_t)((frame_h - content_h) / 2);
-  }
-  return PBL_CLAMP(y, (int16_t)(frame_h - content_h), (int16_t)0);
+  int16_t top_space;
+  int16_t bottom_space;
+  prv_round_end_spaces(menu_layer, &top_space, &bottom_space);
+  return menu_round_rest_offset(frame_h, scroll_layer_get_content_size(&menu_layer->scroll_layer).h,
+                                span->y, span->h, top_space, bottom_space);
 #else
-  return y;
+  return (int16_t)((frame_h / 2) - span->y - (span->h / 2));
 #endif
 }
 

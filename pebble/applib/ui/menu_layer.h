@@ -521,10 +521,15 @@ typedef struct MenuLayer {
   //! menu_layer_set_round_pill_left_margin(). Carved from \ref padding.
   uint8_t round_pill_left_margin;
 
+  //! @internal
+  //! Round only: height of the subtitle line under the title of every row of a list with the pill,
+  //! 0 without, see menu_layer_set_round_subtitle_height(). Carved from \ref padding.
+  uint8_t round_subtitle_height;
+
   //! Add some padding to keep track of the \ref MenuLayer size budget.
   //! As long as the size stays within this budget, 2.x apps can safely use the 3.x MenuLayer type.
   //! The actual size check is generated from applib_malloc.json, not asserted here.
-  uint8_t padding[13];
+  uint8_t padding[12];
 } MenuLayer;
 
 //! Padding used below the last item in pixels
