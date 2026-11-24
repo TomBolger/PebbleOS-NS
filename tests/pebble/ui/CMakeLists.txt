@@ -331,6 +331,7 @@ pbl_clar_test(test_notification_window
     pebble/applib/ui/status_bar_layer.c
     pebble/applib/ui/window.c
     pebble/apps/system/timeline/text_node.c
+    pebble/popups/notifications/notification_round_actions.c
     pebble/popups/notifications/notification_window.c
     pebble/popups/notifications/notifications_presented_list.c
     pebble/services/notifications/notification_image.c
