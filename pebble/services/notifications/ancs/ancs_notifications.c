@@ -10,6 +10,7 @@
 #include <pbl/services/blob_db/ios_notif_pref_db.h>
 #include <pbl/services/blob_db/pin_db.h>
 #include <pbl/services/blob_db/reminder_db.h>
+#include <pbl/services/notifications/alerts_preferences_private.h>
 #include <pbl/services/notifications/ancs/ancs_filtering.h>
 #include <pbl/services/notifications/ancs/ancs_item.h>
 #include <pbl/services/notifications/ancs/ancs_notifications.h>
@@ -49,7 +50,19 @@ static void prv_dismiss_notification(const TimelineItem *notification) {
   }
 }
 
+static void prv_remove_stored(const Uuid *id) {
+  notification_storage_remove(id);
+  notifications_handle_notification_removed((Uuid *)id);
+}
+
 static void prv_handle_new_ancs_notif(TimelineItem *notification, bool alert) {
+  // After iOS restarts, UIDs start over: one stored under this UID is something else, gone.
+  Uuid stale_id;
+  if (ancs_notifications_is_mirroring() &&
+      notification_storage_find_ancs_notification_id(notification->header.ancs_uid, &stale_id)) {
+    prv_remove_stored(&stale_id);
+  }
+
   uuid_generate(&notification->header.id);
   if (alert) {
     notifications_add_notification(notification);
@@ -241,7 +254,7 @@ static bool prv_should_ignore_because_muted(const iOSNotifPrefs *app_notif_prefs
   return ancs_filtering_is_muted(app_notif_prefs);
 }
 
-static bool prv_should_ignore_notification(uint32_t uid, time_t timestamp,
+static bool prv_should_ignore_notification(uint32_t uid, time_t timestamp, bool mirrored,
                                            const struct pbl_bt_ancs_attr *const *notif_attributes,
                                            iOSNotifPrefs *app_notif_prefs) {
   const struct pbl_bt_ancs_attr *app_id = notif_attributes[ANCS_NOTIF_ATTR_APP_ID];
@@ -291,8 +304,8 @@ static bool prv_should_ignore_notification(uint32_t uid, time_t timestamp,
     return true;
   }
 
-  // filter out super-old notifications
-  if (prv_should_ignore_because_stale(timestamp)) {
+  // filter out super-old notifications, unless mirroring what is in the notification center
+  if (!mirrored && prv_should_ignore_because_stale(timestamp)) {
     return true;
   }
 
@@ -326,14 +339,19 @@ void ancs_notifications_handle_message(const struct pbl_bt_ancs_notif *notif, bo
   }
 
   const time_t timestamp = prv_get_timestamp_from_ancs_date(date, app_id);
+  const bool mirrored = is_recovered && ancs_notifications_is_mirroring();
 
-  if (prv_should_ignore_notification(uid, timestamp, notif_attributes, app_notif_prefs)) {
+  if (prv_should_ignore_notification(uid, timestamp, mirrored, notif_attributes, app_notif_prefs)) {
     goto cleanup;
   }
 
+  // Recovered notifications from before the disconnection were already seen: they are only
+  // kept when mirroring, without alerting.
+  bool missed = true;
   if (is_recovered) {
     const bool has_valid_date = date && (ancs_notifications_util_parse_timestamp(date) != 0);
-    if (prv_should_ignore_because_not_missed(has_valid_date, timestamp)) {
+    missed = !prv_should_ignore_because_not_missed(has_valid_date, timestamp);
+    if (!missed && !mirrored) {
       PBL_LOG_DBG("Ignoring pre-existing ANCS notification: %" PRIu32, uid);
       goto cleanup;
     }
@@ -385,7 +403,8 @@ void ancs_notifications_handle_message(const struct pbl_bt_ancs_notif *notif, bo
     PBL_LOG_DBG("Updating ANCS notification: %" PRIu32, uid);
     prv_handle_ancs_update(notification, &existing_header);
   } else {
-    const bool alert = !is_recovered || (timestamp >= (pbl_realtime() - RECOVERED_ALERT_MAX_AGE_S));
+    const bool alert =
+        !is_recovered || (missed && (timestamp >= (pbl_realtime() - RECOVERED_ALERT_MAX_AGE_S)));
     PBL_LOG_DBG("New ANCS notification: %" PRIu32 " (recovered=%d, alert=%d)", uid, is_recovered,
                 alert);
     prv_handle_new_ancs_notif(notification, alert);
@@ -455,4 +474,60 @@ void ancs_notifications_handle_access_denied(void) {
   }
   notifications_add_notification(item);
   timeline_item_destroy(item);
+}
+
+bool ancs_notifications_is_mirroring(void) {
+  return alerts_preferences_get_notification_dismissal_sync();
+}
+
+#define SNAPSHOT_REMOVE_BATCH 8
+
+typedef struct {
+  const uint32_t *uids;
+  size_t count;
+  Uuid gone[SNAPSHOT_REMOVE_BATCH];
+  size_t num_gone;
+} SnapshotContext;
+
+static bool prv_snapshot_has_uid(const SnapshotContext *ctx, uint32_t uid) {
+  for (size_t i = 0; i < ctx->count; i++) {
+    if (ctx->uids[i] == uid) {
+      return true;
+    }
+  }
+  return false;
+}
+
+static bool prv_find_gone_cb(void *data, SerializedTimelineItemHeader *header) {
+  SnapshotContext *ctx = data;
+  if (header->common.ancs_notif && !prv_snapshot_has_uid(ctx, header->common.ancs_uid)) {
+    ctx->gone[ctx->num_gone++] = header->common.id;
+  }
+  return ctx->num_gone < SNAPSHOT_REMOVE_BATCH;
+}
+
+void ancs_notifications_handle_snapshot(const uint32_t *uids, size_t count) {
+  SnapshotContext ctx = {
+    .uids = uids,
+    .count = count,
+  };
+  size_t num_removed = 0;
+  Uuid previous_first = UUID_INVALID;
+  notification_storage_lock();
+  do {
+    // Removed ones are skipped by the next pass
+    ctx.num_gone = 0;
+    notification_storage_iterate(prv_find_gone_cb, &ctx);
+    if ((ctx.num_gone > 0) && uuid_equal(&ctx.gone[0], &previous_first)) {
+      // It could not be removed: stop rather than find it again and again
+      break;
+    }
+    previous_first = ctx.gone[0];
+    for (size_t i = 0; i < ctx.num_gone; i++) {
+      prv_remove_stored(&ctx.gone[i]);
+    }
+    num_removed += ctx.num_gone;
+  } while (ctx.num_gone == SNAPSHOT_REMOVE_BATCH);
+  notification_storage_unlock();
+  PBL_LOG_DBG("ANCS snapshot of %zu, removed %zu gone from the phone", count, num_removed);
 }

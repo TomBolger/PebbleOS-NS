@@ -3,10 +3,12 @@
 
 #pragma once
 
+#include <string.h>
+
 #include <pbl/util/uuid.h>
 
 bool uuid_equal(const Uuid *uu1, const Uuid *uu2) {
-  return false;
+  return uu1 && uu2 && (memcmp(uu1, uu2, sizeof(Uuid)) == 0);
 }
 
 void uuid_generate(Uuid *uuid_out) {
