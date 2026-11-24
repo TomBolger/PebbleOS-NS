@@ -6,13 +6,17 @@
 #include "app_glance_service.h"
 #include "menu_layer_private.h"
 
+#include <pbl/i18n/i18n.h>
 #include <pbl/kernel/assert.h>
 #include <pbl/kernel/compiler.h>
+#include <pbl/services/timeline/notification_layout.h>
 #include <pbl/util/testing.h>
 
+#include <applib/fonts/fonts.h>
 #include <applib/graphics/gtypes.h>
 #include <applib/ui/app_window_stack.h>
 #include <applib/ui/content_indicator.h>
+#include <applib/ui/menu_layer_round.h>
 #include <resource/resource_ids.auto.h>
 #include <shell/prefs.h>
 #include <shell/system_theme.h>
@@ -28,8 +32,50 @@ const LauncherMenuLayerStyle *launcher_menu_layer_get_style(void) {
 }
 
 #if PBL_ROUND
-static int prv_num_unfocused_rows_per_side(const LauncherMenuLayerStyle *style) {
-  return (PBL_DISPLAY_HEIGHT - style->focused_cell_height) / (2 * style->unfocused_cell_height);
+//! Space between the "Apps" icon and its label
+#define ROUND_BANNER_ICON_SPACING 5
+//! The banner's content sits this much below the middle of the banner, where it is wider
+#define ROUND_BANNER_CONTENT_OFFSET_Y 3
+
+int16_t launcher_menu_layer_round_banner_height(const LauncherMenuLayerStyle *style) {
+  // As deep as the space the menu leaves above the first app, which it then fills entirely, so the
+  // first app rests right under it with the second one in the middle
+  const int16_t row_h = menu_round_row_height(PBL_DISPLAY_HEIGHT, style->focused_cell_height,
+                                              style->unfocused_cell_height);
+  return menu_round_end_space(PBL_DISPLAY_HEIGHT, row_h, row_h);
+}
+
+//! The "Apps" icon: a square with the corners of two more cascading behind it to the top left,
+//! drawn as 2 px line art with corners cut at 45 degrees, like the system's bitmap icons. Each
+//! polyline is traced with a 2 x 2 px pen whose top left corner follows the points.
+static const GPoint s_apps_icon_back[] = {{1, 11}, {1, 3}, {3, 1}, {11, 1}};
+static const GPoint s_apps_icon_middle[] = {{5, 15}, {5, 7}, {7, 5}, {15, 5}};
+static const GPoint s_apps_icon_front[] = {{11, 9},  {19, 9}, {21, 11}, {21, 19}, {19, 21},
+                                           {11, 21}, {9, 19}, {9, 11},  {11, 9}};
+#define APPS_ICON_SIZE 24
+#define APPS_ICON_PEN  2
+
+static void prv_trace_apps_icon_path(GContext *ctx, GPoint origin, const GPoint *points,
+                                     size_t num_points) {
+  for (size_t i = 1; i < num_points; i++) {
+    const GPoint from = points[i - 1];
+    const GPoint to = points[i];
+    const int16_t dx = to.x - from.x;
+    const int16_t dy = to.y - from.y;
+    const int16_t steps = PBL_MAX(PBL_ABS(dx), PBL_ABS(dy));
+    for (int16_t step = 0; step <= steps; step++) {
+      graphics_fill_rect(
+          ctx, &GRect(origin.x + from.x + (dx * step / steps),
+                      origin.y + from.y + (dy * step / steps), APPS_ICON_PEN, APPS_ICON_PEN));
+    }
+  }
+}
+
+void launcher_menu_layer_draw_apps_icon(GContext *ctx, GPoint origin, GColor color) {
+  graphics_context_set_fill_color(ctx, color);
+  prv_trace_apps_icon_path(ctx, origin, s_apps_icon_back, PBL_ARRAY_SIZE(s_apps_icon_back));
+  prv_trace_apps_icon_path(ctx, origin, s_apps_icon_middle, PBL_ARRAY_SIZE(s_apps_icon_middle));
+  prv_trace_apps_icon_path(ctx, origin, s_apps_icon_front, PBL_ARRAY_SIZE(s_apps_icon_front));
 }
 #endif
 
@@ -154,6 +200,54 @@ static int16_t prv_menu_layer_get_cell_height([[maybe_unused]] MenuLayer *menu_l
 #endif
 }
 
+#if PBL_ROUND
+static int16_t prv_menu_layer_get_header_height([[maybe_unused]] MenuLayer *menu_layer,
+                                                [[maybe_unused]] uint16_t section_index,
+                                                void *context) {
+  LauncherMenuLayer *launcher_menu_layer = context;
+  return launcher_menu_layer_round_banner_height(
+      &system_theme_get_style_for_size(launcher_menu_layer->content_size)->launcher);
+}
+
+//! The banner over the apps: a circle hanging from above the screen in the highlight colour, like
+//! the round notification banner, with the "Apps" icon and label
+static void prv_menu_layer_draw_header(GContext *ctx, const Layer *cell_layer,
+                                       [[maybe_unused]] uint16_t section_index, void *context) {
+  LauncherMenuLayer *launcher_menu_layer = context;
+  const MenuLayer *menu_layer = &launcher_menu_layer->menu_layer;
+  const GRect bounds = cell_layer->bounds;
+  // Its bottom keeps the gap from the first app's pill that the pills keep from each other
+  const int16_t bottom = bounds.size.h - (2 * MENU_ROUND_PILL_INSET_Y);
+  if (bottom <= 0) {
+    return;
+  }
+  graphics_context_set_fill_color(ctx, menu_layer->highlight_colors[MenuLayerColorBackground]);
+  graphics_fill_circle(ctx, GPoint(bounds.size.w / 2, bottom - BANNER_CIRCLE_RADIUS),
+                       BANNER_CIRCLE_RADIUS);
+
+  const GColor color = menu_layer->highlight_colors[MenuLayerColorForeground];
+  const LauncherMenuLayerStyle *style =
+      &system_theme_get_style_for_size(launcher_menu_layer->content_size)->launcher;
+  const GFont font = fonts_get_system_font(style->title_font_key);
+  const char *label = pbl_i18n_get("Apps", launcher_menu_layer);
+  const GSize label_size = graphics_text_layout_get_max_used_size(
+      ctx, label, font, GRect(0, 0, bounds.size.w, fonts_get_font_height(font)),
+      GTextOverflowModeTrailingEllipsis, GTextAlignmentLeft, nullptr);
+  const int16_t width = APPS_ICON_SIZE + ROUND_BANNER_ICON_SPACING + label_size.w;
+  const int16_t center_y = (bottom / 2) + ROUND_BANNER_CONTENT_OFFSET_Y;
+  const int16_t left = (bounds.size.w - width) / 2;
+  launcher_menu_layer_draw_apps_icon(ctx, GPoint(left, center_y - (APPS_ICON_SIZE / 2)), color);
+
+  graphics_context_set_text_color(ctx, color);
+  const int16_t font_h = fonts_get_font_height(font);
+  // Gothic draws its capitals about a third of its height below the top of the box
+  const GRect label_box = GRect(left + APPS_ICON_SIZE + ROUND_BANNER_ICON_SPACING,
+                                center_y - ((font_h * 2) / 3), label_size.w, font_h);
+  graphics_draw_text(ctx, label, font, label_box, GTextOverflowModeTrailingEllipsis,
+                     GTextAlignmentLeft, nullptr);
+}
+#endif
+
 static void prv_play_glance_for_row(LauncherMenuLayer *launcher_menu_layer, uint16_t row) {
   if (!launcher_menu_layer || !launcher_menu_layer->selection_animations_enabled) {
     return;
@@ -207,17 +301,8 @@ void launcher_menu_layer_init(LauncherMenuLayer *launcher_menu_layer,
 
   launcher_menu_layer->data_source = data_source;
 
-  GRect menu_layer_frame = frame;
-#if PBL_ROUND
-  const LauncherMenuLayerStyle *style =
-      &system_theme_get_style_for_size(launcher_menu_layer->content_size)->launcher;
-  const int top_bottom_inset =
-      (frame.size.h - style->focused_cell_height -
-       (2 * prv_num_unfocused_rows_per_side(style) * style->unfocused_cell_height)) /
-      2;
-  const GEdgeInsets menu_layer_frame_insets = GEdgeInsets(top_bottom_inset, 0);
-  menu_layer_frame = grect_inset(menu_layer_frame, menu_layer_frame_insets);
-#endif
+  // Round: the whole screen, so the banner over the apps hangs from its top
+  const GRect menu_layer_frame = frame;
 
   MenuLayer *menu_layer = &launcher_menu_layer->menu_layer;
   menu_layer_init(menu_layer, &menu_layer_frame);
@@ -229,6 +314,10 @@ void launcher_menu_layer_init(LauncherMenuLayer *launcher_menu_layer,
                              .select_click = prv_menu_layer_select,
                              .get_cell_height = prv_menu_layer_get_cell_height,
                              .selection_will_change = prv_menu_layer_selection_will_change,
+#if PBL_ROUND
+                             .get_header_height = prv_menu_layer_get_header_height,
+                             .draw_header = prv_menu_layer_draw_header,
+#endif
                            });
   menu_layer_set_scroll_wrap_around(menu_layer, shell_prefs_get_menu_scroll_wrap_around_enable());
   menu_layer_set_scroll_vibe_on_wrap(
@@ -424,6 +513,7 @@ void launcher_menu_layer_deinit(LauncherMenuLayer *launcher_menu_layer) {
 
   launcher_app_glance_service_deinit(&launcher_menu_layer->glance_service);
   menu_layer_deinit(&launcher_menu_layer->menu_layer);
+  pbl_i18n_free_all(launcher_menu_layer);
 
 #if PBL_ROUND
   layer_deinit(&launcher_menu_layer->up_arrow_layer);
