@@ -4,6 +4,7 @@
 #include "test_timeline_app_includes.h"
 
 #include <pbl/kernel/assert.h>
+#include <pbl/services/timeline/notification_layout.h>
 #include <pbl/services/timeline/timeline_resources.h>
 #include <pbl/util/math.h>
 #include <pbl/util/units.h>
@@ -153,10 +154,13 @@ static void prv_assert_title_centered(Window *window, TimelineLayer *timeline_la
   const GBitmap *bitmap = &fake_graphics_context_get_context()->dest_bitmap;
   int16_t top = PBL_DISPLAY_HEIGHT;
   int16_t bottom = 0;
-  const int16_t right = PBL_DISPLAY_WIDTH - timeline_layer_get_ideal_sidebar_width() - 15;
+  // The text side, clear of the sidebar and its icons
+  const int16_t text_width = PBL_DISPLAY_WIDTH - timeline_layer_get_ideal_sidebar_width() - 15;
+  const int16_t left = s_action_bar_on_right ? 0 : (PBL_DISPLAY_WIDTH - text_width);
+  const int16_t right = left + text_width;
   for (int16_t y = PBL_DISPLAY_HEIGHT / 4; y < 3 * PBL_DISPLAY_HEIGHT / 4; y++) {
     const GBitmapDataRowInfo row = gbitmap_get_data_row_info(bitmap, y);
-    for (int16_t x = row.min_x; x < PBL_MIN(row.max_x + 1, right); x++) {
+    for (int16_t x = PBL_MAX(row.min_x, left); x < PBL_MIN(row.max_x + 1, right); x++) {
       if (row.data[x] == GColorBlackARGB8) {
         top = PBL_MIN(top, y);
         bottom = PBL_MAX(bottom, y);
@@ -169,6 +173,40 @@ static void prv_assert_title_centered(Window *window, TimelineLayer *timeline_la
     other_text[i]->color = colors[i];
   }
   prv_set_neighbours_hidden(timeline_layer, false);
+}
+
+//! Checks that no text of the compact list runs over the round sidebar's circle, at rest or
+//! moving: the only black inside the circle is its icons'
+static void prv_assert_text_clear_of_arc(TimelineLayer *timeline_layer) {
+  if (!timeline_layer->compact) {
+    return;
+  }
+  const GBitmap *bitmap = &fake_graphics_context_get_context()->dest_bitmap;
+  const int16_t sidebar_width = timeline_layer_get_ideal_sidebar_width();
+  const GPoint center = {
+    .x = s_action_bar_on_right ? (PBL_DISPLAY_WIDTH - sidebar_width + BANNER_CIRCLE_RADIUS)
+                               : (sidebar_width - 1 - BANNER_CIRCLE_RADIUS),
+    .y = PBL_DISPLAY_HEIGHT / 2,
+  };
+  const TimelineList *list = &timeline_layer->list;
+  for (int16_t y = 0; y < PBL_DISPLAY_HEIGHT; y++) {
+    const GBitmapDataRowInfo row = gbitmap_get_data_row_info(bitmap, y);
+    for (int16_t x = row.min_x; x <= row.max_x; x++) {
+      const int32_t dx = x - center.x;
+      const int32_t dy = y - center.y;
+      if (row.data[x] != GColorBlackARGB8 ||
+          dx * dx + dy * dy > BANNER_CIRCLE_RADIUS * BANNER_CIRCLE_RADIUS) {
+        continue;
+      }
+      bool in_icon = false;
+      for (int i = 0; i < list->num_pins + list->num_leaving; i++) {
+        const TimelineListPinView *pin =
+            (i < list->num_pins) ? list->pins[i] : list->leaving[i - list->num_pins];
+        in_icon |= grect_contains_point(&pin->layout->icon_layer.layer.frame, &GPoint(x, y));
+      }
+      cl_assert(in_icon);
+    }
+  }
 }
 #endif
 
@@ -259,6 +297,11 @@ static void prv_create_list_view_and_render(ListViewConfig *config) {
   }
 #endif
   window_render(&window, fake_graphics_context_get_context());
+#if PBL_ROUND
+  if (!config->day_separator) {
+    prv_assert_text_clear_of_arc(&timeline_layer);
+  }
+#endif
 
   if (s_relationship_only) {
     FrameBuffer *fb = fake_graphics_context_get_framebuffer();
