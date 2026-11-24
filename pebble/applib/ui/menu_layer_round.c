@@ -68,3 +68,32 @@ int16_t menu_round_rest_offset(int16_t frame_h, int16_t content_h, int16_t span_
   const int16_t centred = (int16_t)((frame_h / 2) - span_y - (span_h / 2));
   return PBL_CLAMP(centred, lowest, highest);
 }
+
+static int32_t prv_lerp(int32_t from, int32_t to, int32_t progress) {
+  return from + (((to - from) * progress) / 1000);
+}
+
+MenuRoundShape menu_round_morph(const MenuRoundShape *from, const MenuRoundShape *to,
+                                int32_t progress) {
+  // Past either end the shape keeps its size, and only its centre carries on
+  const int32_t m = PBL_CLAMP(progress, 0, 1000);
+  const GRect *a = &from->box;
+  const GRect *b = &to->box;
+  const int16_t w = (int16_t)PBL_MAX(prv_lerp(a->size.w, b->size.w, m), 2);
+  const int16_t h = (int16_t)PBL_MAX(prv_lerp(a->size.h, b->size.h, m), 2);
+  const int32_t center_x =
+      prv_lerp(a->origin.x + (a->size.w / 2), b->origin.x + (b->size.w / 2), progress);
+  const int32_t center_y =
+      prv_lerp(a->origin.y + (a->size.h / 2), b->origin.y + (b->size.h / 2), progress);
+  return (MenuRoundShape){
+    .box = GRect(center_x - (w / 2), center_y - (h / 2), w, h),
+    .radius = PBL_MIN(w, h) / 2,
+  };
+}
+
+int32_t menu_round_list_scroll(uint16_t selected, uint16_t count, int16_t row_h,
+                               uint16_t edge_rows) {
+  const int32_t max_scroll = PBL_MAX(((int32_t)count - 1 - (2 * edge_rows)) * row_h, 0);
+  const int32_t target = PBL_MAX(((int32_t)selected - edge_rows) * row_h, 0);
+  return PBL_MIN(target, max_scroll);
+}
