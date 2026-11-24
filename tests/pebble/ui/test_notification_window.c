@@ -500,3 +500,64 @@ void test_notification_window__round_actions_ease(void) {
   cl_assert(peak > 1000 && peak < 1100);
 #endif
 }
+
+void test_notification_window__banner_round_geometry(void) {
+#if PBL_ROUND
+  const int16_t r = BANNER_CIRCLE_RADIUS;
+  GPoint center;
+  int16_t radius;
+  // At rest: the banner hangs from above the card, as stock.
+  notification_layout_get_banner_round(0, 0, &center, &radius);
+  cl_assert_equal_i(center.x, PBL_DISPLAY_WIDTH / 2);
+  cl_assert_equal_i(center.y, LAYOUT_TOP_BANNER_ORIGIN_Y);
+  cl_assert_equal_i(radius, r);
+  // Scrolled up, it stays with the card.
+  notification_layout_get_banner_round(-30, -30, &center, &radius);
+  cl_assert_equal_i(center.y, -30 + LAYOUT_TOP_BANNER_ORIGIN_Y);
+  cl_assert_equal_i(radius, r);
+
+  // Just below the screen: the cap of the same circle peeks LAYOUT_PEEK_HEIGHT_ROUND above it.
+  notification_layout_get_banner_round(LAYOUT_HEIGHT, LAYOUT_HEIGHT, &center, &radius);
+  cl_assert_equal_i(radius, r);
+  cl_assert_equal_i(center.y - radius, LAYOUT_HEIGHT - LAYOUT_PEEK_HEIGHT_ROUND);
+  // Further below, the same cap moved along.
+  notification_layout_get_banner_round(LAYOUT_HEIGHT + 20, LAYOUT_HEIGHT + 20, &center, &radius);
+  cl_assert_equal_i(center.y - radius, LAYOUT_HEIGHT + 20 - LAYOUT_PEEK_HEIGHT_ROUND);
+
+  // A sixth of the way in, a ball resting just above the bottom of the screen.
+  const int16_t ball_below = LAYOUT_HEIGHT - LAYOUT_HEIGHT / 6;
+  notification_layout_get_banner_round(ball_below, ball_below, &center, &radius);
+  cl_assert_equal_i(radius, LAYOUT_PEEK_BALL_RADIUS_ROUND);
+  cl_assert_equal_i(center.y + radius, LAYOUT_HEIGHT - LAYOUT_PEEK_BALL_MARGIN_ROUND);
+
+  // On the way, the circle shrinks into the ball and then grows into the banner, its top always
+  // rising with the card.
+  int16_t prev_top = INT16_MAX;
+  int16_t prev_radius = r + 1;
+  for (int16_t below = LAYOUT_HEIGHT; below >= 0; below--) {
+    notification_layout_get_banner_round(below, below, &center, &radius);
+    cl_assert(center.y - radius <= prev_top);
+    prev_top = center.y - radius;
+    if (below >= ball_below) {
+      cl_assert(radius <= prev_radius);
+    } else {
+      cl_assert(radius >= prev_radius);
+    }
+    // The icon stays inside the circle.
+    const int16_t icon_center = notification_layout_get_banner_icon_top_round(below) +
+                                NOTIFICATION_TINY_RESOURCE_HEIGHT / 2;
+    cl_assert(PBL_ABS(below + icon_center - center.y) <= radius);
+    prev_radius = radius;
+  }
+
+  // The icon: in the peek below its edge, in the middle of the ball, then at rest in the banner.
+  cl_assert_equal_i(notification_layout_get_banner_icon_top_round(0), CARD_ICON_UPPER_PADDING);
+  const int16_t peek_icon_top = notification_layout_get_banner_icon_top_round(LAYOUT_HEIGHT);
+  cl_assert(peek_icon_top > -LAYOUT_PEEK_HEIGHT_ROUND);
+  cl_assert(peek_icon_top + NOTIFICATION_TINY_RESOURCE_HEIGHT <= 0);
+  notification_layout_get_banner_round(0, ball_below, &center, &radius);
+  cl_assert_equal_i(notification_layout_get_banner_icon_top_round(ball_below) +
+                        NOTIFICATION_TINY_RESOURCE_HEIGHT / 2,
+                    center.y);
+#endif
+}
