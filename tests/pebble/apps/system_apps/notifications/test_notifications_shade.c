@@ -212,3 +212,25 @@ void test_notifications_shade__same_timestamp_keeps_arrival_order(void) {
   cl_assert_equal_i(prv_item_id(0), 2);
   cl_assert_equal_i(prv_item_id(1), 1);
 }
+
+void test_notifications_shade__out_of_memory_keeps_what_it_holds(void) {
+  notification_shade_init(&s_shade, false, true, 0);
+  for (uint8_t i = 0; i < 16; i++) {
+    prv_add(i + 1, 100 + i, NotificationShadeGroupNotifications, (i % 2) ? 0xAA : 0);
+  }
+  // Growing past 16 needs a bigger entry array than there is room for: the rest of the growth
+  // is let go, and the notification is not added.
+  fake_malloc_set_largest_free_block(32 * sizeof(NotificationShadeEntry));
+  prv_add(17, 200, NotificationShadeGroupNotifications, 0);
+  notification_shade_rebuild(&s_shade);
+  cl_assert_equal_i(notification_shade_count(&s_shade), 16);
+  cl_assert_equal_i(prv_item_id(0), 16);
+  // Eight lone notifications and one stack of the other eight
+  cl_assert_equal_i(notification_shade_row_count(&s_shade), 9);
+
+  fake_malloc_set_largest_free_block(~0);
+  prv_add(17, 200, NotificationShadeGroupNotifications, 0);
+  notification_shade_rebuild(&s_shade);
+  cl_assert_equal_i(notification_shade_count(&s_shade), 17);
+  cl_assert_equal_i(prv_item_id(0), 17);
+}
