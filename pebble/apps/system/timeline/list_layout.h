@@ -53,3 +53,9 @@ void timeline_list_layout(const TimelineListGeometry *geometry, const TimelineLi
 //! @param[in,out] tops Top of each pin; only the run is read.
 void timeline_list_stack(const TimelineListPin *pins, int num_pins, int first_placed,
                          int last_placed, int16_t *tops);
+
+//! How far in from the side of a round display its edge is, at a distance from its middle row.
+//! @param radius Radius of the display.
+//! @param distance_y Distance from the middle row; beyond the radius counts as the radius.
+//! @return Distance from the side of the display's bounds to its edge.
+int16_t timeline_list_round_edge_inset(int16_t radius, int16_t distance_y);

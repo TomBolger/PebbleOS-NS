@@ -42,3 +42,8 @@ void timeline_list_layout(const TimelineListGeometry *geometry, const TimelineLi
     }
   }
 }
+
+int16_t timeline_list_round_edge_inset(int16_t radius, int16_t distance_y) {
+  const int32_t distance = PBL_MIN(PBL_ABS(distance_y), radius);
+  return radius - integer_sqrt((int32_t)radius * radius - distance * distance);
+}

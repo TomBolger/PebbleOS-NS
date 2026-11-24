@@ -97,3 +97,12 @@ void test_timeline_list_layout__stack_around_run(void) {
   cl_assert_equal_i(tops[0], 70);
   cl_assert_equal_i(tops[4], 170);
 }
+
+void test_timeline_list_layout__round_edge_inset(void) {
+  // The middle row reaches the sides, the top and bottom rows are a point in the middle
+  cl_assert_equal_i(timeline_list_round_edge_inset(130, 0), 0);
+  cl_assert_equal_i(timeline_list_round_edge_inset(130, 130), 130);
+  cl_assert_equal_i(timeline_list_round_edge_inset(130, -200), 130);
+  // 3-4-5 triangle: 50 rows up, the edge is 120 from the middle
+  cl_assert_equal_i(timeline_list_round_edge_inset(130, -50), 10);
+}
