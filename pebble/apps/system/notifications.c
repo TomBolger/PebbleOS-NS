@@ -4,6 +4,8 @@
 #include "notifications.h"
 
 #include "notifications_history.h"
+#include "notifications_round_path.h"
+#include "notifications_shade.h"
 
 #include <stdio.h>
 #include <time.h>
@@ -15,6 +17,7 @@
 #include <pbl/services/clock.h>
 #include <pbl/services/notifications/alerts_preferences_private.h>
 #include <pbl/services/notifications/notification_storage.h>
+#include <pbl/services/notifications/notification_style.h>
 #include <pbl/services/time.h>
 #include <pbl/services/timeline/notification_layout.h>
 #include <pbl/util/list.h>
@@ -33,6 +36,7 @@
 #include <applib/ui/dialogs/actionable_dialog.h>
 #include <applib/ui/dialogs/simple_dialog.h>
 #include <applib/ui/menu_cell_layer.h>
+#include <applib/ui/menu_layer_private.h>
 #include <applib/ui/ui.h>
 #include <kernel/ui/system_icons.h>
 #include <popups/notifications/notification_window.h>
@@ -48,38 +52,42 @@ typedef struct LoadedNotificationNode {
   bool icon_is_default;
 } LoadedNotificationNode;
 
-typedef struct NotificationGroupWindow NotificationGroupWindow;
-
 typedef struct NotificationsData {
   Window window;
   MenuLayer menu_layer;
   TextLayer text_layer;
-  NotificationHistory history;
+  NotificationShade shade;
   LoadedNotificationNode *loaded_notification_list;
   EventServiceInfo notification_event_info;
   ActionableDialog *actionable_dialog;
-  char *group_title;
-  size_t group_title_size;
-  NotificationGroupWindow *group_window;
-#if PBL_ROUND
-  StatusBarLayer status_bar_layer;
-#endif
+  time_t grouping_cutoff;
+  bool group_by_app;
+  bool group_by_sender;
+  //! Opening or closing a header or stack: its rows grow or shrink in place
+  Animation *fold_animation;
+  int16_t fold_first;
+  int16_t fold_count;
+  int16_t fold_header;
+  bool fold_opening;
+  //! How open the folding rows are, in thousandths; overshoots a little past FOLD_FULL
+  int32_t fold_amount;
 } NotificationsData;
-
-struct NotificationGroupWindow {
-  Window window;
-  MenuLayer menu_layer;
-  TextLayer sender_layer;
-  NotificationsData *notifications_data;
-  Uuid *notification_ids;
-  uint16_t count;
-  char *sender;
-  char time_buffer[TIME_STRING_REQUIRED_LENGTH];
-};
 
 static NotificationsData *s_data = nullptr;
 
-static const unsigned int MAX_ACTIVE_NOTIFICATIONS = 6;
+// Rows on screen at once, plus a few for the rows sliding in.
+static const unsigned int MAX_ACTIVE_NOTIFICATIONS = 10;
+
+#define FOLD_OPEN_MS  280
+#define FOLD_CLOSE_MS 220
+#define FOLD_FULL     1000
+
+#define HEADER_INDENT_STEP PBL_IF_ROUND_ELSE(14, 10)
+#define STACK_LINE_EDGE    5
+#define STACK_LINE_WIDTH   2
+#define STACK_LINE_GAP     4
+//! Space between the stack line and where the selection highlight starts
+#define STACK_LINE_HIGHLIGHT_GAP PBL_IF_ROUND_ELSE(4, 2)
 
 static bool prv_loaded_notification_list_filter_cb(ListNode *node, void *data) {
   LoadedNotificationNode *loaded_notification = (LoadedNotificationNode *)node;
@@ -93,42 +101,126 @@ static LoadedNotificationNode *prv_find_loaded_notification(LoadedNotificationNo
                                              prv_loaded_notification_list_filter_cb, id);
 }
 
-static bool prv_notif_iterator_callback(void *data, SerializedTimelineItemHeader *header) {
-  NotificationsData *notifications_data = data;
-  notifications_history_add_header(&notifications_data->history, &header->common);
+///////////////////
+// Loading
+
+static uint32_t prv_hash(const char *text) {
+  // FNV-1a
+  uint32_t hash = 2166136261u;
+  while (*text) {
+    hash = (hash ^ (uint8_t)*text++) * 16777619u;
+  }
+  return hash ? hash : 1;
+}
+
+static const char *prv_trimmed(char *text) {
+  string_strip_trailing_whitespace(text, text);
+  const char *start = string_strip_leading_whitespace(text);
+  return PBL_IS_EMPTY_STRING(start) ? nullptr : start;
+}
+
+// The key a notification is stacked by when the phone doesn't say: its app, or its sender
+// (Android only, as with Group by Sender).
+static uint32_t prv_fallback_stack_key(const NotificationsData *data, const TimelineItem *item,
+                                       char *app_name, char *sender, char *title) {
+  if (data->group_by_app) {
+    const char *app = prv_trimmed(app_name);
+    return app ? prv_hash(app) : 0;
+  }
+  static const Uuid s_android_notifications_source = UUID_NOTIFICATIONS_DATA_SOURCE;
+  if (!data->group_by_sender || (item->header.timestamp < data->grouping_cutoff) ||
+      timeline_item_is_ancs_notif(item) ||
+      !uuid_equal(&item->header.parent_id, &s_android_notifications_source)) {
+    return 0;
+  }
+  char *from = sender;
+  const bool from_title = PBL_IS_EMPTY_STRING(from);
+  if (from_title) {
+    // "Conversation: Sender" titles group by the conversation
+    from = title;
+    char *separator = strstr(from, ": ");
+    if (separator && (separator != from) && (separator[2] != '\0')) {
+      *separator = '\0';
+    }
+  }
+  const char *key = prv_trimmed(from);
+  return key ? prv_hash(key) : 0;
+}
+
+static void prv_add_to_shade(NotificationsData *data, const TimelineItem *item, char *app_name,
+                             char *sender, char *title) {
+  if (notifications_history_is_hidden(&item->header)) {
+    return;
+  }
+  const uint8_t section = attribute_get_uint8(&item->attr_list, AttributeIdNotificationSection, 0);
+  uint32_t stack_key = attribute_get_uint32(&item->attr_list, AttributeIdStackId, 0);
+  if (stack_key == 0) {
+    stack_key = prv_fallback_stack_key(data, item, app_name, sender, title);
+  }
+  notification_shade_add(&data->shade, &item->header.id, item->header.timestamp,
+                         notification_shade_group_for_section(section), stack_key);
+}
+
+typedef struct LoadContext {
+  NotificationsData *data;
+  char *app_name;
+  char *sender;
+  char *title;
+} LoadContext;
+
+static bool prv_notif_item_iterator_callback(void *context, const CommonTimelineItemHeader *header,
+                                             const TimelineItem *item) {
+  LoadContext *load = context;
+  if (item) {
+    prv_add_to_shade(load->data, item, load->app_name, load->sender, load->title);
+  }
   return true;
 }
 
-static bool prv_notif_item_iterator_callback(void *data, const CommonTimelineItemHeader *header,
-                                             const TimelineItem *item) {
-  NotificationsData *notifications_data = data;
-  if (item) {
-    notifications_history_add_item(&notifications_data->history, item);
-  } else {
-    notifications_history_add_header(&notifications_data->history, header);
+static void prv_shade_init(NotificationsData *data) {
+  data->group_by_app = alerts_preferences_get_notification_group_by_app();
+  const NotificationGroupingRange range = alerts_preferences_get_notification_grouping_range();
+  data->group_by_sender = !data->group_by_app && (range != NotificationGroupingRange_Never);
+  time_t window = 0;
+  if (range == NotificationGroupingRange_OneDay) {
+    window = PBL_SEC_PER_DAY;
+  } else if (range == NotificationGroupingRange_OneWeek) {
+    window = 7 * PBL_SEC_PER_DAY;
   }
-  return true;
+  const time_t now = pbl_realtime();
+  data->grouping_cutoff = ((window > 0) && (now > window)) ? now - window : 0;
+
+  // Stacks are on whenever notifications are grouped by app or sender; the phone's own stacks
+  // (AttributeIdStackId) take precedence.
+  notification_shade_init(&data->shade, alerts_preferences_get_notification_sections(),
+                          data->group_by_app || data->group_by_sender,
+                          alerts_preferences_get_notification_collapsed_sections());
 }
 
 static void prv_load_notification_storage(NotificationsData *data) {
-  if (!data->history.group_by_sender) {
-    notification_storage_iterate(&prv_notif_iterator_callback, data);
-    return;
-  }
-
   char sender[ATTRIBUTE_TITLE_MAX_LEN + 1];
   char title[ATTRIBUTE_TITLE_MAX_LEN + 1];
+  char app_name[ATTRIBUTE_TITLE_MAX_LEN + 1];
   Attribute attributes[] = {
     {.id = AttributeIdSender, .cstring = sender},
     {.id = AttributeIdTitle, .cstring = title},
+    {.id = AttributeIdAppName, .cstring = app_name},
+    {.id = AttributeIdNotificationSection},
+    {.id = AttributeIdStackId},
   };
   AttributeList attr_list = {
     .num_attributes = PBL_ARRAY_SIZE(attributes),
     .attributes = attributes,
   };
-  notification_storage_iterate_strings_after(data->history.grouping_cutoff, &attr_list,
-                                             sizeof(sender), prv_notif_item_iterator_callback,
-                                             data);
+  LoadContext load = {
+    .data = data,
+    .app_name = app_name,
+    .sender = sender,
+    .title = title,
+  };
+  notification_storage_iterate_strings_after(0, &attr_list, sizeof(sender),
+                                             prv_notif_item_iterator_callback, &load);
+  notification_shade_rebuild(&data->shade);
 }
 
 static void prv_unload_loaded_notification(LoadedNotificationNode *loaded_notif) {
@@ -204,179 +296,19 @@ static void prv_loaded_notification_list_deinit(LoadedNotificationNode *loaded_l
   }
 }
 
-static void prv_notifications_history_init(NotificationsData *data) {
-  const NotificationGroupingRange range = alerts_preferences_get_notification_grouping_range();
-  time_t cutoff = 0;
-  time_t window = 0;
-
-  if (range == NotificationGroupingRange_OneDay) {
-    window = PBL_SEC_PER_DAY;
-  } else if (range == NotificationGroupingRange_OneWeek) {
-    window = 7 * PBL_SEC_PER_DAY;
+static LoadedNotificationNode *prv_load_row_item(NotificationsData *data,
+                                                 const NotificationShadeRow *row) {
+  if (!row || (row->kind == NotificationShadeRowHeader)) {
+    return nullptr;
   }
-
-  if (window > 0) {
-    const time_t now = pbl_realtime();
-    cutoff = (now > window) ? now - window : 0;
-  }
-
-  notifications_history_init(&data->history, range != NotificationGroupingRange_Never, cutoff);
-}
-
-// The presented list prepends, so add oldest first to keep it newest-first
-static void prv_add_row_notifications(const NotificationHistoryRow *row) {
-  if (!row->is_group) {
-    notification_window_add_notification_by_id((Uuid *)&row->notification.id);
-    return;
-  }
-
-  NotificationHistoryMember *member =
-      (NotificationHistoryMember *)list_get_tail(&row->group.members->node);
-  while (member) {
-    notification_window_add_notification_by_id(&member->entry.id);
-    member = (NotificationHistoryMember *)list_get_prev(&member->node);
-  }
-}
-
-static bool prv_push_group_notification_window(const NotificationGroupWindow *group_window,
-                                               uint16_t index) {
-  notification_window_init_history(false);
-  if (notification_window_is_modal()) {
-    return false;
-  }
-
-  for (int i = group_window->count - 1; i >= 0; i--) {
-    notification_window_add_notification_by_id(&group_window->notification_ids[i]);
-  }
-  notification_window_show();
-  notification_window_focus_notification(&group_window->notification_ids[index], false);
-  return true;
-}
-
-static uint16_t prv_group_window_get_num_rows(MenuLayer *menu_layer, uint16_t section_index,
-                                              void *context) {
-  NotificationGroupWindow *group_window = context;
-  return group_window->count;
-}
-
-static int16_t prv_group_window_get_cell_height(MenuLayer *menu_layer, MenuIndex *cell_index,
-                                                void *context) {
-  const GFont subtitle_font = system_theme_get_font(TextStyleFont_MenuCellSubtitle);
-  const GFont caption_font = system_theme_get_font(TextStyleFont_Caption);
-  const int16_t saved_height =
-      PBL_MAX(0, fonts_get_font_height(subtitle_font) - fonts_get_font_height(caption_font));
-  return menu_cell_basic_cell_height() - saved_height;
-}
-
-static void prv_group_window_draw_row(GContext *ctx, const Layer *cell_layer, MenuIndex *cell_index,
-                                      void *context) {
-  NotificationGroupWindow *group_window = context;
-  if (cell_index->row >= group_window->count) {
-    return;
-  }
-
-  LoadedNotificationNode *loaded_node = prv_loaded_notification_list_load_item(
-      &group_window->notifications_data->loaded_notification_list,
-      &group_window->notification_ids[cell_index->row]);
-  if (!loaded_node) {
-    return;
-  }
-
-  TimelineItem *notification = &loaded_node->notification;
-  const char *message = attribute_get_string(&notification->attr_list, AttributeIdBody, "");
-  if (PBL_IS_EMPTY_STRING(message)) {
-    message = attribute_get_string(&notification->attr_list, AttributeIdSubtitle, "");
-  }
-  if (PBL_IS_EMPTY_STRING(message)) {
-    message = attribute_get_string(&notification->attr_list, AttributeIdTitle, "[Empty]");
-  }
-
-  clock_get_since_time(group_window->time_buffer, sizeof(group_window->time_buffer),
-                       notification->header.timestamp);
-  menu_cell_basic_draw_custom(ctx, cell_layer, system_theme_get_font(TextStyleFont_MenuCellTitle),
-                              message, nullptr, nullptr,
-                              system_theme_get_font(TextStyleFont_Caption),
-                              group_window->time_buffer, nullptr, false, GTextOverflowModeFill);
-}
-
-static void prv_group_window_select(MenuLayer *menu_layer, MenuIndex *cell_index, void *context) {
-  NotificationGroupWindow *group_window = context;
-  if (cell_index->row < group_window->count) {
-    prv_push_group_notification_window(group_window, cell_index->row);
-  }
-}
-
-static void prv_group_window_load(Window *window) {
-  NotificationGroupWindow *group_window = window_get_user_data(window);
-  GRect sender_frame = window->layer.bounds;
-  sender_frame.size.h = MENU_CELL_BASIC_HEADER_HEIGHT;
-  text_layer_init_with_parameters(&group_window->sender_layer, &sender_frame, group_window->sender,
-                                  fonts_get_system_font(FONT_KEY_GOTHIC_14_BOLD), GColorBlack,
-                                  GColorWhite,
-                                  PBL_IF_RECT_ELSE(GTextAlignmentLeft, GTextAlignmentCenter),
-                                  GTextOverflowModeTrailingEllipsis);
-
-  MenuLayer *menu_layer = &group_window->menu_layer;
-  GRect menu_frame = window->layer.bounds;
-  menu_frame.origin.y += MENU_CELL_BASIC_HEADER_HEIGHT;
-  menu_frame.size.h -= MENU_CELL_BASIC_HEADER_HEIGHT;
-  menu_layer_init(menu_layer, &menu_frame);
-  menu_layer_set_callbacks(menu_layer, group_window,
-                           &(MenuLayerCallbacks){
-                             .get_num_rows = prv_group_window_get_num_rows,
-                             .get_cell_height = prv_group_window_get_cell_height,
-                             .draw_row = prv_group_window_draw_row,
-                             .select_click = prv_group_window_select,
-                           });
-#if PBL_COLOR
-  menu_layer_set_highlight_colors(menu_layer, DEFAULT_NOTIFICATION_COLOR, GColorWhite);
-#endif
-  menu_layer_set_click_config_onto_window(menu_layer, window);
-  menu_layer_set_scroll_wrap_around(menu_layer, false);
-  layer_add_child(&window->layer, menu_layer_get_layer(menu_layer));
-  layer_add_child(&window->layer, &group_window->sender_layer.layer);
-  menu_layer_set_selected_index(menu_layer, MenuIndex(0, 0), MenuRowAlignTop, false);
-}
-
-static void prv_group_window_unload(Window *window) {
-  NotificationGroupWindow *group_window = window_get_user_data(window);
-  menu_layer_deinit(&group_window->menu_layer);
-  text_layer_deinit(&group_window->sender_layer);
-  group_window->notifications_data->group_window = nullptr;
-  app_free(group_window->notification_ids);
-  app_free(group_window->sender);
-  app_free(group_window);
-}
-
-static void prv_push_group_window(NotificationsData *data, const NotificationHistoryRow *row) {
-  NotificationGroupWindow *group_window = app_zalloc_check(sizeof(*group_window));
-  group_window->notifications_data = data;
-  group_window->count = row->group.count;
-  const size_t sender_size = strlen(row->group.sender) + 1;
-  group_window->sender = app_malloc_check(sender_size);
-  memcpy(group_window->sender, row->group.sender, sender_size);
-  group_window->notification_ids = app_malloc_check(sizeof(Uuid) * group_window->count);
-
-  NotificationHistoryMember *member = row->group.members;
-  for (uint16_t i = 0; i < group_window->count; i++) {
-    group_window->notification_ids[i] = member->entry.id;
-    member = (NotificationHistoryMember *)list_get_next(&member->node);
-  }
-
-  window_init(&group_window->window, WINDOW_NAME("Notification Group"));
-  window_set_user_data(&group_window->window, group_window);
-  window_set_window_handlers(&group_window->window, &(WindowHandlers){
-                                                      .load = prv_group_window_load,
-                                                      .unload = prv_group_window_unload,
-                                                    });
-  data->group_window = group_window;
-  app_window_stack_push(&group_window->window, true);
+  const NotificationShadeEntry *entry = notification_shade_item(&data->shade, row->item);
+  return entry ? prv_loaded_notification_list_load_item(&data->loaded_notification_list, &entry->id)
+               : nullptr;
 }
 
 // Return true if successful
-static bool prv_push_notification_window(NotificationsData *data) {
-  const bool has_collapsed_groups = notifications_history_has_collapsed_groups(&data->history);
-  notification_window_init_history(!has_collapsed_groups);
+static bool prv_push_notification_window(NotificationsData *data, const Uuid *focus_id) {
+  notification_window_init_history(false /* allow_dismiss_all */);
 
   // Bail if a notification came in ahead of us and created a modal window
   // before we had a chance to react to the select button event.
@@ -384,13 +316,14 @@ static bool prv_push_notification_window(NotificationsData *data) {
     return false;
   }
 
-  NotificationHistoryRow *row = (NotificationHistoryRow *)list_get_tail(&data->history.rows->node);
-  while (row) {
-    prv_add_row_notifications(row);
-    row = (NotificationHistoryRow *)list_get_prev(&row->node);
+  // The presented list prepends, so add the cards last first to page through them in list order.
+  for (int i = notification_shade_count(&data->shade) - 1; i >= 0; i--) {
+    notification_window_add_notification_by_id(
+        (Uuid *)&notification_shade_item(&data->shade, i)->id);
   }
 
   notification_window_show();
+  notification_window_focus_notification((Uuid *)focus_id, false /* animated */);
   return true;
 }
 
@@ -407,9 +340,8 @@ static void prv_confirmed_handler(ClickRecognizerRef recognizer, void *context) 
   notification_storage_reset_and_init();
   prv_loaded_notification_list_deinit(data->loaded_notification_list);
   data->loaded_notification_list = nullptr;
-  notifications_history_deinit(&data->history);
-  prv_notifications_history_init(data);
-  prv_load_notification_storage(data);
+  notification_shade_deinit(&data->shade);
+  prv_shade_init(data);
   actionable_dialog_pop(data->actionable_dialog);
 
   // Create and display DONE dialog
@@ -503,425 +435,699 @@ static void prv_draw_notification_icon(GContext *ctx, const Layer *cell_layer,
   draw_func(ctx, icon, origin);
 }
 
-//////////////
-// MenuLayer callbacks
+///////////////////
+// Row geometry
+
+static int16_t prv_cell_height(void) {
+  return notification_style_scaled_points(24) + notification_style_scaled_points(14) + 8;
+}
+
+static int16_t prv_header_height(void) {
+  return PBL_IF_ROUND_ELSE(12, 8) + notification_style_scaled_points(14);
+}
+
+static bool prv_row_is_header(const NotificationShadeRow *row) {
+  return row && ((row->kind == NotificationShadeRowHeader) ||
+                 ((row->kind == NotificationShadeRowStack) && row->expanded));
+}
+
+static int16_t prv_full_row_height(const NotificationShadeRow *row) {
+  return prv_row_is_header(row) ? prv_header_height() : prv_cell_height();
+}
+
+static bool prv_row_is_folding(const NotificationsData *data, int16_t index) {
+  return (data->fold_first >= 0) && (index >= data->fold_first) &&
+         (index < data->fold_first + data->fold_count);
+}
+
+static int16_t prv_row_height_at(const NotificationsData *data, int16_t index) {
+  const int16_t full = prv_full_row_height(notification_shade_row(&data->shade, index));
+  if (prv_row_is_folding(data, index)) {
+    const int32_t height = full * data->fold_amount / FOLD_FULL;
+    return (height > 0) ? height : 0;
+  }
+  return full;
+}
+
+static int16_t prv_header_depth(const NotificationShadeRow *row) {
+  return ((row->group >= NotificationShadeGroupSuggested) ? 1 : 0) +
+         ((row->kind == NotificationShadeRowStack) ? 1 : 0);
+}
+
+#if PBL_ROUND
+//! Distance from the left edge to the rim for a row at this height on screen, at its end nearer
+//! the rim. Near the top and bottom the path eases off the rim and goes on past the screen's
+//! edge, so a row leaving the screen travels along it until it is gone.
+static int16_t prv_rim_for_screen_row(int16_t screen_top, int16_t height) {
+  int16_t dy = screen_top + height / 2 - PBL_DISPLAY_HEIGHT / 2;
+  dy += (dy > 0) ? height / 2 : -height / 2;
+  return notifications_round_path_x(PBL_DISPLAY_WIDTH / 2, dy);
+}
+
+//! A round row is laid out with its inset from the rim, at most this much: nearer the ends the
+//! laid-out row moves on along the rim as a whole instead of narrowing further.
+#define ROUND_MAX_INSET 60
+
+static int16_t prv_round_inset(int16_t rim) {
+  return (rim < 12) ? 12 : ((rim > ROUND_MAX_INSET) ? ROUND_MAX_INSET : rim);
+}
+
+static int16_t prv_round_shift(int16_t rim) {
+  return (rim > ROUND_MAX_INSET) ? (rim - ROUND_MAX_INSET) : 0;
+}
+
+//! Rows slide along the rim as the list scrolls, so a header always starts at least one step
+//! right of its parent header, wherever each of them is on screen.
+static int16_t prv_round_header_left(const NotificationsData *data, int16_t index,
+                                     int16_t screen_top) {
+  const NotificationShadeRow *row = notification_shade_row(&data->shade, index);
+  const int16_t rim = prv_rim_for_screen_row(screen_top, prv_row_height_at(data, index)) + 4;
+  const int16_t left = prv_round_inset(rim) + prv_round_shift(rim);
+  const int16_t depth = prv_header_depth(row);
+  if (depth == 0) {
+    return left;
+  }
+  int16_t y = screen_top;
+  for (int16_t i = index - 1; i >= 0; i--) {
+    y -= prv_row_height_at(data, i);
+    const NotificationShadeRow *above = notification_shade_row(&data->shade, i);
+    if (prv_row_is_header(above) && (prv_header_depth(above) < depth)) {
+      const int16_t parent = prv_round_header_left(data, i, y) + HEADER_INDENT_STEP;
+      return (parent > left) ? parent : left;
+    }
+  }
+  return left + depth * HEADER_INDENT_STEP;
+}
+
+static int16_t prv_round_rim_at_row(const Layer *cell_layer, GRect bounds) {
+  const GPoint on_screen = layer_convert_point_to_screen(cell_layer, bounds.origin);
+  return prv_rim_for_screen_row(on_screen.y, bounds.size.h);
+}
+
+//! An open stack's arc keeps this far in from the rim, eased off it near the ends like the rows.
+static int16_t prv_stack_arc_x(int16_t inset, int16_t dy) {
+  const int16_t radius = PBL_DISPLAY_WIDTH / 2;
+  return inset + notifications_round_path_x(radius - inset, dy);
+}
+
+//! Where an open stack's arc ends beside this row's icon (centred, about 26 px tall).
+static int16_t prv_stack_arc_clearance(const Layer *cell_layer, GRect bounds) {
+  const GPoint on_screen = layer_convert_point_to_screen(cell_layer, bounds.origin);
+  int16_t dy = on_screen.y + bounds.size.h / 2 - PBL_DISPLAY_HEIGHT / 2;
+  dy += (dy > 0) ? 13 : -13;
+  return prv_stack_arc_x(STACK_LINE_EDGE + STACK_LINE_WIDTH, dy) + STACK_LINE_GAP;
+}
+
+// Round lists slide like rectangular ones and stop the first and last rows one row from the
+// middle instead of leaving half the screen empty: the space above is section 0's header, the
+// space below content past the last row.
+#define ROUND_MIN_TOP_SPACE 12
+
+static int16_t prv_round_end_space(int16_t end_row_height) {
+  const int16_t space = PBL_DISPLAY_HEIGHT / 2 - end_row_height / 2 - prv_cell_height();
+  return (space > 0) ? space : 0;
+}
+
+static int16_t prv_round_space_above(const NotificationsData *data) {
+  if (notification_shade_row_count(&data->shade) == 0) {
+    return 0;
+  }
+  const int16_t space = prv_round_end_space(prv_row_height_at(data, 0)) - prv_cell_height();
+  return (space > ROUND_MIN_TOP_SPACE) ? space : ROUND_MIN_TOP_SPACE;
+}
+
+static int16_t prv_round_space_below(const NotificationsData *data) {
+  const uint16_t count = notification_shade_row_count(&data->shade);
+  return count ? prv_round_end_space(prv_row_height_at(data, count - 1)) : 0;
+}
+#endif
+
+///////////////////
+// Drawing
+
+//! A small triangle, pointing down when open and right when closed, filled line by line.
+static void prv_draw_caret(GContext *ctx, GPoint center, bool open) {
+  for (int16_t i = 0; i <= 4; i++) {
+    if (open) {
+      graphics_fill_rect(ctx, &GRect(center.x - 4 + i, center.y - 2 + i, 9 - 2 * i, 1));
+    } else {
+      graphics_fill_rect(ctx, &GRect(center.x - 2 + i, center.y - 4 + i, 1, 9 - 2 * i));
+    }
+  }
+}
+
+static GColor prv_highlight_text_color(void) {
+  return PBL_IF_COLOR_ELSE(GColorWhite, notification_style_bg());
+}
+
+static const char *prv_app_name(const TimelineItem *notification) {
+  const char *app_name = attribute_get_string(&notification->attr_list, AttributeIdAppName, "");
+  if (PBL_IS_EMPTY_STRING(app_name)) {
+    app_name = attribute_get_string(&notification->attr_list, AttributeIdTitle, "");
+  }
+  return app_name;
+}
+
+//! Section, category or open stack: a small caption with a caret, and the count when closed.
+static void prv_draw_header_row(GContext *ctx, const Layer *cell_layer, GRect bounds,
+                                const NotificationShadeRow *row, int16_t row_index) {
+  NotificationsData *data = s_data;
+  const bool highlighted = menu_cell_layer_is_highlighted(cell_layer);
+  const GColor color = highlighted ? prv_highlight_text_color() : notification_style_secondary();
+  graphics_context_set_text_color(ctx, color);
+  graphics_context_set_fill_color(ctx, color);
+
+  const char *name;
+  if (row->kind == NotificationShadeRowStack) {
+    LoadedNotificationNode *loaded = prv_load_row_item(data, row);
+    name = loaded ? prv_app_name(&loaded->notification) : "";
+  } else {
+    name = pbl_i18n_get(notification_shade_group_name(row->group), data);
+  }
+  char text[ATTRIBUTE_TITLE_MAX_LEN + 8];
+  if (row->expanded && (row->kind == NotificationShadeRowHeader)) {
+    snprintf(text, sizeof(text), "%s", name);
+  } else {
+    snprintf(text, sizeof(text), "%s  %u", name, (unsigned int)row->count);
+  }
+
+#if PBL_ROUND
+  const int16_t left = prv_round_header_left(
+      data, row_index, layer_convert_point_to_screen(cell_layer, bounds.origin).y);
+  // Moving on along the rim keeps the caption's width.
+  const int16_t width = bounds.size.w - PBL_MIN(left, ROUND_MAX_INSET) - 20;
+#else
+  const int16_t left = 8 + prv_header_depth(row) * HEADER_INDENT_STEP;
+  const int16_t width = bounds.size.w - left - 20;
+#endif
+  const int16_t font_height = notification_style_scaled_points(14);
+  const int16_t text_top = bounds.origin.y + (bounds.size.h - font_height - 4) / 2;
+  prv_draw_caret(ctx, GPoint(left + 4, bounds.origin.y + bounds.size.h / 2), row->expanded);
+  graphics_draw_text(ctx, text, notification_style_scaled_font(14, true),
+                     GRect(left + 14, text_top, width, font_height + 4),
+                     GTextOverflowModeTrailingEllipsis, GTextAlignmentLeft, nullptr);
+}
+
+//! A line down the left of an open stack ties its notifications together. On round watches it
+//! is an arc along the rim.
+static void prv_draw_stack_line(GContext *ctx, const Layer *cell_layer, GRect bounds,
+                                int16_t row_index) {
+  const NotificationShadeRow *above = notification_shade_row(&s_data->shade, row_index - 1);
+  const NotificationShadeRow *below = notification_shade_row(&s_data->shade, row_index + 1);
+  const int16_t top = bounds.origin.y + ((above && above->in_stack) ? 0 : STACK_LINE_GAP);
+  const int16_t bottom =
+      bounds.origin.y + bounds.size.h - ((below && below->in_stack) ? 0 : STACK_LINE_GAP);
+#if PBL_ROUND
+#if PBL_COLOR
+  graphics_context_set_fill_color(ctx, notification_style_secondary());
+#else
+  graphics_context_set_fill_color(ctx, menu_cell_layer_is_highlighted(cell_layer)
+                                           ? notification_style_bg()
+                                           : notification_style_fg());
+#endif
+  // A ring concentric with the screen in the middle, filled one pixel row at a time.
+  const int16_t screen_y = layer_convert_point_to_screen(cell_layer, GPointZero).y;
+  for (int16_t y = top; y < bottom; y++) {
+    const int16_t dy = screen_y + y - PBL_DISPLAY_HEIGHT / 2;
+    const int16_t from = prv_stack_arc_x(STACK_LINE_EDGE, dy);
+    int16_t to = prv_stack_arc_x(STACK_LINE_EDGE + STACK_LINE_WIDTH, dy);
+    if (to <= from) {
+      to = from + 1;
+    }
+    graphics_fill_rect(ctx, &GRect(from, y, to - from, 1));
+  }
+#else
+  graphics_context_set_fill_color(ctx, notification_style_secondary());
+  graphics_fill_rect(ctx, &GRect(STACK_LINE_EDGE, top, STACK_LINE_WIDTH, bottom - top));
+#endif
+}
 
 #if PBL_RECT
-static void prv_draw_notification_cell_rect(GContext *ctx, const Layer *cell_layer,
-                                            const char *title, const char *subtitle,
-                                            GDrawCommandImage *icon) {
-  const GRect cell_layer_bounds = cell_layer->bounds;
-  const GSize icon_size = gdraw_command_image_get_bounds_size(icon);
-  const int16_t icon_left_margin = menu_cell_basic_horizontal_inset();
-  if (icon) {
-    // Inset the draw box from the left to leave some margin on the icon's left side
-    GRect box = cell_layer_bounds;
-    box.origin.x += icon_left_margin;
-
-    // Align the icon to the left of the draw box, centered vertically
-    GRect icon_rect = (GRect){.size = gdraw_command_image_get_bounds_size(icon)};
-    grect_align(&icon_rect, &box, GAlignLeft, false /* clip */);
-
-    prv_draw_notification_icon(ctx, cell_layer, icon, icon_rect.origin);
+//! The menu slides its highlight by redrawing every row it touches as highlighted. When the
+//! selection is inside an open stack, trim every highlighted row the same way so the moving bar
+//! stays one shape and never peeks out beside the stack line.
+static void prv_trim_highlight_strip(GContext *ctx, const Layer *cell_layer) {
+  if (!menu_cell_layer_is_highlighted(cell_layer)) {
+    return;
   }
-
-  // Temporarily inset the cell layer's bounds from the left so the text doesn't draw over any
-  // icon on the left
-  Layer *mutable_cell_layer = (Layer *)cell_layer;
-  const int text_left_margin = icon_left_margin + PBL_MAX(icon_size.w, ATTRIBUTE_ICON_TINY_SIZE_PX);
-  mutable_cell_layer->bounds =
-      grect_inset(cell_layer_bounds, GEdgeInsets(0, 5, 0, text_left_margin));
-
-  const GFont title_font = system_theme_get_font(TextStyleFont_MenuCellTitle);
-  const GFont subtitle_font = system_theme_get_font(TextStyleFont_Caption);
-  menu_cell_basic_draw_custom(ctx, cell_layer, title_font, title, nullptr /* value_font */,
-                              nullptr /* value */, subtitle_font, subtitle, nullptr /* icon */,
-                              false /* icon_on_right */, GTextOverflowModeTrailingEllipsis);
-
-  // Restore the cell layer's bounds
-  mutable_cell_layer->bounds = cell_layer_bounds;
+  const NotificationShadeRow *selected = notification_shade_row(
+      &s_data->shade, menu_layer_get_selected_index(&s_data->menu_layer).row);
+  if (!selected || !selected->in_stack) {
+    return;
+  }
+  const GRect bounds = cell_layer->bounds;
+  graphics_context_set_fill_color(ctx, notification_style_bg());
+  graphics_fill_rect(
+      ctx,
+      &GRect(0, 0, STACK_LINE_EDGE + STACK_LINE_WIDTH + STACK_LINE_HIGHLIGHT_GAP, bounds.size.h));
 }
 #endif
 
-//! outer_box is passed as a pointer to save stack space
-static int16_t prv_draw_centered_text_line_in(GContext *ctx, GFont font, const GRect *outer_box,
-                                              const char *text, GAlign align) {
-  if (!text) {
-    return 0;
-  }
-
-  GRect text_box = *outer_box;
-  text_box.size.h = fonts_get_font_height(font);
-  grect_align(&text_box, outer_box, align, true);
-
-  graphics_draw_text(ctx, text, font, text_box, GTextOverflowModeTrailingEllipsis,
-                     GTextAlignmentCenter, nullptr);
-
-  return text_box.size.h;
-}
-
-//! box is passed as a pointer to save stack space
-//! after this call, box will point to the GRect where
-//! the notification title was drawn
-void prv_draw_notification_cell_round(GContext *ctx, const Layer *cell_layer, GRect *box,
-                                      GFont const title_font, const char *title,
-                                      GFont const subtitle_font, const char *subtitle,
-                                      GDrawCommandImage *icon) {
-  if (icon) {
-    GRect icon_rect = (GRect){.size = gdraw_command_image_get_bounds_size(icon)};
-
-    grect_align(&icon_rect, box, GAlignTop, true);
-    icon_rect.origin.y += 4;
-
-    prv_draw_notification_icon(ctx, cell_layer, icon, icon_rect.origin);
-
-    // more box by icon + some margin
-    const int16_t icon_space = icon_rect.origin.y + icon_rect.size.h - 12;
-
-    // manually inset to save stack space, instead of using grect_inset
-    box->origin.y += icon_space;
-    box->size.h -= icon_space;
-  }
-
-  // hack: compensate for text placement inside a rect
-  box->origin.y -= 4;
-
-  if (subtitle) {
-    box->size.h -= prv_draw_centered_text_line_in(ctx, subtitle_font, box, subtitle, GAlignBottom);
-  }
-
-  if (title) {
-    prv_draw_centered_text_line_in(ctx, title_font, box, title, GAlignCenter);
-  }
-}
-
-#if PBL_ROUND
-static void prv_draw_notification_cell_round_selected(GContext *ctx, const Layer *cell_layer,
-                                                      const char *title, const char *subtitle,
-                                                      GDrawCommandImage *icon) {
-  // as measured from the design specs
-  const int inset = 8;
-  GRect frame = cell_layer->bounds;
-  // manually inset the frame to save stack space, instead of using grect_inset
-  frame.origin.x += inset;
-  frame.origin.y += inset;
-  frame.size.h -= inset * 2;
-  frame.size.w -= inset * 2;
-  const GFont title_font = system_theme_get_font(TextStyleFont_MenuCellTitle);
-  const GFont subtitle_font = system_theme_get_font(TextStyleFont_MenuCellSubtitle);
-  prv_draw_notification_cell_round(ctx, cell_layer, &frame, title_font, title, subtitle_font,
-                                   subtitle, icon);
-}
-
-static void prv_draw_notification_cell_round_unselected(GContext *ctx, const Layer *cell_layer,
-                                                        const char *title, const char *subtitle,
-                                                        GDrawCommandImage *icon) {
-  // as measured from the design specs
-  const int horizontal_inset = MENU_CELL_ROUND_UNFOCUSED_HORIZONTAL_INSET;
-  const int top_inset = 2;
-  GRect frame = cell_layer->bounds;
-  // manually inset the frame to save stack space, instead of using grect_inset
-  frame.origin.x += horizontal_inset;
-  frame.size.w -= horizontal_inset * 2;
-  frame.origin.y += top_inset;
-  frame.size.h -= top_inset;
-  // Using TextStyleFont_Header here is a little bit of a hack to achieve Gothic 18 Bold on
-  // Spalding's default content size (medium) while still being a little robust for any future round
-  // watches that have a default content size larger than medium
-  const GFont font = system_theme_get_font(TextStyleFont_Header);
-  prv_draw_notification_cell_round(ctx, cell_layer, &frame, font, title, nullptr, nullptr, nullptr);
-}
-#endif
-
-static void prv_select_callback(MenuLayer *menu_layer, MenuIndex *cell_index, void *data) {
-  NotificationsData *notifications_data = data;
-
-  if (notifications_data->history.rows && (cell_index->row == 0)) {
-    // Clear All button selected
-    prv_settings_clear_history_window_push(notifications_data);
-    return;
-  }
-
-  // shift index since the first one is hard coded to Clear
-  int16_t notif_idx = cell_index->row - 1;
-
-  NotificationHistoryRow *row =
-      notifications_history_get_row(&notifications_data->history, notif_idx);
-  if (!row) {
-    return;
-  }
-
-  if (notifications_history_row_is_collapsed_group(row)) {
-    prv_push_group_window(notifications_data, row);
-    return;
-  }
-
-  bool success = prv_push_notification_window(notifications_data);
-  if (!success) {
-    // Bail if a notification came in ahead of us and created a modal window
-    // before we had a chance to react to the select button event.
-    return;
-  }
-  const bool animated = false;
-  notification_window_focus_notification((Uuid *)notifications_history_row_get_latest_id(row),
-                                         animated);
-}
-
-static uint16_t prv_get_num_rows_callback(struct MenuLayer *menu_layer, uint16_t section_index,
-                                          void *data) {
-  NotificationsData *notifications_data = data;
-  NotificationHistoryRow *row = notifications_data->history.rows;
-  // There's no notifications, don't draw anything
-  if (!row) {
-    return 0;
-  }
-
-  // add one for the CLEAR ALL at the top
-  return notifications_history_get_row_count(&notifications_data->history) + 1;
-}
-
-static int16_t prv_get_cell_height(struct MenuLayer *menu_layer, MenuIndex *cell_index,
-                                   void *data) {
-#if PBL_ROUND
-  MenuIndex selected_index = menu_layer_get_selected_index(menu_layer);
-  bool is_selected = menu_index_compare(cell_index, &selected_index) == 0;
-  const int16_t focused_cell_height =
-      (system_theme_get_content_size() == PreferredContentSizeExtraLarge)
-          ? 100
-          : MENU_CELL_ROUND_FOCUSED_TALL_CELL_HEIGHT;
-  if (is_selected) {
-    return focused_cell_height;
-  }
-#if PBL_DISPLAY_HEIGHT >= 200
-  // Larger round displays fit two unfocused rows on each side of the focused row
-  return ((PBL_DISPLAY_HEIGHT - STATUS_BAR_LAYER_HEIGHT * 2) - focused_cell_height) / 4;
-#endif
-#endif
-  return ((int16_t[NumPreferredContentSizes]){
-    //! @note this is the same as Medium until Small is designed
-    [PreferredContentSizeSmall] = PBL_IF_RECT_ELSE(46, MENU_CELL_ROUND_UNFOCUSED_SHORT_CELL_HEIGHT),
-    [PreferredContentSizeMedium] =
-        PBL_IF_RECT_ELSE(46, MENU_CELL_ROUND_UNFOCUSED_SHORT_CELL_HEIGHT),
-    [PreferredContentSizeLarge] = menu_cell_basic_cell_height(),
-    [PreferredContentSizeExtraLarge] = menu_cell_basic_cell_height(),
-  })[system_theme_get_content_size()];
-}
-
-static const char *prv_get_group_title(NotificationsData *data, const NotificationHistoryRow *row) {
-  const char *sender = row->group.sender;
-  /// Notification sender followed by the number of grouped notifications
-  const char *format = pbl_i18n_get("%s (%u)", data);
-  const int title_length = snprintf(nullptr, 0, format, sender, (unsigned int)row->group.count);
-  if (title_length < 0) {
-    return sender;
-  }
-
-  const size_t required_size = (size_t)title_length + 1;
-  if (required_size > data->group_title_size) {
-    char *group_title = app_realloc(data->group_title, required_size);
-    if (!group_title) {
-      return sender;
-    }
-    data->group_title = group_title;
-    data->group_title_size = required_size;
-  }
-
-  snprintf(data->group_title, data->group_title_size, format, sender,
-           (unsigned int)row->group.count);
-  return data->group_title;
-}
-
-static void prv_draw_row_callback(GContext *ctx, const Layer *cell_layer, MenuIndex *cell_index,
-                                  void *data) {
-  NotificationsData *notifications_data = data;
-
-  void (*draw_cell)(GContext *, const Layer *, const char *, const char *, GDrawCommandImage *) =
-      PBL_IF_RECT_ELSE(prv_draw_notification_cell_rect, prv_draw_notification_cell_round_selected);
-#if PBL_ROUND
-  // on round: just draw the title for anything but the focused row
-  if (!menu_layer_is_index_selected(&s_data->menu_layer, cell_index)) {
-    draw_cell = prv_draw_notification_cell_round_unselected;
-  }
-#endif
-
-  bool first_row = (cell_index->row == 0);
-  // Test if there are any notifications in the list.
-  if (first_row) {
-    // Draw "Clear all" box and exit
-#if PBL_ROUND
-    draw_cell(ctx, cell_layer, pbl_i18n_get("Clear All", data), nullptr, nullptr);
-#else
-    const GFont font = system_theme_get_font(TextStyleFont_MenuCellTitle);
-    GRect box = cell_layer->bounds;
-    box.origin.y +=
-        (box.size.h - fonts_get_font_height(font)) / 2 - fonts_get_font_cap_offset(font);
-
-    graphics_draw_text(ctx, pbl_i18n_get("Clear All", data), font, box,
-                       GTextOverflowModeTrailingEllipsis, GTextAlignmentCenter, nullptr);
-#endif
-    return;
-  }
-
-  // shift index since the first one is hard coded to Clear
-  const int16_t notif_idx = cell_index->row - 1;
-
-  NotificationHistoryRow *row =
-      notifications_history_get_row(&notifications_data->history, notif_idx);
-  if (!row) {
-    return;
-  }
-
-  LoadedNotificationNode *loaded_node = prv_loaded_notification_list_load_item(
-      &notifications_data->loaded_notification_list, notifications_history_row_get_latest_id(row));
+static void prv_draw_item_row(GContext *ctx, const Layer *cell_layer, GRect bounds,
+                              const NotificationShadeRow *row, int16_t row_index) {
+  LoadedNotificationNode *loaded_node = prv_load_row_item(s_data, row);
   if (!loaded_node) {
     return;
   }
 
-  TimelineItem *notification = &loaded_node->notification;
-  const char *title = attribute_get_string(&notification->attr_list, AttributeIdTitle, "");
-  const char *subtitle = attribute_get_string(&notification->attr_list, AttributeIdSubtitle, "");
-  const char *app_name = attribute_get_string(&notification->attr_list, AttributeIdAppName, "");
-  const char *body = attribute_get_string(&notification->attr_list, AttributeIdBody, "");
+#if PBL_ROUND
+  // Keep the icon and text clear of the rim, and inside an open stack of its arc: rows away from
+  // the centre start further in, and near the ends move on along the rim.
+  int16_t left = prv_round_rim_at_row(cell_layer, bounds) + 4;
+  if (row->in_stack) {
+    left = PBL_MAX(left + 7, prv_stack_arc_clearance(cell_layer, bounds));
+  }
+  const int16_t inset = prv_round_inset(left);
+  bounds.origin.x += prv_round_shift(left);
+#else
+  const int16_t inset = row->in_stack ? 12 : 5;
+#endif
 
-  // We show the app name if we don't have a custom icon, otherwise we use the title
-  if (!PBL_IS_EMPTY_STRING(app_name) && loaded_node->icon_is_default) {
+  if (row->in_stack) {
+    prv_draw_stack_line(ctx, cell_layer, bounds, row_index);
+  }
+
+  GSize icon_size = GSizeZero;
+  if (loaded_node->icon) {
+    icon_size = gdraw_command_image_get_bounds_size(loaded_node->icon);
+    GRect box = bounds;
+    box.origin.x += inset;
+    GRect icon_rect = (GRect){.size = icon_size};
+    grect_align(&icon_rect, &box, GAlignLeft, false /* clip */);
+    prv_draw_notification_icon(ctx, cell_layer, loaded_node->icon, icon_rect.origin);
+  }
+
+  const TimelineItem *notification = &loaded_node->notification;
+  const char *title = attribute_get_string(&notification->attr_list, AttributeIdTitle, "");
+  const char *app_name = attribute_get_string(&notification->attr_list, AttributeIdAppName, "");
+  // Notifications with the generic icon are titled with their app, except inside a stack, whose
+  // header already names the app: there they are titled with who they are from.
+  if (loaded_node->icon_is_default && !PBL_IS_EMPTY_STRING(app_name) &&
+      !(row->in_stack && !PBL_IS_EMPTY_STRING(title))) {
     title = app_name;
   }
+  const char *body = attribute_get_string(&notification->attr_list, AttributeIdBody, "");
+  if (PBL_IS_EMPTY_STRING(body)) {
+    body = attribute_get_string(&notification->attr_list, AttributeIdSubtitle, "");
+  }
+  const char *header = attribute_get_string(&notification->attr_list, AttributeIdTitle, "");
+  if (PBL_IS_EMPTY_STRING(header)) {
+    header = app_name;
+  }
+  const char *subtitle = notification_style_body_text(header, body);
+  if (PBL_IS_EMPTY_STRING(title)) {
+    title = !PBL_IS_EMPTY_STRING(subtitle) ? subtitle : pbl_i18n_get("[Empty]", s_data);
+    subtitle = nullptr;
+  }
 
-  if (!PBL_IS_EMPTY_STRING(title) && !PBL_IS_EMPTY_STRING(subtitle)) {
-    // we got a title & subtitle, we're done
-  } else if (PBL_IS_EMPTY_STRING(title) && PBL_IS_EMPTY_STRING(subtitle)) {
-    // we got neither, use the body
-    if (PBL_IS_EMPTY_STRING(body)) {
-      // we're screwed... empty message
-      title = "[Empty]";
-    } else {
-      // try to show as much content as possible in title + subtitle
-      title = body;
-      subtitle = strchr(body, '\n'); // NULL handled gracefully downstream
-    }
-  } else if (PBL_IS_EMPTY_STRING(title)) {
-    // no title, but yes subtitle.
-    title = subtitle;
-    subtitle = body;
-  } else if (PBL_IS_EMPTY_STRING(subtitle)) {
-    // no subtitle, but yes title
-    subtitle = body;
+  const int16_t icon_gap = 5;
+  const int16_t text_left = inset + PBL_MAX(icon_size.w, ATTRIBUTE_ICON_TINY_SIZE_PX) + icon_gap;
+  // A closed stack keeps room on the right for its count.
+  const int16_t right_room =
+      PBL_IF_ROUND_ELSE(inset, 5) + ((row->kind == NotificationShadeRowStack) ? 22 : 0);
+  const GRect text_box = grect_inset(bounds, GEdgeInsets(0, right_room, 0, text_left));
+  const int16_t title_height = notification_style_scaled_points(24);
+  const int16_t subtitle_height = subtitle ? notification_style_scaled_points(14) : 0;
+  const int16_t top =
+      text_box.origin.y + (text_box.size.h - (title_height + subtitle_height + 10)) / 2;
+
+  graphics_draw_text(ctx, title, notification_style_scaled_font(24, true),
+                     GRect(text_box.origin.x, top, text_box.size.w, title_height + 4),
+                     GTextOverflowModeTrailingEllipsis, GTextAlignmentLeft, nullptr);
+  if (subtitle) {
+    graphics_draw_text(
+        ctx, subtitle, notification_style_scaled_font(14, false),
+        GRect(text_box.origin.x, top + title_height, text_box.size.w, subtitle_height + 4),
+        GTextOverflowModeTrailingEllipsis, GTextAlignmentLeft, nullptr);
+  }
+
+  if (row->kind == NotificationShadeRowStack) {
+    // A closed stack: how many notifications it holds, with a caret to open it.
+    char count[6];
+    snprintf(count, sizeof(count), "%u", (unsigned int)row->count);
+    const int16_t right = bounds.size.w - PBL_IF_ROUND_ELSE(inset, 5);
+    const int16_t middle = bounds.origin.y + bounds.size.h / 2;
+    graphics_draw_text(ctx, count, notification_style_scaled_font(14, true),
+                       GRect(right - 26, middle - 10, 16, 18), GTextOverflowModeFill,
+                       GTextAlignmentRight, nullptr);
+    const bool highlighted = menu_cell_layer_is_highlighted(cell_layer);
+    graphics_context_set_fill_color(
+        ctx, highlighted ? prv_highlight_text_color() : notification_style_fg());
+    prv_draw_caret(ctx, GPoint(right - 4, middle), false);
+  }
+}
+
+static void prv_draw_row_callback(GContext *ctx, const Layer *cell_layer, MenuIndex *cell_index,
+                                  void *context) {
+  NotificationsData *data = context;
+  const NotificationShadeRow *row = notification_shade_row(&data->shade, cell_index->row);
+  if (!row) {
+    return;
+  }
+#if PBL_RECT
+  prv_trim_highlight_strip(ctx, cell_layer);
+#endif
+  // A row that is opening or closing is drawn at full size, sliding out from under the row above.
+  GRect bounds = cell_layer->bounds;
+  const int16_t full = prv_full_row_height(row);
+  if (bounds.size.h < full) {
+    bounds.origin.y = bounds.size.h - full;
+    bounds.size.h = full;
+  }
+  if (prv_row_is_header(row)) {
+    prv_draw_header_row(ctx, cell_layer, bounds, row, cell_index->row);
   } else {
-    pbl_panic();
+    prv_draw_item_row(ctx, cell_layer, bounds, row, cell_index->row);
   }
+}
 
-  if (notifications_history_row_is_collapsed_group(row)) {
-    title = prv_get_group_title(notifications_data, row);
-    subtitle = !PBL_IS_EMPTY_STRING(body) ? body : subtitle;
+///////////////////
+// Opening and closing headers and stacks
+
+//! Round: inside an open stack, the highlight pill starts inside the stack's arc.
+static void prv_update_highlight_pill(NotificationsData *data) {
+#if PBL_ROUND
+  const NotificationShadeRow *selected =
+      notification_shade_row(&data->shade, menu_layer_get_selected_index(&data->menu_layer).row);
+  const bool in_stack = selected && selected->in_stack;
+  menu_layer_set_round_pill_left_margin(
+      &data->menu_layer, in_stack ? (STACK_LINE_EDGE + STACK_LINE_WIDTH + STACK_LINE_HIGHLIGHT_GAP -
+                                     MENU_ROUND_PILL_BEZEL_MARGIN)
+                                  : 0);
+#endif
+}
+
+static void prv_reload_rows(NotificationsData *data) {
+#if PBL_ROUND
+  ScrollLayer *scroll = menu_layer_get_scroll_layer(&data->menu_layer);
+  const GPoint offset = scroll_layer_get_content_offset(scroll);
+#endif
+  menu_layer_reload_data(&data->menu_layer);
+#if PBL_ROUND
+  // Rows alone end at the last one, which clamped a list resting in the space below.
+  GSize size = scroll_layer_get_content_size(scroll);
+  size.h += prv_round_space_below(data);
+  scroll_layer_set_content_size(scroll, size);
+  if (scroll_layer_get_content_offset(scroll).y != offset.y) {
+    scroll_layer_set_content_offset(scroll, offset, false /* animated */);
   }
+#endif
+  prv_update_highlight_pill(data);
+}
 
-  draw_cell(ctx, cell_layer, title, subtitle, loaded_node->icon);
+static void prv_save_collapsed_sections(NotificationsData *data) {
+  alerts_preferences_set_notification_collapsed_sections(data->shade.collapsed_groups);
+}
+
+static void prv_fold_finish(NotificationsData *data, bool apply) {
+  if (data->fold_first < 0) {
+    return;
+  }
+  const bool closing = !data->fold_opening;
+  const int16_t header = data->fold_header;
+  data->fold_first = -1;
+  data->fold_count = 0;
+  data->fold_amount = FOLD_FULL;
+  Animation *running = data->fold_animation;
+  data->fold_animation = nullptr;
+  if (running) {
+    animation_unschedule(running);
+  }
+  if (closing && apply) {
+    notification_shade_toggle_row(&data->shade, header);
+    prv_save_collapsed_sections(data);
+  }
+  prv_reload_rows(data);
+}
+
+//! After a header opens, scroll just enough to show what it revealed, keeping it on screen.
+static void prv_reveal_opened_rows(NotificationsData *data, int16_t header, int16_t count) {
+#if PBL_RECT
+  ScrollLayer *scroll = menu_layer_get_scroll_layer(&data->menu_layer);
+  const int16_t offset = -scroll_layer_get_content_offset(scroll).y;
+  int16_t header_top = 0;
+  for (int16_t i = 0; i < header; i++) {
+    header_top += prv_row_height_at(data, i);
+  }
+  int16_t bottom = header_top + prv_row_height_at(data, header);
+  for (int16_t i = 1; i <= count; i++) {
+    bottom += prv_row_height_at(data, header + i);
+  }
+  const int16_t view = menu_layer_get_layer(&data->menu_layer)->bounds.size.h;
+  if (bottom <= offset + view) {
+    return;
+  }
+  int16_t target = bottom - view;
+  if (target > header_top) {
+    target = header_top;
+  }
+  if (target > offset) {
+    scroll_layer_set_content_offset(scroll, GPoint(0, -target), true /* animated */);
+  }
+#endif
+}
+
+// Back easing: past the target by about a tenth, then back.
+static int32_t prv_ease_out_back(int32_t t) {
+  const int64_t u = t - FOLD_FULL;
+  return FOLD_FULL + (int32_t)(2702 * u * u * u / 1000000000LL + 1702 * u * u / 1000000LL);
+}
+
+static int32_t prv_ease_in_back(int32_t t) {
+  const int64_t v = t;
+  return (int32_t)(2702 * v * v * v / 1000000000LL - 1702 * v * v / 1000000LL);
+}
+
+static void prv_fold_update(Animation *animation, const AnimationProgress progress) {
+  NotificationsData *data = s_data;
+  const int32_t t = (int32_t)progress * FOLD_FULL / ANIMATION_NORMALIZED_MAX;
+  data->fold_amount = data->fold_opening ? prv_ease_out_back(t) : FOLD_FULL - prv_ease_in_back(t);
+  prv_reload_rows(data);
+}
+
+static void prv_fold_stopped(Animation *animation, bool finished, void *context) {
+  NotificationsData *data = context;
+  if (animation != data->fold_animation) {
+    return;
+  }
+  data->fold_animation = nullptr;
+  if (finished) {
+    const bool opened = data->fold_opening;
+    const int16_t header = data->fold_header;
+    const int16_t count = data->fold_count;
+    prv_fold_finish(data, true);
+    if (opened) {
+      prv_reveal_opened_rows(data, header, count);
+    }
+  }
+}
+
+static void prv_fold_start(NotificationsData *data, int16_t header, int16_t count, bool opening) {
+  data->fold_header = header;
+  data->fold_first = header + 1;
+  data->fold_count = count;
+  data->fold_opening = opening;
+  data->fold_amount = opening ? 0 : FOLD_FULL;
+
+  static const AnimationImplementation s_implementation = {
+    .update = prv_fold_update,
+  };
+  Animation *animation = animation_create();
+  if (!animation) {
+    prv_fold_finish(data, true);
+    return;
+  }
+  data->fold_animation = animation;
+  animation_set_implementation(animation, &s_implementation);
+  animation_set_duration(animation, opening ? FOLD_OPEN_MS : FOLD_CLOSE_MS);
+  animation_set_curve(animation, AnimationCurveLinear);
+  animation_set_handlers(animation,
+                         (AnimationHandlers){
+                           .stopped = prv_fold_stopped,
+                         },
+                         data);
+  prv_reload_rows(data);
+  if (!animation_schedule(animation)) {
+    prv_fold_finish(data, true);
+  }
+}
+
+static void prv_toggle_row(NotificationsData *data, uint16_t index) {
+  if (data->fold_first >= 0) {
+    // Pressed again mid-animation: just finish it (closing changes which row is where).
+    const bool was_closing = !data->fold_opening;
+    prv_fold_finish(data, true);
+    if (was_closing) {
+      return;
+    }
+  }
+  const NotificationShadeRow *row = notification_shade_row(&data->shade, index);
+  if (!row) {
+    return;
+  }
+  if (row->expanded) {
+    // Close: shrink the rows first; the model drops them when the animation ends.
+    const uint16_t count = notification_shade_rows_folded_by(&data->shade, index);
+    if (count > 0) {
+      prv_fold_start(data, index, count, false /* opening */);
+      return;
+    }
+    notification_shade_toggle_row(&data->shade, index);
+  } else {
+    const uint16_t before = notification_shade_row_count(&data->shade);
+    notification_shade_toggle_row(&data->shade, index);
+    const uint16_t after = notification_shade_row_count(&data->shade);
+    if (after > before) {
+      prv_save_collapsed_sections(data);
+      prv_fold_start(data, index, after - before, true /* opening */);
+      return;
+    }
+  }
+  prv_save_collapsed_sections(data);
+  prv_reload_rows(data);
+}
+
+///////////////////
+// MenuLayer callbacks
+
+static void prv_select_callback(MenuLayer *menu_layer, MenuIndex *cell_index, void *context) {
+  NotificationsData *data = context;
+  const NotificationShadeRow *row = notification_shade_row(&data->shade, cell_index->row);
+  if (!row) {
+    return;
+  }
+  if (row->kind != NotificationShadeRowItem) {
+    // Headers and stacks open or close, as on the phone.
+    prv_toggle_row(data, cell_index->row);
+    return;
+  }
+  const NotificationShadeEntry *entry = notification_shade_item(&data->shade, row->item);
+  if (entry) {
+    prv_push_notification_window(data, &entry->id);
+  }
+}
+
+static uint16_t prv_get_num_rows_callback(MenuLayer *menu_layer, uint16_t section_index,
+                                          void *context) {
+  NotificationsData *data = context;
+  return notification_shade_row_count(&data->shade);
+}
+
+static int16_t prv_get_cell_height(MenuLayer *menu_layer, MenuIndex *cell_index, void *context) {
+  NotificationsData *data = context;
+  return prv_row_height_at(data, cell_index->row);
+}
+
+#if PBL_ROUND
+static int16_t prv_get_header_height(MenuLayer *menu_layer, uint16_t section_index, void *context) {
+  return prv_round_space_above(context);
+}
+
+static void prv_draw_header(GContext *ctx, const Layer *cell_layer, uint16_t section_index,
+                            void *context) {
+}
+#endif
+
+static void prv_selection_changed(MenuLayer *menu_layer, MenuIndex new_index, MenuIndex old_index,
+                                  void *context) {
+  NotificationsData *data = context;
+  // Moving off a header that is still opening or closing finishes it.
+  if ((data->fold_first >= 0) && (old_index.row == data->fold_header)) {
+    prv_fold_finish(data, true);
+  }
+  prv_update_highlight_pill(data);
 }
 
 // Display the appropriate layer
 static void prv_update_text_layer_visibility(NotificationsData *data) {
-  NotificationHistoryRow *row = data->history.rows;
+  const bool empty = (notification_shade_count(&data->shade) == 0);
+  layer_set_hidden((Layer *)&data->menu_layer, empty);
+  layer_set_hidden((Layer *)&data->text_layer, !empty);
+}
 
-  // Toggle which layer is visible
-  if (row == nullptr) {
-    layer_set_hidden((Layer *)&data->menu_layer, true);
-    layer_set_hidden((Layer *)&data->text_layer, false);
-  } else {
-    layer_set_hidden((Layer *)&data->menu_layer, false);
-    layer_set_hidden((Layer *)&data->text_layer, true);
+//! Keeps the selection on the same notification (or the header or stack holding it) after the
+//! list changes, without recentering.
+static void prv_reload_keeping_selection(NotificationsData *data, const Uuid *selected_id,
+                                         int16_t fallback_row) {
+  prv_reload_rows(data);
+  const uint16_t count = notification_shade_row_count(&data->shade);
+  if (count == 0) {
+    return;
+  }
+  int row = selected_id ? notification_shade_row_of(&data->shade, selected_id) : -1;
+  if (row < 0) {
+    row = (fallback_row < count) ? fallback_row : count - 1;
+  }
+  if (row >= 0 && (row != menu_layer_get_selected_index(&data->menu_layer).row)) {
+    menu_layer_set_selected_index(&data->menu_layer, MenuIndex(0, row), MenuRowAlignNone,
+                                  false /* animated */);
   }
 }
 
-static void prv_group_window_remove_notification(NotificationsData *data, const Uuid *id) {
-  NotificationGroupWindow *group_window = data->group_window;
-  if (!group_window) {
-    return;
+//! The notification the selected row shows, if any.
+static bool prv_selected_id(NotificationsData *data, Uuid *id_out) {
+  const NotificationShadeRow *row =
+      notification_shade_row(&data->shade, menu_layer_get_selected_index(&data->menu_layer).row);
+  if (!row || (row->kind == NotificationShadeRowHeader)) {
+    return false;
   }
-
-  for (uint16_t i = 0; i < group_window->count; i++) {
-    if (!uuid_equal(&group_window->notification_ids[i], id)) {
-      continue;
-    }
-
-    group_window->count--;
-    memmove(&group_window->notification_ids[i], &group_window->notification_ids[i + 1],
-            sizeof(Uuid) * (group_window->count - i));
-    if (group_window->count <= 1) {
-      app_window_stack_remove(&group_window->window, false);
-      return;
-    }
-
-    menu_layer_reload_data(&group_window->menu_layer);
-    const uint16_t selected_row = (i < group_window->count) ? i : group_window->count - 1;
-    menu_layer_set_selected_index(&group_window->menu_layer, MenuIndex(0, selected_row),
-                                  MenuRowAlignCenter, false);
-    return;
+  const NotificationShadeEntry *entry = notification_shade_item(&data->shade, row->item);
+  if (!entry) {
+    return false;
   }
+  *id_out = entry->id;
+  return true;
 }
 
-static void prv_group_window_add_notification(NotificationsData *data, const Uuid *id) {
-  NotificationGroupWindow *group_window = data->group_window;
-  if (!group_window) {
-    return;
-  }
-
-  NotificationHistoryRow *row = data->history.rows;
-  while (row) {
-    if (row->is_group && strcmp(row->group.sender, group_window->sender) == 0) {
-      NotificationHistoryMember *member = row->group.members;
-      uint16_t member_index = 0;
-      while (member) {
-        if (uuid_equal(&member->entry.id, id)) {
-          Uuid *notification_ids =
-              app_realloc(group_window->notification_ids, sizeof(Uuid) * (group_window->count + 1));
-          if (!notification_ids) {
-            // Can't track the new member; drop the stale window rather than desync from history.
-            app_window_stack_remove(&group_window->window, false);
-            return;
-          }
-
-          group_window->notification_ids = notification_ids;
-          memmove(&group_window->notification_ids[member_index + 1],
-                  &group_window->notification_ids[member_index],
-                  sizeof(Uuid) * (group_window->count - member_index));
-          group_window->notification_ids[member_index] = *id;
-          group_window->count++;
-          menu_layer_reload_data(&group_window->menu_layer);
-          menu_layer_set_selected_index(&group_window->menu_layer, MenuIndex(0, member_index),
-                                        MenuRowAlignCenter, false);
-          return;
-        }
-        member = (NotificationHistoryMember *)list_get_next(&member->node);
-        member_index++;
-      }
-    }
-    row = (NotificationHistoryRow *)list_get_next(&row->node);
-  }
+static void prv_remove_from_list(NotificationsData *data, const Uuid *id) {
+  prv_fold_finish(data, true);
+  Uuid selected;
+  const bool has_selected = prv_selected_id(data, &selected) && !uuid_equal(&selected, id);
+  const int16_t selected_row = menu_layer_get_selected_index(&data->menu_layer).row;
+  notification_shade_remove(&data->shade, id);
+  prv_reload_keeping_selection(data, has_selected ? &selected : nullptr, selected_row);
 }
 
 static void prv_handle_notification_removed(Uuid *id) {
-  prv_group_window_remove_notification(s_data, id);
-  notifications_history_remove(&s_data->history, id);
-  app_notification_window_remove_notification_by_id(id);
-}
-
-static void prv_handle_notification_acted_upon(Uuid *id) {
-  prv_group_window_remove_notification(s_data, id);
-  notifications_history_remove(&s_data->history, id);
+  prv_remove_from_list(s_data, id);
   app_notification_window_remove_notification_by_id(id);
 }
 
 static void prv_handle_notification_added(Uuid *id) {
+  NotificationsData *data = s_data;
   TimelineItem notification;
   if (!notification_storage_get(id, &notification)) {
     return;
   }
+  prv_fold_finish(data, true);
+  Uuid selected;
+  const bool has_selected = prv_selected_id(data, &selected);
+  const int16_t selected_row = menu_layer_get_selected_index(&data->menu_layer).row;
 
-  notifications_history_add_item(&s_data->history, &notification);
-  prv_group_window_add_notification(s_data, id);
+  // A re-sent notification replaces the one listed.
+  notification_shade_remove(&data->shade, id);
+  char sender[ATTRIBUTE_TITLE_MAX_LEN + 1];
+  char title[ATTRIBUTE_TITLE_MAX_LEN + 1];
+  char app_name[ATTRIBUTE_TITLE_MAX_LEN + 1];
+  strncpy(sender, attribute_get_string(&notification.attr_list, AttributeIdSender, ""),
+          sizeof(sender) - 1);
+  strncpy(title, attribute_get_string(&notification.attr_list, AttributeIdTitle, ""),
+          sizeof(title) - 1);
+  strncpy(app_name, attribute_get_string(&notification.attr_list, AttributeIdAppName, ""),
+          sizeof(app_name) - 1);
+  sender[sizeof(sender) - 1] = title[sizeof(title) - 1] = app_name[sizeof(app_name) - 1] = '\0';
+  prv_add_to_shade(data, &notification, app_name, sender, title);
+  notification_shade_rebuild(&data->shade);
   timeline_item_free_allocated_buffer(&notification);
 
+  // Drop a cached copy so the row shows the new contents.
+  LoadedNotificationNode *loaded = prv_find_loaded_notification(data->loaded_notification_list, id);
+  if (loaded) {
+    list_remove(&loaded->node, (ListNode **)&data->loaded_notification_list, nullptr);
+    prv_unload_loaded_notification(loaded);
+  }
+
+  prv_reload_keeping_selection(data, has_selected ? &selected : nullptr, selected_row);
   app_notification_window_add_new_notification_by_id(id);
 }
 
@@ -933,18 +1139,14 @@ static void prv_handle_notification(PebbleEvent *e, void *context) {
         prv_handle_notification_added(id);
         break;
       case NotificationRemoved:
-        prv_handle_notification_removed(id);
-        break;
       case NotificationActedUpon:
-        prv_handle_notification_acted_upon(id);
+        prv_handle_notification_removed(id);
         break;
       case NotificationActionResult: {
         PebbleSysNotificationActionResult *action_result = e->sys_notification.action_result;
         if (action_result && (action_result->type == ActionResultTypeSuccess ||
                               action_result->type == ActionResultTypeSuccessANCSDismiss)) {
-          prv_group_window_remove_notification(s_data, &action_result->id);
-          notifications_history_remove(&s_data->history, &action_result->id);
-          app_notification_window_remove_notification_by_id(&action_result->id);
+          prv_handle_notification_removed(&action_result->id);
         }
         break;
       }
@@ -952,7 +1154,6 @@ static void prv_handle_notification(PebbleEvent *e, void *context) {
         break;
         // Not implemented
     }
-    menu_layer_reload_data(&s_data->menu_layer);
     prv_update_text_layer_visibility(s_data);
   }
   // we don't handle reminders within the notifications app
@@ -976,19 +1177,27 @@ static void prv_window_disappear(Window *window) {
 static void prv_window_load(Window *window) {
   NotificationsData *data = window_get_user_data(window);
   MenuLayer *menu_layer = &data->menu_layer;
-  const GRect menu_layer_frame = PBL_IF_RECT_ELSE(
-      window->layer.bounds, grect_inset_internal(window->layer.bounds, 0, STATUS_BAR_LAYER_HEIGHT));
-  menu_layer_init(menu_layer, &menu_layer_frame);
+  menu_layer_init(menu_layer, &window->layer.bounds);
   menu_layer_set_callbacks(menu_layer, data,
                            &(MenuLayerCallbacks){
                              .get_num_rows = prv_get_num_rows_callback,
                              .draw_row = prv_draw_row_callback,
                              .get_cell_height = prv_get_cell_height,
                              .select_click = prv_select_callback,
+                             .selection_changed = prv_selection_changed,
+#if PBL_ROUND
+                             .get_header_height = prv_get_header_height,
+                             .draw_header = prv_draw_header,
+#endif
                            });
 
 #if PBL_COLOR
   menu_layer_set_highlight_colors(menu_layer, DEFAULT_NOTIFICATION_COLOR, GColorWhite);
+#endif
+#if PBL_ROUND
+  // Slide like a rectangular list instead of jumping a row per press.
+  menu_layer_set_center_focused(menu_layer, false);
+  menu_layer_pad_bottom_enable(menu_layer, false);
 #endif
 
   menu_layer_set_click_config_onto_window(menu_layer, window);
@@ -1000,27 +1209,31 @@ static void prv_window_load(Window *window) {
   layer_add_child(&window->layer, menu_layer_get_layer(menu_layer));
 
   TextLayer *text_layer = &data->text_layer;
-  const int16_t horizontal_margin = 5;
-  const GFont font = system_theme_get_font(TextStyleFont_MenuCellTitle);
-  // configure text layer to be vertically aligned (15 is hacking around our poor fonts)
+  const int16_t margin = 10;
+  const GFont font = notification_style_scaled_font(24, true);
+  const int16_t font_height = notification_style_scaled_points(24);
   text_layer_init_with_parameters(
       text_layer,
-      &GRect(horizontal_margin, window->layer.bounds.size.h / 2 - 15,
-             window->layer.bounds.size.w - horizontal_margin, window->layer.bounds.size.h / 2),
-      pbl_i18n_get("No notifications", data), font, GColorBlack, GColorClear, GTextAlignmentCenter,
+      &GRect(margin, (window->layer.bounds.size.h - font_height) / 2 - 4,
+             window->layer.bounds.size.w - 2 * margin, font_height + 8),
+      pbl_i18n_get("No Notifications", data), font, GColorBlack, GColorClear, GTextAlignmentCenter,
       GTextOverflowModeTrailingEllipsis);
   text_layer_set_text_color_follows_theme(text_layer);
   layer_add_child(&window->layer, text_layer_get_layer(text_layer));
 
-#if PBL_ROUND
-  StatusBarLayer *status_bar = &data->status_bar_layer;
-  status_bar_layer_init(status_bar);
-  status_bar_layer_set_colors_follow_theme(status_bar, true /* transparent_background */);
-  layer_add_child(&window->layer, &status_bar->layer);
-#endif
-
-  menu_layer_set_selected_index(menu_layer, MenuIndex(0, 1),
-                                PBL_IF_RECT_ELSE(MenuRowAlignNone, MenuRowAlignCenter), false);
+  // Start on the first notification rather than on a header.
+  uint16_t first = 0;
+  const NotificationShadeRow *row;
+  while ((row = notification_shade_row(&data->shade, first)) &&
+         (row->kind == NotificationShadeRowHeader)) {
+    first++;
+  }
+  if (!row) {
+    first = 0;
+  }
+  prv_reload_rows(data);
+  menu_layer_set_selected_index(menu_layer, MenuIndex(0, first), MenuRowAlignNone, false);
+  prv_update_highlight_pill(data);
 }
 
 static void prv_push_window(NotificationsData *data) {
@@ -1050,7 +1263,9 @@ static void prv_handle_init(void) {
     .handler = prv_handle_notification,
   };
   event_service_client_subscribe(&data->notification_event_info);
-  prv_notifications_history_init(data);
+  data->fold_first = -1;
+  data->fold_amount = FOLD_FULL;
+  prv_shade_init(data);
   prv_load_notification_storage(data);
 
   prv_push_window(data);
@@ -1058,14 +1273,11 @@ static void prv_handle_init(void) {
 
 static void prv_handle_deinit(void) {
   NotificationsData *data = app_state_get_user_data();
-#if PBL_ROUND
-  status_bar_layer_deinit(&data->status_bar_layer);
-#endif
+  prv_fold_finish(data, false);
   menu_layer_deinit(&data->menu_layer);
   event_service_client_unsubscribe(&data->notification_event_info);
   prv_loaded_notification_list_deinit(data->loaded_notification_list);
-  notifications_history_deinit(&data->history);
-  app_free(data->group_title);
+  notification_shade_deinit(&data->shade);
 
   pbl_i18n_free_all(data);
   app_free(data);
