@@ -1424,18 +1424,35 @@ static void prv_menu_layer_update_selection_highlight(MenuLayer *menu_layer, boo
   }
 }
 
+#if PBL_ROUND
+//! Height of the row \a delta rows from \a index in its section, or 0 if there is none
+static int16_t prv_round_neighbour_height(MenuLayer *menu_layer, MenuIndex index, int delta) {
+  const int32_t row = (int32_t)index.row + delta;
+  if ((row < 0) || (row >= prv_menu_layer_get_num_rows(menu_layer, index.section))) {
+    return 0;
+  }
+  MenuIndex neighbour = MenuIndex(index.section, (uint16_t)row);
+  return prv_menu_layer_get_cell_height(menu_layer, &neighbour, true);
+}
+#endif
+
 //! Content offset at which \a span rests on a center-focused menu: centred. On round, a list
-//! that scrolls stops at its ends instead, so the first and last rows rest at the top and bottom
-//! edges with no blank space around them, and a list that fits is centred as a whole.
+//! stops at its ends instead, though never with the selection more than a row from the middle,
+//! where the screen is still wide: the first and last rows stop with their neighbour in the
+//! middle, and a list that fits is centred as a whole when it is short enough.
 static int16_t prv_center_focus_rest_offset_y(MenuLayer *menu_layer, const MenuCellSpan *span) {
   const int16_t frame_h = menu_layer->scroll_layer.layer.frame.size.h;
   const int16_t y = (int16_t)((frame_h / 2) - span->y - (span->h / 2));
 #if PBL_ROUND
   const int16_t content_h = scroll_layer_get_content_size(&menu_layer->scroll_layer).h;
-  if (content_h <= frame_h) {
-    return (int16_t)((frame_h - content_h) / 2);
-  }
-  return PBL_CLAMP(y, (int16_t)(frame_h - content_h), (int16_t)0);
+  const int16_t at_ends = (content_h <= frame_h)
+                              ? (int16_t)((frame_h - content_h) / 2)
+                              : PBL_CLAMP(y, (int16_t)(frame_h - content_h), (int16_t)0);
+  const int16_t below = prv_round_neighbour_height(menu_layer, span->index, 1);
+  const int16_t above = prv_round_neighbour_height(menu_layer, span->index, -1);
+  const int16_t lowest = (int16_t)(y - ((below + span->h) / 2));
+  const int16_t highest = (int16_t)(y + ((above + span->h) / 2));
+  return PBL_CLAMP(at_ends, lowest, highest);
 #else
   return y;
 #endif
