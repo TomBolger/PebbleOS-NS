@@ -28,12 +28,14 @@
 #define LAUNCHER_APP_GLANCE_STRUCTURED_ICON_HORIZONTAL_MARGIN (5)
 #endif
 
-//! Round: the header row's icon sits this far below the top of the screen
-#define LAUNCHER_APP_GLANCE_STRUCTURED_HEADER_TOP (10)
+//! Round: the header row's text ends this far above the bottom of its bubble
+#define LAUNCHER_APP_GLANCE_STRUCTURED_HEADER_BOTTOM (10)
+//! Round: the header row's icon never sits higher than this below the top of the screen
+#define LAUNCHER_APP_GLANCE_STRUCTURED_HEADER_MIN_TOP (4)
 //! Round: space between the header row's icon and its title
 #define LAUNCHER_APP_GLANCE_STRUCTURED_HEADER_GAP (2)
-//! Round: the header row's title keeps this far in from the edge of its bubble
-#define LAUNCHER_APP_GLANCE_STRUCTURED_HEADER_TITLE_MARGIN (10)
+//! Round: the header row's text keeps this far in from the edge of its bubble
+#define LAUNCHER_APP_GLANCE_STRUCTURED_HEADER_TEXT_MARGIN (10)
 
 typedef struct GenericGlanceIconDrawCommandProcessor {
   GDrawCommandProcessor draw_command_processor;
@@ -453,40 +455,68 @@ static PBL_NOINLINE GTextNode *prv_create_structured_glance_node(
 }
 
 #if PBL_ROUND
-//! Round: the first row is a header at the top of the screen, its icon centred with its title
-//! centred under it, both inside the bubble that highlights it.
+//! Round: half the width of the header's bubble at \a y, less the margin its text keeps
+static int16_t prv_round_header_half_width(GRect frame, int16_t y) {
+  const int32_t radius = MENU_ROUND_BUBBLE_RADIUS;
+  const int32_t center_y =
+      frame.origin.y + frame.size.h - MENU_ROUND_PILL_INSET_Y - MENU_ROUND_BUBBLE_RADIUS;
+  const int32_t dy = y - center_y;
+  const int32_t half = (dy < radius) ? integer_sqrt((radius * radius) - (dy * dy)) : 0;
+  return (int16_t)PBL_MIN(frame.size.w / 2,
+                          half - LAUNCHER_APP_GLANCE_STRUCTURED_HEADER_TEXT_MARGIN);
+}
+
+//! Round: draws \a node centred across the bubble, in the row from \a top to \a bottom
+static void prv_draw_round_header_node(GContext *ctx, GRect frame, GTextNode *node, int16_t top,
+                                       int16_t height) {
+  if (!node) {
+    return;
+  }
+  const int16_t half_w = prv_round_header_half_width(frame, top + height);
+  if (half_w > 0) {
+    if ((node->type == GTextNodeType_Text) || (node->type == GTextNodeType_TextDynamic)) {
+      ((GTextNodeText *)node)->alignment = GTextAlignmentCenter;
+    } else if (node->type == GTextNodeType_Horizontal) {
+      ((GTextNodeHorizontal *)node)->horizontal_alignment = GTextAlignmentCenter;
+    }
+    const GRect box = GRect(frame.origin.x + (frame.size.w / 2) - half_w, top, 2 * half_w, height);
+    graphics_text_node_draw(node, ctx, &box, nullptr, nullptr);
+  }
+  graphics_text_node_destroy(node);
+}
+
+//! Round: the first row is a header at the top of the screen: its icon, with its title and
+//! subtitle under it, all centred and kept inside the bubble that highlights it, down near the
+//! bubble's bottom.
 static void prv_draw_round_header(LauncherAppGlanceStructured *structured_glance, GContext *ctx,
                                   GRect frame) {
   const GSize icon_size = structured_glance->icon_max_size;
   const int16_t title_height = fonts_get_font_height(structured_glance->title_font);
-  const int16_t icon_top = frame.origin.y + LAUNCHER_APP_GLANCE_STRUCTURED_HEADER_TOP;
+  const bool has_subtitle =
+      structured_glance->impl && structured_glance->impl->create_subtitle_node;
+  const int16_t subtitle_height =
+      has_subtitle ? fonts_get_font_height(structured_glance->subtitle_font) : 0;
+  const int16_t block_height =
+      icon_size.h + LAUNCHER_APP_GLANCE_STRUCTURED_HEADER_GAP + title_height + subtitle_height;
+  const int16_t bubble_bottom = frame.origin.y + frame.size.h - MENU_ROUND_PILL_INSET_Y;
+  const int16_t icon_top =
+      PBL_MAX(bubble_bottom - LAUNCHER_APP_GLANCE_STRUCTURED_HEADER_BOTTOM - block_height,
+              frame.origin.y + LAUNCHER_APP_GLANCE_STRUCTURED_HEADER_MIN_TOP);
+
   const GRect icon_rect = GRect(frame.origin.x + ((frame.size.w - icon_size.w) / 2), icon_top,
                                 icon_size.w, icon_size.h);
   prv_structured_glance_icon_node_draw_cb(ctx, &icon_rect, nullptr, true /* render */, nullptr,
                                           structured_glance);
 
-  // The title keeps clear of the bubble's edge at its bottom
   const int16_t title_top = grect_get_max_y(&icon_rect) + LAUNCHER_APP_GLANCE_STRUCTURED_HEADER_GAP;
-  const int32_t bubble_center_y =
-      frame.origin.y + frame.size.h - MENU_ROUND_PILL_INSET_Y - MENU_ROUND_BUBBLE_RADIUS;
-  const int32_t dy = title_top + title_height - bubble_center_y;
-  const int32_t radius = MENU_ROUND_BUBBLE_RADIUS;
-  const int32_t half_chord =
-      (dy < radius) ? integer_sqrt(((int64_t)radius * radius) - ((int64_t)dy * dy)) : 0;
-  const int16_t title_w =
-      PBL_MIN(frame.size.w, 2 * (half_chord - LAUNCHER_APP_GLANCE_STRUCTURED_HEADER_TITLE_MARGIN));
-  if (title_w <= 0) {
-    return;
+  prv_draw_round_header_node(ctx, frame,
+                             prv_structured_glance_create_title_text_node(structured_glance),
+                             title_top, title_height);
+  if (has_subtitle) {
+    prv_draw_round_header_node(ctx, frame,
+                               structured_glance->impl->create_subtitle_node(structured_glance),
+                               title_top + title_height, subtitle_height);
   }
-  GTextNode *title_node = prv_structured_glance_create_title_text_node(structured_glance);
-  if (!title_node) {
-    return;
-  }
-  ((GTextNodeText *)title_node)->alignment = GTextAlignmentCenter;
-  const GRect title_rect =
-      GRect(frame.origin.x + ((frame.size.w - title_w) / 2), title_top, title_w, title_height);
-  graphics_text_node_draw(title_node, ctx, &title_rect, nullptr, nullptr);
-  graphics_text_node_destroy(title_node);
 }
 #endif
 
