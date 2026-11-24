@@ -38,12 +38,9 @@
 
 // Where the banner settles: the same shape turned a quarter round, so it hangs off the left edge
 // exactly like it hangs off the top (same circle, same depth, the icon in the same spot).
-#define BANNER_DEPTH    (LAYOUT_TOP_BANNER_HEIGHT_ROUND - 1)
-#define BUBBLE_RADIUS   BANNER_CIRCLE_RADIUS
-#define BUBBLE_CENTER_X (BANNER_DEPTH - BANNER_CIRCLE_RADIUS)
-#define BUBBLE_ICON_INSET                                                                      \
-  (STATUS_BAR_LAYER_HEIGHT + CARD_ICON_UPPER_PADDING + NOTIFICATION_TINY_RESOURCE_HEIGHT / 2 - \
-   BUBBLE_CENTER_X)
+#define BUBBLE_RADIUS     BANNER_CIRCLE_RADIUS
+#define BUBBLE_CENTER_X   LAYOUT_TOP_BANNER_CENTER_Y_ROUND
+#define BUBBLE_ICON_INSET (LAYOUT_TOP_BANNER_ICON_CENTER_Y_ROUND - BUBBLE_CENTER_X)
 // A banner scrolled out of sight starts from a small circle just above the screen.
 #define HIDDEN_START_RADIUS  14
 #define HIDDEN_START_Y       (-HIDDEN_START_RADIUS - 2)
