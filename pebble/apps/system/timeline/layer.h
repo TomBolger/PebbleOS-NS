@@ -4,6 +4,7 @@
 #pragma once
 
 #include "common.h"
+#include "list_layout.h"
 #include "peek_layer.h"
 
 #include <pbl/services/evented_timer.h>
@@ -51,6 +52,19 @@ typedef struct {
 //! Pins the compact list shows: the selected pin and the pins before and after it
 #define TIMELINE_LIST_MAX_PINS 3
 
+//! What the text of a pin of the compact list flows inside: on round, the display beside the arc,
+//! and the pages of a pin taller than the screen
+typedef struct {
+  GPerimeter perimeter;
+  const TimelineListArc *arc;
+  //! How far down the pin is drawn from where its text is laid out
+  int16_t dy;
+  //! Height of the pages the pin is laid out in, or 0, and the margin its text keeps from their
+  //! top and bottom
+  int16_t page_height;
+  int16_t margin;
+} TimelineListPinPerimeter;
+
 //! A pin of the compact list. It owns a copy of the timeline iterator, so it outlives the model's
 //! window of pins.
 typedef struct {
@@ -64,18 +78,28 @@ typedef struct {
   GRect frame;
   //! Frame the next up/down animation starts from
   GRect from;
+  //! The pin rests on screen, rather than pushed off it
+  bool shown;
   //! The pin was selected where the up/down animation starts; it keeps its text until the pins
   //! settle
   bool from_selected;
-  //! Where the pin's icon rests on the round arc, and where the up/down animation turns it from,
-  //! in steps from the selected pin's icon, down being positive
-  int8_t icon_slot;
-  int8_t icon_from_slot;
+  //! Where the pin's text is laid out for, where it rests: its top on screen, and the height of
+  //! the pages it is laid out in, or 0
+  GPoint flow_origin;
+  int16_t flow_page_height;
+  TimelineListPinPerimeter perimeter;
+  //! Angle of the pin's icon on the round arc where it rests, where the up/down animation turns it
+  //! from, and where it is now, down being positive
+  int32_t icon_angle;
+  int32_t icon_from_angle;
+  int32_t icon_current_angle;
 } TimelineListPinView;
 
 //! The compact list: pins are as tall as their content, and the selected pin shows all its text
 //! between the pins before and after it, instead of in fixed slots.
 typedef struct {
+  //! The round sidebar's circle, beside which the pins' text runs
+  TimelineListArc arc;
   //! Pins in timeline order, the one before the selected pin first
   TimelineListPinView *pins[TIMELINE_LIST_MAX_PINS];
   int num_pins;
@@ -93,11 +117,15 @@ typedef struct {
   bool crosses_day;
   //! The move selects another pin, rather than scrolling through the selected one
   bool selection_changed;
-  //! How far the selected pin's text is scrolled through its pages, where the running up/down
-  //! animation scrolls it from, and how far it can be
+  //! How far the list is scrolled through a selected pin taller than the screen, and how far it
+  //! can be
   int16_t scroll;
-  int16_t scroll_from;
   int16_t max_scroll;
+  //! Angle the round arc's notch rests at, pointing at the selected pin, where the up/down
+  //! animation turns it from, and where it is now, down being positive
+  int32_t notch_angle;
+  int32_t notch_from_angle;
+  int32_t notch_current_angle;
   //! Interpolation of the running up/down animation
   InterpolateInt64Function interpolate;
 } TimelineList;
@@ -167,8 +195,8 @@ TimelineLayoutInfo *timeline_layer_get_layout_info(TimelineLayer *layer, int ind
 Animation *timeline_layer_create_up_down_animation(TimelineLayer *layer, uint32_t duration,
                                                    InterpolateInt64Function interpolate);
 
-//! Scrolls a page through the selected pin's text if it goes on that way, for the up/down
-//! animation to show
+//! Scrolls the list a page through a selected pin taller than the screen if it goes on that way,
+//! for the up/down animation to show
 //! @param down Toward the end of the pin
 //! @return whether it scrolled; the selected pin stays the same
 bool timeline_layer_scroll_selected(TimelineLayer *layer, bool down);

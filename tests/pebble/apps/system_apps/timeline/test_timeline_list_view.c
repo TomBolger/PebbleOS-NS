@@ -68,6 +68,8 @@ typedef struct ListViewConfig {
   AnimationProgress scroll_progress;
   //! Number of pages to scroll through the selected pin's text after the scrolls
   int num_page_scrolls;
+  //! Number of pins to scroll back past after the page scrolls
+  int num_back_scrolls;
 } ListViewConfig;
 
 static void prv_add_timeline_item(const TimelineItemConfig *config, bool past, uint8_t pin_index) {
@@ -158,7 +160,9 @@ static void prv_assert_title_centered(Window *window, TimelineLayer *timeline_la
   const int16_t text_width = PBL_DISPLAY_WIDTH - timeline_layer_get_ideal_sidebar_width() - 15;
   const int16_t left = s_action_bar_on_right ? 0 : (PBL_DISPLAY_WIDTH - text_width);
   const int16_t right = left + text_width;
-  for (int16_t y = PBL_DISPLAY_HEIGHT / 4; y < 3 * PBL_DISPLAY_HEIGHT / 4; y++) {
+  const int16_t first_row = timeline_layer->compact ? 0 : PBL_DISPLAY_HEIGHT / 4;
+  const int16_t end_row = timeline_layer->compact ? PBL_DISPLAY_HEIGHT : 3 * PBL_DISPLAY_HEIGHT / 4;
+  for (int16_t y = first_row; y < end_row; y++) {
     const GBitmapDataRowInfo row = gbitmap_get_data_row_info(bitmap, y);
     for (int16_t x = PBL_MAX(row.min_x, left); x < PBL_MIN(row.max_x + 1, right); x++) {
       if (row.data[x] == GColorBlackARGB8) {
@@ -168,7 +172,14 @@ static void prv_assert_title_centered(Window *window, TimelineLayer *timeline_la
     }
   }
   cl_assert(top <= bottom);
-  cl_assert(PBL_ABS(top + bottom - PBL_DISPLAY_HEIGHT) <= 4);
+  // The compact list's notch, and the selected pin's icon, point at the title wherever it rests
+  int16_t center_y = PBL_DISPLAY_HEIGHT / 2;
+  if (timeline_layer->compact) {
+    GRect icon_frame;
+    timeline_layer_get_current_icon_frame(timeline_layer, &icon_frame);
+    center_y = icon_frame.origin.y + icon_frame.size.h / 2;
+  }
+  cl_assert(PBL_ABS(top + bottom - 2 * center_y) <= 4);
   for (size_t i = 0; i < num_other_text; i++) {
     other_text[i]->color = colors[i];
   }
@@ -237,9 +248,12 @@ static void prv_create_list_view_and_render(ListViewConfig *config) {
   timeline_layer_reset(&timeline_layer);
 
 #if PBL_ROUND
-  GRect icon_frame;
-  timeline_layer_get_icon_frame(&timeline_layer, TIMELINE_LAYER_FIRST_VISIBLE_LAYOUT, &icon_frame);
-  cl_assert_equal_i(icon_frame.origin.y + icon_frame.size.h / 2, PBL_DISPLAY_HEIGHT / 2);
+  if (!timeline_layer.compact) {
+    GRect icon_frame;
+    timeline_layer_get_icon_frame(&timeline_layer, TIMELINE_LAYER_FIRST_VISIBLE_LAYOUT,
+                                  &icon_frame);
+    cl_assert_equal_i(icon_frame.origin.y + icon_frame.size.h / 2, PBL_DISPLAY_HEIGHT / 2);
+  }
 #endif
 
   Animation *running_scroll = nullptr;
@@ -265,7 +279,21 @@ static void prv_create_list_view_and_render(ListViewConfig *config) {
   }
 
   for (int i = 0; i < config->num_page_scrolls; i++) {
-    cl_assert(timeline_layer_scroll_selected(&timeline_layer, true /* down */));
+    // The past comes to a pin from below, so it reads up through it
+    cl_assert(timeline_layer_scroll_selected(&timeline_layer, !config->past /* down */));
+    fake_animation_complete(timeline_layer_create_up_down_animation(
+        &timeline_layer, TIMELINE_UP_DOWN_ANIMATION_DURATION_MS,
+        timeline_animation_interpolate_moook_soft));
+  }
+
+  for (int i = 0; i < config->num_back_scrolls; i++) {
+    int new_idx;
+    bool has_new;
+    cl_assert(timeline_model_iter_prev(&new_idx, &has_new));
+    if (has_new) {
+      timeline_layer_set_prev_item(&timeline_layer, new_idx);
+    }
+    timeline_layer_move_data(&timeline_layer, -1);
     fake_animation_complete(timeline_layer_create_up_down_animation(
         &timeline_layer, TIMELINE_UP_DOWN_ANIMATION_DURATION_MS,
         timeline_animation_interpolate_moook_soft));
@@ -291,8 +319,10 @@ static void prv_create_list_view_and_render(ListViewConfig *config) {
 #if PBL_ROUND
   // Scrolling the fixed slots brings the next pin's title near the middle, and pins only rest on
   // the middle once they stop
+  // A compact pin taller than the screen shows from its top, its title above the notch's reach
   if (!config->day_separator && !config->scroll_progress && !config->num_page_scrolls &&
-      (timeline_layer.compact || config->num_scrolls == 0)) {
+      !config->num_back_scrolls && (timeline_layer.compact || config->num_scrolls == 0) &&
+      timeline_layer.list.max_scroll == 0) {
     prv_assert_title_centered(&window, &timeline_layer);
   }
 #endif
@@ -773,4 +803,29 @@ void test_timeline_list_view__compact_mid_scroll(void) {
   // grows over its address, both laid out as they rest, while the pins stay stacked
   prv_render_compact(pins, false /* past */, 2 /* num_scrolls */, ANIMATION_NORMALIZED_MAX / 2);
   FAKE_GRAPHICS_CONTEXT_CHECK_DEST_BITMAP_FILE();
+}
+
+void test_timeline_list_view__content_sizes_compact_description_from_after(void) {
+  TimelineItemConfig pins[PBL_ARRAY_SIZE(s_one_liners)];
+  memcpy(pins, s_one_liners, sizeof(pins));
+  pins[2].title = "Trip planning";
+  pins[2].subtitle = "Agency office";
+  pins[2].body = s_long_body;
+  // Coming back to a pin taller than the screen from the pin after it shows its end first, the
+  // pin after it below
+  ScreenGrid grid;
+  screen_grid_init(&grid, 2);
+  for (PreferredContentSize size = grid.first_size; size <= grid.last_size; size++) {
+    system_theme_set_content_size(size);
+    for (int past = 0; past < 2; past++) {
+      ListViewConfig config = {
+        .past = past,
+        .num_scrolls = 4,
+        .num_back_scrolls = 2,
+      };
+      prv_render_compact_config(pins, &config);
+      screen_grid_add(&grid, fake_graphics_context_get_context(), size, past);
+    }
+  }
+  screen_grid_check(&grid, TEST_PBI_FILE);
 }
