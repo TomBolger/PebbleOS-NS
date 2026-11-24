@@ -90,6 +90,7 @@ typedef struct PillActionMenu {
   bool menu_highlight_follows_theme;
   ClickConfigProvider window_click_config;
   void *window_click_context;
+  bool window_overrides_back;
 
   GDrawCommandImage *icon;
   GDrawCommandImage *scaled_icon;
@@ -539,6 +540,8 @@ static void prv_destroy(PillActionMenu *menu) {
   prv_touch_deregister(menu);
   layer_remove_from_parent(&menu->layer);
   layer_deinit(&menu->layer);
+  // Subscribing to Back marked the window as handling it; without that the window pops on Back
+  window_set_overrides_back_button(menu->window, menu->window_overrides_back);
   window_set_click_config_provider_with_context(menu->window, menu->window_click_config,
                                                 menu->window_click_context);
   gdraw_command_image_destroy(menu->scaled_icon);
@@ -785,6 +788,7 @@ ActionMenu *pill_action_menu_open(const PillActionMenuConfig *config,
     .foreground = menu_layer->normal_colors[MenuLayerColorForeground],
     .window_click_config = window->click_config_provider,
     .window_click_context = window->click_config_context,
+    .window_overrides_back = window->overrides_back_button,
   };
   menu->icon = gdraw_command_image_create_with_resource(config->icon_resource_id);
   if (menu->icon) {
