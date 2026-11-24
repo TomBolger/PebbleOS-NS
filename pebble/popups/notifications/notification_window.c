@@ -3,6 +3,7 @@
 
 #include "notification_window.h"
 
+#include "notification_round_actions.h"
 #include "notification_window_private.h"
 #include "notifications_presented_list.h"
 
@@ -54,6 +55,7 @@
 #include <applib/graphics/gdraw_command_sequence.h>
 #include <applib/ui/action_button.h>
 #include <applib/ui/action_menu_window.h>
+#include <applib/ui/action_menu_window_private.h>
 #include <applib/ui/app_window_stack.h>
 #include <applib/ui/dialogs/dialog.h>
 #include <applib/ui/dialogs/expandable_dialog.h>
@@ -227,13 +229,19 @@ static void prv_notification_window_add_notification(Uuid *id, NotificationType 
   }
 }
 
+//! Whether an action menu is up: a menu window, or the round menu drawn over the card.
+static bool prv_action_menu_is_open(NotificationWindowData *data) {
+  return data->action_menu && (action_menu_is_hosted(data->action_menu) ||
+                               window_is_loaded((Window *)data->action_menu));
+}
+
 static void prv_reload_swap_layer(NotificationWindowData *data) {
   // If the action menu is on the screen, then don't reload the swap layer.
   // The action menu's context is just a pointer to the swap layer's layout layer's context.
   // Reloading the swap layer will give the action menu a bogus timeline item pointer.
   // Also if the action menu is up, we don't need to reload the swap layer until the
-  // notification window appears again
-  if (data->action_menu && window_is_loaded((Window *)data->action_menu)) {
+  // notification window appears again (or the round menu closes)
+  if (prv_action_menu_is_open(data)) {
     data->notifications_modified = true;
   } else {
     swap_layer_reload_data(&data->swap_layer);
@@ -490,7 +498,8 @@ static void prv_remove_notification(NotificationWindowData *data, Uuid *notif_id
   // If we have an action menu and it's frozen we are waiting on an action result
   // from that menu; this will cleanup the action menu on completion anyway so don't do it here
   if (should_close_am && uuid_equal(notifications_presented_list_current(), notif_id) &&
-      data->action_menu && ((Window *)data->action_menu)->on_screen &&
+      data->action_menu &&
+      (action_menu_is_hosted(data->action_menu) || ((Window *)data->action_menu)->on_screen) &&
       !action_menu_is_frozen(data->action_menu)) {
     action_menu_close(data->action_menu, true);
   }
@@ -1102,11 +1111,88 @@ static bool prv_play_dismissed(void) {
   return true;
 }
 
+#if PBL_ROUND
+static bool s_round_actions_unloading;
+
+//! The round menu is gone: the card takes the buttons and touch back, and catches up on what
+//! changed while it was covered, as it would on reappearing from under a menu window.
+static void prv_round_actions_did_close(NotificationWindowData *data) {
+  if (!s_in_use || s_round_actions_unloading) {
+    return;
+  }
+  swap_layer_set_click_config_onto_window(&data->swap_layer, &data->window);
+  if (data->notifications_modified) {
+    data->notifications_modified = false;
+    prv_reload_swap_layer(data);
+  }
+  prv_refresh_pop_timer(data);
+}
+
+static void prv_round_actions_closed(ActionMenu *action_menu, void *context) {
+  action_menu_hosted_did_close(action_menu);
+}
+#endif
+
 static void prv_action_menu_did_close(ActionMenu *action_menu, const ActionMenuItem *item,
                                       void *context) {
   NotificationWindowData *data = &s_notification_window_data;
   data->action_menu = nullptr;
+#if PBL_ROUND
+  if (action_menu_is_hosted(action_menu)) {
+    prv_round_actions_did_close(data);
+  }
+#endif
 }
+
+#if PBL_ROUND
+static void prv_round_actions_host_close(ActionMenu *action_menu, bool animated, void *context) {
+  notification_round_actions_close(animated);
+}
+
+static const ActionMenuHost s_round_actions_host = {
+  .close = prv_round_actions_host_close,
+};
+
+//! Where the current card's banner is on screen, for the menu to swing it from.
+static NotificationRoundActionsBanner prv_round_actions_banner(NotificationWindowData *data,
+                                                               LayoutLayer *layout, GColor color) {
+  const int16_t layout_top =
+      swap_layer_get_layer(&data->swap_layer)->frame.origin.y + layout->layer.frame.origin.y;
+  return (NotificationRoundActionsBanner){
+    .color = color,
+    .icon = ((NotificationLayout *)layout)->icon_res_info,
+    .bottom = layout_top + LAYOUT_TOP_BANNER_ORIGIN_Y + BANNER_CIRCLE_RADIUS,
+    .icon_center_y = layout_top + CARD_ICON_UPPER_PADDING + NOTIFICATION_TINY_RESOURCE_HEIGHT / 2,
+  };
+}
+
+//! Opens the actions over the card instead of in a menu window.
+static bool prv_open_round_actions(NotificationWindowData *data, ActionMenuConfig *config,
+                                   LayoutLayer *layout) {
+  data->action_menu = timeline_actions_open_hosted_action_menu(
+      config, window_manager_get_window_stack(NOTIFICATION_PRIORITY), &s_round_actions_host, data);
+  if (!data->action_menu) {
+    action_menu_hierarchy_destroy(config->root_level, nullptr, nullptr);
+    pbl_i18n_free_all(config->root_level);
+    return false;
+  }
+  const NotificationRoundActionsBanner banner =
+      prv_round_actions_banner(data, layout, config->colors.background);
+  if (!notification_round_actions_open(&data->window, data->action_menu, &banner,
+                                       prv_round_actions_closed, data)) {
+    // Nothing on screen to close: finish it off right away
+    ActionMenu *action_menu = data->action_menu;
+    action_menu_close(action_menu, false);
+    action_menu_hosted_did_close(action_menu);
+    return false;
+  }
+  swap_layer_stop_hold(&data->swap_layer);
+#ifdef CONFIG_TOUCH
+  swap_layer_touch_release(&data->swap_layer);
+#endif
+  return true;
+}
+#endif
 
 static void prv_select_single_click_handler(ClickRecognizerRef recognizer, void *data) {
   NotificationWindowData *window_data = data;
@@ -1137,6 +1223,17 @@ static void prv_select_single_click_handler(ClickRecognizerRef recognizer, void 
   }
 
   timeline_actions_set_dismissed_handler(prv_play_dismissed);
+#if PBL_ROUND
+  if (prv_open_round_actions(window_data, &config, layout)) {
+    return;
+  }
+  // Could not draw it over the card: fall back to the menu window with a fresh hierarchy (the
+  // first went with the hosted menu)
+  config.root_level = prv_create_action_menu_for_item(item, window_data, source);
+  if (config.root_level == nullptr) {
+    return;
+  }
+#endif
   window_data->action_menu = timeline_actions_push_action_menu(
       &config, window_manager_get_window_stack(NOTIFICATION_PRIORITY));
   action_menu_set_content_size(window_data->action_menu,
@@ -1229,6 +1326,12 @@ static void prv_window_unload(Window *window) {
     return;
   }
 
+#if PBL_ROUND
+  // The round menu lives in this window
+  s_round_actions_unloading = true;
+  notification_round_actions_close(false /* animated */);
+  s_round_actions_unloading = false;
+#endif
   prv_poof_cleanup(data);
   prv_cleanup_timer(&data->deferred_focus_timer);
   data->has_deferred_focus = false;
