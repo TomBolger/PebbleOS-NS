@@ -7,6 +7,7 @@
 #include "list_layout.h"
 #include "model.h"
 #include "relbar.h"
+#include "sidebar_curve.h"
 
 #include <stdint.h>
 #include <string.h>
@@ -556,6 +557,94 @@ Animation *timeline_layer_create_day_sep_show(TimelineLayer *timeline_layer) {
 }
 
 ///////////////////////////////////////////////////////////
+// Curved round sidebar
+///////////////////////////////////////////////////////////
+
+//! The round compact list bends the sidebar's edge toward the selected pin
+static bool prv_has_curve(TimelineLayer *layer) {
+  return PBL_IF_ROUND_ELSE(layer->compact, false);
+}
+
+#if PBL_ROUND
+//! Gap between text and the curved edge of the sidebar
+#define CURVE_TEXT_GAP 6
+
+static const TimelineSidebarCurve s_sidebar_curve = {
+  .height = PBL_DISPLAY_HEIGHT,
+  .wide_x = PBL_DISPLAY_WIDTH - PBL_DISPLAY_WIDTH / 3,
+  .narrow_x = PBL_DISPLAY_WIDTH - 36,
+  .bend = (3 * PBL_DISPLAY_HEIGHT) / 10,
+};
+
+//! Mirrors an x of the curve, which is laid out for a sidebar on the right, to the sidebar's side
+static int16_t prv_curve_side_x(int16_t x) {
+  return timeline_layer_sidebar_is_on_right() ? x : (PBL_DISPLAY_WIDTH - x);
+}
+
+//! Text flows inside the display and ends before the curve
+static GRangeHorizontal prv_curve_perimeter(const GPerimeter *perimeter, const GSize *ctx_size,
+                                            GRangeVertical rows, uint16_t inset) {
+  GRangeHorizontal range =
+      g_perimeter_for_display->callback(g_perimeter_for_display, ctx_size, rows, inset);
+  const int16_t edge =
+      timeline_sidebar_curve_min_x(&s_sidebar_curve, rows.origin_y, rows.origin_y + rows.size_h) -
+      CURVE_TEXT_GAP;
+  if (timeline_layer_sidebar_is_on_right()) {
+    range.size_w = PBL_CLAMP(edge - range.origin_x, 0, range.size_w);
+  } else {
+    const int16_t end = range.origin_x + range.size_w;
+    range.origin_x = PBL_MIN(PBL_MAX(range.origin_x, PBL_DISPLAY_WIDTH - edge), end);
+    range.size_w = end - range.origin_x;
+  }
+  return range;
+}
+
+static const GPerimeter s_curve_perimeter = {
+  .callback = prv_curve_perimeter,
+};
+
+//! Moves the side of a pin's text toward the sidebar to end before the curve at a column
+static void prv_curve_set_text_edge(TimelineLayer *layer, int16_t edge_x, GRect *frame) {
+  const int16_t sidebar_width = timeline_layer_get_ideal_sidebar_width();
+  if (timeline_layer_sidebar_is_on_right()) {
+    frame->size.w = edge_x - CURVE_TEXT_GAP + sidebar_width - frame->origin.x;
+  } else {
+    const int16_t text_x = frame->origin.x + timeline_layer_get_pin_text_origin_x();
+    const int16_t delta = text_x - (PBL_DISPLAY_WIDTH - edge_x + CURVE_TEXT_GAP);
+    frame->origin.x -= delta;
+    frame->size.w += delta;
+  }
+}
+
+//! Draws the sidebar with its edge on the curve. While the sidebar opens, the curve widens with it.
+static void prv_curve_draw_sidebar(TimelineLayer *layer, GContext *ctx) {
+  const int16_t ideal_width = timeline_layer_get_ideal_sidebar_width();
+  const int16_t width = PBL_DISPLAY_WIDTH;
+  const int16_t height = PBL_DISPLAY_HEIGHT;
+  enum {
+    Step = 4,
+    NumEdgePoints = PBL_DISPLAY_HEIGHT / Step + 1
+  };
+  GPoint points[NumEdgePoints + 2];
+  for (int i = 0; i < NumEdgePoints; i++) {
+    const int16_t y = PBL_MIN(i * Step, height);
+    const int16_t bar = width - timeline_sidebar_curve_x(&s_sidebar_curve, y);
+    const int16_t scaled = (bar * layer->sidebar_width) / ideal_width;
+    points[i] = GPoint(prv_curve_side_x(width - scaled), y);
+  }
+  points[NumEdgePoints] = GPoint(prv_curve_side_x(width), height);
+  points[NumEdgePoints + 1] = GPoint(prv_curve_side_x(width), 0);
+  GPath path = {
+    .num_points = PBL_ARRAY_SIZE(points),
+    .points = points,
+  };
+  graphics_context_set_antialiased(ctx, true);
+  gpath_draw_filled(ctx, &path);
+  graphics_context_set_antialiased(ctx, false);
+}
+#endif
+
+///////////////////////////////////////////////////////////
 // Compact list
 ///////////////////////////////////////////////////////////
 
@@ -575,10 +664,17 @@ static int16_t prv_list_pin_height(const TimelineListPinView *pin) {
 //! Frame of a pin as wide as the list, before a round display narrows it
 static GRect prv_list_full_frame(TimelineLayer *layer, int16_t y, int16_t h) {
   const TimelineLayerStyle *style = prv_get_style();
-  return (GRect){
+  GRect frame = {
     .origin = {style->left_margin, y},
     .size = {layer->layer.bounds.size.w - (style->left_margin + style->right_margin), h},
   };
+#if PBL_ROUND
+  if (prv_has_curve(layer)) {
+    // The text reaches the curve where it is narrowest, by the selected pin's title
+    prv_curve_set_text_edge(layer, s_sidebar_curve.narrow_x, &frame);
+  }
+#endif
+  return frame;
 }
 
 //! Offset from a pin's top of where it rests on the anchor: the round arrow points at its title
@@ -650,9 +746,24 @@ static void prv_list_pin_create_layout(TimelineLayer *layer, TimelineListPinView
     .context = &pin->info,
   };
   pin->layout = (TimelineLayout *)layout_create(item->header.layout, &config);
+#if PBL_ROUND
+  if (prv_has_curve(layer)) {
+    timeline_layout_set_page_perimeter(pin->layout, &s_curve_perimeter);
+  }
+#endif
   layer_add_child(&layer->layouts_layer, (Layer *)pin->layout);
   layer_add_child(&layer->layouts_layer, (Layer *)&pin->layout->icon_layer);
 }
+
+#if PBL_ROUND
+//! Centers an icon in the curved sidebar on the row of its middle
+static void prv_list_place_icon_on_curve(GRect *icon_frame) {
+  const int16_t center_y = icon_frame->origin.y + icon_frame->size.h / 2;
+  const int16_t center_x =
+      prv_curve_side_x(timeline_sidebar_curve_center_x(&s_sidebar_curve, center_y));
+  icon_frame->origin.x = center_x - icon_frame->size.w / 2;
+}
+#endif
 
 static void prv_list_get_icon_frame(TimelineLayer *layer, const TimelineListPinView *pin,
                                     const GRect *frame, GRect *icon_frame) {
@@ -662,6 +773,9 @@ static void prv_list_get_icon_frame(TimelineLayer *layer, const TimelineListPinV
   prv_get_pin_icon_frame(layer, &content_frame, icon_frame);
 #if PBL_ROUND
   icon_frame->origin.y = frame->origin.y + pin->anchor_y - icon_frame->size.h / 2;
+  if (prv_has_curve(layer)) {
+    prv_list_place_icon_on_curve(icon_frame);
+  }
 #endif
 }
 
@@ -900,6 +1014,13 @@ static void prv_list_layout(TimelineLayer *layer) {
       frame->size.w = current->size.w;
     } else if (i != list->selected) {
       prv_list_fit_to_display(layer, list->pins[i], frame);
+      if (prv_has_curve(layer)) {
+        // Their text ends before the curve on all its lines
+        const int16_t edge = timeline_sidebar_curve_min_x(
+            &s_sidebar_curve, frame->origin.y + TIMELINE_LAYOUT_COMPACT_PADDING_TOP,
+            grect_get_max_y(frame));
+        prv_curve_set_text_edge(layer, edge, frame);
+      }
     }
 #endif
   }
@@ -1199,6 +1320,21 @@ static int prv_list_get_stack(TimelineLayer *layer, TimelineListPinView **stack)
   return num_pins;
 }
 
+#if PBL_ROUND
+//! Moves an icon down or up as its pin does, along the curve
+static void prv_list_move_icon_on_curve(TimelineLayer *layer, TimelineListPinView *pin,
+                                        AnimationProgress progress) {
+  GRect from;
+  GRect to;
+  prv_list_get_icon_frame(layer, pin, &pin->from, &from);
+  prv_list_get_icon_frame(layer, pin, &pin->frame, &to);
+  GRect icon_frame = to;
+  icon_frame.origin.y = layer->list.interpolate(progress, from.origin.y, to.origin.y);
+  prv_list_place_icon_on_curve(&icon_frame);
+  layer_set_frame((Layer *)&pin->layout->icon_layer, &icon_frame);
+}
+#endif
+
 //! Moves the pins as one stack: each pin ends where the next one starts, so a pin that grows
 //! pushes the next one exactly as much. Interpolating each frame on its own would not keep them
 //! together, as the interpolation overshoots by a fixed distance. Pins keep their width, so their
@@ -1235,6 +1371,11 @@ static void prv_list_frames_update(Animation *animation, AnimationProgress progr
     frame.size.h = bottom - frame.origin.y;
     layer_set_frame((Layer *)pin->layout, &frame);
     bottom = frame.origin.y;
+#if PBL_ROUND
+    if (prv_has_curve(layer)) {
+      prv_list_move_icon_on_curve(layer, pin, progress);
+    }
+#endif
   }
   TimelineListPinView *selected = prv_list_get_selected(layer);
   if (selected) {
@@ -1254,13 +1395,18 @@ static void prv_list_start_pin_move(TimelineLayer *layer, TimelineListPinView *p
   prv_list_set_frame(layer, pin, &pin->from);
   // A pin growing into the selected one reveals its text as its frame grows
   layer_set_clips((Layer *)pin->layout, true);
-  timeline_layout_animate_icon_up_down(pin->layout, &icon_from, &icon_to, duration,
-                                       layer->list.interpolate);
+  // On the curve, the icon travels along it as the pins move instead
+  if (!prv_has_curve(layer)) {
+    timeline_layout_animate_icon_up_down(pin->layout, &icon_from, &icon_to, duration,
+                                         layer->list.interpolate);
+  }
 }
 
 static void prv_list_finish_pin_move(TimelineLayer *layer, TimelineListPinView *pin) {
   prv_list_set_frame(layer, pin, &pin->frame);
-  timeline_layout_finish_icon_up_down(pin->layout);
+  if (!prv_has_curve(layer)) {
+    timeline_layout_finish_icon_up_down(pin->layout);
+  }
   prv_list_set_rest_clips(layer, pin);
 }
 
@@ -1554,11 +1700,19 @@ static void prv_update_proc(struct Layer *layer, GContext *ctx) {
   }
 #endif
 
-  graphics_fill_rect(ctx, &sidebar_rect);
   const bool sidebar_on_right = timeline_layer_sidebar_is_on_right();
   int16_t arrow_base_x = sidebar_on_right ? (bounds->size.w - sidebar_width) : (sidebar_width - 1);
 #if PBL_ROUND
   arrow_base_x += sidebar_on_right ? -1 : 1;
+  if (prv_has_curve(timeline_layer)) {
+    prv_curve_draw_sidebar(timeline_layer, ctx);
+    // The arrow points at the selected pin from where the curve is narrowest
+    arrow_base_x = prv_curve_side_x(s_sidebar_curve.narrow_x) + (sidebar_on_right ? -1 : 1);
+  } else {
+    graphics_fill_rect(ctx, &sidebar_rect);
+  }
+#else
+  graphics_fill_rect(ctx, &sidebar_rect);
 #endif
   const TimelineLayerStyle *style = prv_get_style();
   const GSize arrow_size = style->sidebar_arrow_size;

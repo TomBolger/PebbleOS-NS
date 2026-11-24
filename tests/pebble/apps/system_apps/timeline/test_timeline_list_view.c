@@ -153,7 +153,12 @@ static void prv_assert_title_centered(Window *window, TimelineLayer *timeline_la
   const GBitmap *bitmap = &fake_graphics_context_get_context()->dest_bitmap;
   int16_t top = PBL_DISPLAY_HEIGHT;
   int16_t bottom = 0;
-  const int16_t right = PBL_DISPLAY_WIDTH - timeline_layer_get_ideal_sidebar_width() - 15;
+  // The title may reach into the curved sidebar, up to the selected pin's icon
+  GRect icon_frame;
+  timeline_layer_get_current_icon_frame(timeline_layer, &icon_frame);
+  const int16_t right = (timeline_layer->compact && timeline_layer_sidebar_is_on_right())
+                            ? icon_frame.origin.x
+                            : (PBL_DISPLAY_WIDTH - timeline_layer_get_ideal_sidebar_width() - 15);
   for (int16_t y = PBL_DISPLAY_HEIGHT / 4; y < 3 * PBL_DISPLAY_HEIGHT / 4; y++) {
     const GBitmapDataRowInfo row = gbitmap_get_data_row_info(bitmap, y);
     for (int16_t x = row.min_x; x < PBL_MIN(row.max_x + 1, right); x++) {
