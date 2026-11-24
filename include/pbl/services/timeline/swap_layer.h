@@ -130,8 +130,21 @@ typedef struct SwapLayer {
   LayoutLayer *next;
   /** Callbacks. */
   SwapLayerCallbacks callbacks;
-  /** Repeated clicks left before a held button swaps to the next layout. */
-  uint16_t swap_delay_remaining;
+  /** @cond INTERNAL_HIDDEN */
+  /* Press and hold: a continuous scroll to the end of the layout, a pause, then a swap. */
+  struct {
+    uintptr_t timer;
+    int16_t press_target;
+    int8_t direction;
+    bool active;
+    bool bumped;
+    bool in_step;
+  } hold;
+  /* The running animation is a scroll (not a swap), from scroll_from to scroll_target. */
+  bool scrolling;
+  int16_t scroll_from;
+  int16_t scroll_target;
+  /** @endcond */
   /** A swap is in progress. */
   bool swap_in_progress;
   /** The swap layer is being deinitialized. */
@@ -300,5 +313,23 @@ int16_t swap_layer_touch_settle_offset(int16_t base_offset, int16_t delta_y, int
 
 /** @endcond */
 #endif // CONFIG_TOUCH
+
+/** @cond INTERNAL_HIDDEN */
+/*
+ * Test seam: the hold swap's progress curve at t (both 0..ANIMATION_NORMALIZED_MAX): a cubic that
+ * starts at rest and ends with slope end_slope (x1000).
+ */
+int32_t swap_layer_hold_swap_progress(int32_t t, int32_t end_slope);
+
+/* Test seam: the hold swap's end slope (x1000) for distance px, so it ends at the hold speed. */
+int32_t swap_layer_hold_swap_end_slope(int16_t distance);
+/** @endcond */
+
+/**
+ * @brief Stop a press-and-hold scroll, e.g. when something covers the swap layer.
+ *
+ * @param swap_layer Swap layer.
+ */
+void swap_layer_stop_hold(SwapLayer *swap_layer);
 
 /** @} */
