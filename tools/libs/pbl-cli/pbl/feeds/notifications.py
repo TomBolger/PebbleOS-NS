@@ -28,6 +28,7 @@ TYPE_NOTIFICATION = 1
 LAYOUT_NOTIFICATION = 4
 FLAG_VISIBLE = 1 << 0
 ACTION_DISMISS = 0x04
+ACTION_RESPONSE = 0x03
 
 # A day of messages, laid out as the phone's shade lists them: repeated
 # senders and "Conversation: Sender" titles exercise the grouped history, and
@@ -128,7 +129,7 @@ def _stack_id(key):
 
 def notification(notification_id, timestamp, message):
     """A serialized notification (SerializedTimelineItemHeader, attributes,
-    a Dismiss action), from the Android notifications data source."""
+    Dismiss and Reply actions), from the Android notifications data source."""
     sender = message.get("sender")
     attributes = [
         _attribute(TITLE, message.get("title") or sender),
@@ -144,7 +145,8 @@ def notification(notification_id, timestamp, message):
     if message.get("stack"):
         attributes.append(struct.pack("<BHI", STACK_ID, 4, _stack_id(message["stack"])))
     dismiss = struct.pack("<BBB", 0, ACTION_DISMISS, 1) + _attribute(TITLE, "Dismiss")
-    payload = b"".join(attributes) + dismiss
+    reply = struct.pack("<BBB", 1, ACTION_RESPONSE, 1) + _attribute(TITLE, "Reply")
+    payload = b"".join(attributes) + dismiss + reply
     header = struct.pack(
         "<16s16sIHBBBBHBB",
         notification_id.bytes,
@@ -157,7 +159,7 @@ def notification(notification_id, timestamp, message):
         LAYOUT_NOTIFICATION,
         len(payload),
         len(attributes),
-        1,
+        2,
     )
     return header + payload
 
