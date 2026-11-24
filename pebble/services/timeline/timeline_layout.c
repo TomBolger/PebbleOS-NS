@@ -396,6 +396,12 @@ int16_t timeline_layout_get_title_center_y(TimelineLayout *layout) {
   return time_node->cached_size.h + title->node.offset.y + title_center;
 }
 
+int16_t timeline_layout_get_title_bottom_y(TimelineLayout *layout) {
+  GTextNodeContainer *container = (GTextNodeContainer *)layout->view_node;
+  GTextNode *title = container->nodes[1];
+  return container->nodes[0]->cached_size.h + title->offset.y + title->cached_size.h;
+}
+
 void timeline_layout_init_view(TimelineLayout *layout, LayoutLayerMode mode) {
   GTextNode *view_node = nullptr;
   switch (mode) {
@@ -414,7 +420,8 @@ void timeline_layout_init_view(TimelineLayout *layout, LayoutLayerMode mode) {
   layout->view_node = view_node;
   timeline_layout_get_size(layout, graphics_context_get_current_context(), &layout->view_size);
 #if PBL_ROUND
-  if (mode == LayoutLayerModePinnedFat) {
+  // The fixed slot centers the title on the icon; the compact list places the pin instead
+  if (mode == LayoutLayerModePinnedFat && !layout->info->compact) {
     GTextNodeContainer *container = (GTextNodeContainer *)layout->view_node;
     container->node.offset.y = -timeline_layout_get_title_center_y(layout);
   }
@@ -453,8 +460,15 @@ static GTextNode *prv_create_all_day_text_node(const TimelineLayout *layout) {
   GTextNodeText *text_node = (GTextNodeText *)layout_create_text_node_from_config(
       &layout->layout_layer, &s_all_day_config.text.extent.node);
   text_node->alignment = prv_get_pin_text_alignment();
+  if (layout->info->compact) {
+    // A compact pin's pages start at its top, so its padding holds all of what rises above
+    text_node->node.offset.y =
+        PBL_MAX(text_node->node.offset.y, -TIMELINE_LAYOUT_COMPACT_PADDING_TOP);
+  }
   // TODO: remove once timeline list view text flow is enabled
-  if (PBL_IF_ROUND_ELSE(layout->layout_layer.mode == LayoutLayerModePinnedThin, false)) {
+  if (PBL_IF_ROUND_ELSE(
+          layout->layout_layer.mode == LayoutLayerModePinnedThin && !layout->info->compact,
+          false)) {
     const bool is_future = (layout->info->scroll_direction == TimelineScrollDirectionDown);
     const int padding_left = is_future ? 25 : 29;
     text_node->node.offset.x += padding_left;
@@ -545,16 +559,20 @@ static void prv_peek_time_text_update(const LayoutLayer *layout_ref,
 static GTextNode *prv_create_pin_view_node(TimelineLayout *layout) {
   const AttributeList *attributes = layout->layout_layer.attributes;
 
-  const size_t num_vertical_nodes = 3;
+  const size_t num_vertical_nodes = 4;
   GTextNodeVertical *vertical_node = graphics_text_node_create_vertical(num_vertical_nodes);
   const bool is_future = (layout->info->scroll_direction == TimelineScrollDirectionDown);
   const bool is_peek = (layout->layout_layer.mode == LayoutLayerModePeek);
   const bool is_fat = (layout->layout_layer.mode == LayoutLayerModePinnedFat);
+  // A compact pin is laid out whole from its top; a fixed round slot shows only part of a thin pin
+  const bool is_compact = layout->info->compact;
+  // The selected compact pin shows all its text, the list scrolls through it
+  const bool is_whole = is_compact && is_fat;
   vertical_node->vertical_alignment =
       is_peek ? GVerticalAlignmentCenter
-              : PBL_IF_ROUND_ELSE(
-                    (is_future && !is_fat ? GVerticalAlignmentBottom : GVerticalAlignmentTop),
-                    GVerticalAlignmentTop);
+              : PBL_IF_ROUND_ELSE((is_future && !is_fat && !is_compact ? GVerticalAlignmentBottom
+                                                                       : GVerticalAlignmentTop),
+                                  GVerticalAlignmentTop);
   GTextNode *time_text_node = !is_peek ? prv_create_time_text_node(layout) : nullptr;
   if (time_text_node) {
 #if PBL_RECT
@@ -570,15 +588,16 @@ static GTextNode *prv_create_pin_view_node(TimelineLayout *layout) {
   [[maybe_unused]] const bool is_thin = (layout->layout_layer.mode == LayoutLayerModePinnedThin);
   const TimelineLayoutStyle *style = prv_get_style();
   const bool thin_can_have_secondary = style->thin_can_have_secondary;
-  const bool has_secondary =
-      (((is_peek || is_fat || thin_can_have_secondary) && !PBL_IS_EMPTY_STRING(secondary_text)) ||
-       (is_peek && (pbl_realtime() < layout->info->timestamp)));
+  // Compact neighbours show only their time and title
+  const bool has_secondary = (((is_peek || is_fat || (thin_can_have_secondary && !is_compact)) &&
+                               !PBL_IS_EMPTY_STRING(secondary_text)) ||
+                              (is_peek && (pbl_realtime() < layout->info->timestamp)));
   const int peek_text_width =
       PBL_DISPLAY_WIDTH - TIMELINE_PEEK_ICON_BOX_WIDTH - (2 * TIMELINE_PEEK_MARGIN);
   const GPoint peek_text_offset = GPoint(TIMELINE_PEEK_MARGIN, PBL_IF_RECT_ELSE(-5, -6));
   const GTextOverflowMode overflow =
       (has_secondary && !is_peek) ? GTextOverflowModeTrailingEllipsis : GTextOverflowModeFill;
-  if (PBL_IF_ROUND_ELSE(!is_thin, true)) {
+  if (PBL_IF_ROUND_ELSE(!is_thin || is_compact, true)) {
     // Move the hour and title closer together
     const int hour_title_margin = is_fat ? style->fat_time_margin_h : style->thin_time_margin_h;
     if (time_text_node) {
@@ -622,8 +641,10 @@ static GTextNode *prv_create_pin_view_node(TimelineLayout *layout) {
       gpoint_add_eq(&primary_node->node.offset, peek_text_offset);
       primary_node->max_size.w = peek_text_width;
     }
-    primary_node->max_size.h = num_primary_lines * fonts_get_font_height(primary_node->font);
-    primary_node->overflow = overflow;
+    if (!is_whole) {
+      primary_node->max_size.h = num_primary_lines * fonts_get_font_height(primary_node->font);
+    }
+    primary_node->overflow = is_whole ? GTextOverflowModeWordWrap : overflow;
     if (!is_peek) {
       primary_node->node.margin.h = style->primary_list_margin_h;
     } else if (has_secondary) {
@@ -653,18 +674,34 @@ static GTextNode *prv_create_pin_view_node(TimelineLayout *layout) {
     if (!is_peek) {
       secondary_node->alignment = prv_get_pin_text_alignment();
     }
-    secondary_node->overflow = overflow;
+    secondary_node->overflow = is_whole ? GTextOverflowModeWordWrap : overflow;
     graphics_text_node_container_add_child(&vertical_node->container, &secondary_node->node);
 
     // TODO: remove once timeline list view text flow is enabled
-    if (PBL_IF_ROUND_ELSE(!is_future && !is_peek, false)) {
+    if (PBL_IF_ROUND_ELSE(!is_future && !is_peek && !is_compact, false)) {
       const int padding_left = 8;
       secondary_node->node.offset.x += padding_left;
       secondary_node->node.margin.w += padding_left;
     }
   }
 
-  if (PBL_IF_ROUND_ELSE(is_thin, false)) {
+  const char *body_text = attribute_get_string(attributes, AttributeIdBody, "");
+  if (is_whole && !PBL_IS_EMPTY_STRING(body_text)) {
+    static const LayoutNodeTextConfig s_body_config = {
+      .extent.node.type = LayoutNodeType_Text,
+      .style = LayoutContentSize_Auto,
+      .style_font = TextStyleFont_PinSubtitle,
+      .alignment = ToLayoutTextAlignment(TIMELINE_LAYER_TEXT_ALIGNMENT),
+    };
+    GTextNodeText *body_node = (GTextNodeText *)layout_create_text_node_from_config(
+        &layout->layout_layer, &s_body_config.extent.node);
+    body_node->text = body_text;
+    body_node->alignment = prv_get_pin_text_alignment();
+    body_node->overflow = GTextOverflowModeWordWrap;
+    graphics_text_node_container_add_child(&vertical_node->container, &body_node->node);
+  }
+
+  if (PBL_IF_ROUND_ELSE(is_thin && !is_compact, false)) {
     vertical_node->container.node.offset.y =
         is_future ? style->thin_future_title_offset_y : style->thin_past_title_offset_y;
   }
@@ -722,6 +759,12 @@ static void prv_get_pin_view_bounds(TimelineLayout *layout, GRect *box_out) {
   }
   box_out->size.w -= timeline_layer_get_ideal_sidebar_width();
   box_out->origin.x += timeline_layer_get_pin_text_origin_x();
+  if (layout->info->compact) {
+    // The compact list sizes the pin to its content, so the content has no height limit
+    box_out->origin.y = TIMELINE_LAYOUT_COMPACT_PADDING_TOP;
+    box_out->size.h = TIMELINE_MAX_BOX_HEIGHT;
+    return;
+  }
   if (PBL_IF_ROUND_ELSE(layout->layout_layer.mode == LayoutLayerModePinnedThin, false)) {
     const int thin_height = 20;
     box_out->size.h = thin_height;
@@ -758,6 +801,11 @@ static void prv_get_card_view_bounds(TimelineLayout *layout, GRect *box_out) {
                    TIMELINE_MAX_BOX_HEIGHT);
 }
 
+static bool prv_is_paged_pin(const TimelineLayout *layout) {
+  return (layout->info->compact && layout->layout_layer.mode == LayoutLayerModePinnedFat &&
+          layout->page_frame.size.h > 0);
+}
+
 static void prv_render_view(TimelineLayout *layout, GContext *ctx, bool render, GSize *size_out) {
   const bool is_card = (layout->layout_layer.mode == LayoutLayerModeCard);
   const bool is_peek = (layout->layout_layer.mode == LayoutLayerModePeek);
@@ -771,13 +819,25 @@ static void prv_render_view(TimelineLayout *layout, GContext *ctx, bool render, 
     {0, STATUS_BAR_LAYER_HEIGHT},
     {PBL_DISPLAY_WIDTH, PBL_DISPLAY_HEIGHT - STATUS_BAR_LAYER_HEIGHT}
   };
-  const GTextNodeDrawConfig config = {
+  GTextNodeDrawConfig config = {
     .page_frame = is_peek ? &GRectZero : &page_frame_on_screen,
     .origin_on_screen = is_peek ? &GPointZero : &page_frame_on_screen.origin,
     .content_inset = 8,
     .text_flow = PBL_IF_ROUND_ELSE(paging, false),
     .paging = PBL_IF_ROUND_ELSE(paging, false),
   };
+  GPoint page_origin = layout->page_origin;
+  if (prv_is_paged_pin(layout)) {
+    // Lay the text out where the pin rests, not where it is drawn while it moves or scrolls
+    if (render) {
+      box.origin.y -= layout->page_scroll;
+      page_origin.y += layout->page_scroll;
+    }
+    config.page_frame = &layout->page_frame;
+    config.origin_on_screen = &page_origin;
+    config.text_flow = PBL_IF_ROUND_ELSE(true, false);
+    config.paging = true;
+  }
   (render ? graphics_text_node_draw : graphics_text_node_get_size)(layout->view_node, ctx, &box,
                                                                    &config, size_out);
 }
@@ -790,6 +850,24 @@ void timeline_layout_render_view(TimelineLayout *layout, GContext *ctx) {
 void timeline_layout_get_size(TimelineLayout *layout, GContext *ctx, GSize *size_out) {
   const bool render = false;
   prv_render_view(layout, ctx, render, size_out);
+}
+
+void timeline_layout_set_page(TimelineLayout *layout, GPoint origin, const GRect *page_frame) {
+  if (gpoint_equal(&layout->page_origin, &origin) && grect_equal(&layout->page_frame, page_frame)) {
+    return;
+  }
+  layout->page_origin = origin;
+  layout->page_frame = *page_frame;
+  // The view caches the sizes of its text, so it is built again
+  timeline_layout_deinit_view(layout);
+  timeline_layout_init_view(layout, layout->layout_layer.mode);
+}
+
+void timeline_layout_set_page_scroll(TimelineLayout *layout, int16_t scroll) {
+  if (layout->page_scroll != scroll) {
+    layout->page_scroll = scroll;
+    layer_mark_dirty((Layer *)layout);
+  }
 }
 
 /////////////////////////
