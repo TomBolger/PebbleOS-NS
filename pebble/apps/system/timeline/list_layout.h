@@ -79,6 +79,83 @@ int16_t timeline_list_max_scroll(int16_t content_height, int16_t page_height);
 void timeline_list_stack(const TimelineListPin *pins, int num_pins, int first_placed,
                          int last_placed, int16_t *tops);
 
+//! A circle hanging off a side of a round display, as the round sidebar does, and the text that
+//! runs beside it. Distances are from the sides of the display's bounds.
+typedef struct TimelineListArc {
+  //! Radius of the display; its middle row is this far from the top.
+  int16_t display_radius;
+  //! Text keeps this far inside the display's edge, as text flow does.
+  int16_t text_inset;
+  //! Text keeps at least this far from the side of the display's bounds.
+  int16_t min_inset;
+  //! Distance from the circle's side of the display to the circle's center, negative when the
+  //! center is beyond that side. The center is on the middle row.
+  int16_t center_inset;
+  //! Radius of the circle.
+  int16_t radius;
+  //! Text keeps this far from the circle.
+  int16_t gap;
+} TimelineListArc;
+
+//! How deep the circle reaches into the display across a run of rows.
+//! @param arc The circle.
+//! @param top First row.
+//! @param bottom Last row.
+//! @return Distance from the circle's side of the display to its farthest edge across the rows,
+//! 0 or less if the rows miss it.
+int16_t timeline_list_arc_depth(const TimelineListArc *arc, int16_t top, int16_t bottom);
+
+//! How far in from the side of the display opposite the circle its edge is across a run of rows,
+//! where text there starts.
+//! @param arc The circle.
+//! @param top First row.
+//! @param bottom Last row.
+//! @return Distance from the side of the display's bounds to inside its edge where the rows are
+//! narrowest, at least the minimum inset. Off the display, its middle.
+int16_t timeline_list_arc_edge_inset(const TimelineListArc *arc, int16_t top, int16_t bottom);
+
+//! How much room text beside the circle has to rest in: from the edge inset across its head to
+//! the display's edge on the other side, but the gap short of the circle anywhere across its rows.
+//! @param arc The circle.
+//! @param head_top First row of the text's head, the lines it is placed by.
+//! @param head_bottom Last row of the text's head.
+//! @param top First row of the text.
+//! @param bottom Last row of the text.
+//! @return Width of the text.
+int16_t timeline_list_arc_text_width(const TimelineListArc *arc, int16_t head_top,
+                                     int16_t head_bottom, int16_t top, int16_t bottom);
+
+//! Where text beside the circle starts, from the side of the display opposite the circle: at the
+//! edge inset across its head, but never closer to the circle than the gap anywhere across its
+//! rows. Text is placed alike at rest and moving, keeping the width it rests in.
+//! @param arc The circle.
+//! @param head_top First row of the text's head.
+//! @param head_bottom Last row of the text's head.
+//! @param top First row of the text.
+//! @param bottom Last row of the text.
+//! @param width How far the text reaches toward the circle from where it starts.
+//! @return Distance from the side of the display's bounds to where the text starts.
+int16_t timeline_list_arc_text_inset(const TimelineListArc *arc, int16_t head_top,
+                                     int16_t head_bottom, int16_t top, int16_t bottom,
+                                     int16_t width);
+
+//! Angle around the circle's center that spans a length along a circle around it.
+//! @param distance Radius of the circle the length is along.
+//! @param length Length along that circle.
+//! @return Angle, TRIG_MAX_ANGLE being a full turn.
+int32_t timeline_list_arc_angle(int16_t distance, int16_t length);
+
+//! Where an icon is on a circle around the circle's center, turned by an angle from the row of the
+//! center: a positive angle turns it down. Past a quarter turn it is behind the circle's side of
+//! the display.
+//! @param arc The circle.
+//! @param distance Distance from the circle's center to the icon's.
+//! @param angle Angle from the circle's middle row, TRIG_MAX_ANGLE being a full turn.
+//! @param[out] y_out Row of the icon's center.
+//! @return Distance from the circle's side of the display to the icon's center.
+int16_t timeline_list_arc_icon_inset(const TimelineListArc *arc, int16_t distance, int32_t angle,
+                                     int16_t *y_out);
+
 //! How far in from the side of a round display its edge is, at a distance from its middle row.
 //! @param radius Radius of the display.
 //! @param distance_y Distance from the middle row; beyond the radius counts as the radius.
