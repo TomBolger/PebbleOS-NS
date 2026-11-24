@@ -93,6 +93,9 @@ static void prv_deinit_icon(TimelineLayout *timeline_layout);
 static void prv_init_colors(TimelineLayout *timeline_layout);
 static void prv_update_proc(Layer *layer, GContext *ctx);
 static GTextNode *prv_create_pin_view_node(TimelineLayout *layout);
+#if PBL_ROUND
+static void prv_fit_time_to_page(TimelineLayout *layout);
+#endif
 
 static const TimelineLayoutStyle *prv_get_style(void) {
   return s_styles[PBL_IF_ROUND_ELSE(PreferredContentSizeDefault, system_theme_get_content_size())];
@@ -425,6 +428,7 @@ void timeline_layout_init_view(TimelineLayout *layout, LayoutLayerMode mode) {
     GTextNodeContainer *container = (GTextNodeContainer *)layout->view_node;
     container->node.offset.y = -timeline_layout_get_title_center_y(layout);
   }
+  prv_fit_time_to_page(layout);
 #endif
 }
 
@@ -801,6 +805,9 @@ static void prv_get_card_view_bounds(TimelineLayout *layout, GRect *box_out) {
                    TIMELINE_MAX_BOX_HEIGHT);
 }
 
+//! Distance text flowing inside the display keeps from its edge
+#define TIMELINE_LAYOUT_CONTENT_INSET 8
+
 static bool prv_is_paged_pin(const TimelineLayout *layout) {
   return (layout->info->compact && layout->layout_layer.mode == LayoutLayerModePinnedFat &&
           layout->page_frame.size.h > 0);
@@ -822,7 +829,7 @@ static void prv_render_view(TimelineLayout *layout, GContext *ctx, bool render, 
   GTextNodeDrawConfig config = {
     .page_frame = is_peek ? &GRectZero : &page_frame_on_screen,
     .origin_on_screen = is_peek ? &GPointZero : &page_frame_on_screen.origin,
-    .content_inset = 8,
+    .content_inset = TIMELINE_LAYOUT_CONTENT_INSET,
     .text_flow = PBL_IF_ROUND_ELSE(paging, false),
     .paging = PBL_IF_ROUND_ELSE(paging, false),
   };
@@ -837,10 +844,36 @@ static void prv_render_view(TimelineLayout *layout, GContext *ctx, bool render, 
     config.origin_on_screen = &page_origin;
     config.text_flow = PBL_IF_ROUND_ELSE(true, false);
     config.paging = true;
+    config.perimeter = layout->page_perimeter;
   }
   (render ? graphics_text_node_draw : graphics_text_node_get_size)(layout->view_node, ctx, &box,
                                                                    &config, size_out);
 }
+
+#if PBL_ROUND
+//! The hour and its word are side by side, which text flow cannot narrow as a line, so the row is
+//! moved inside the perimeter the pin is laid out in
+static void prv_fit_time_to_page(TimelineLayout *layout) {
+  GTextNodeContainer *container = (GTextNodeContainer *)layout->view_node;
+  if (!prv_is_paged_pin(layout) || !layout->page_perimeter ||
+      container->nodes[0]->type != GTextNodeType_Horizontal) {
+    return;
+  }
+  GTextNode *time_node = container->nodes[0];
+  GRect box;
+  prv_get_pin_view_bounds(layout, &box);
+  box.origin = gpoint_add(box.origin, layout->page_origin);
+  const GRangeVertical rows = {box.origin.y, time_node->cached_size.h};
+  const GSize display_size = {PBL_DISPLAY_WIDTH, PBL_DISPLAY_HEIGHT};
+  const GRangeHorizontal range = layout->page_perimeter->callback(
+      layout->page_perimeter, &display_size, rows, TIMELINE_LAYOUT_CONTENT_INSET);
+  if (prv_get_pin_text_alignment() == GTextAlignmentRight) {
+    time_node->offset.x += PBL_MIN(range.origin_x + range.size_w - grect_get_max_x(&box), 0);
+  } else {
+    time_node->offset.x += PBL_MAX(range.origin_x - box.origin.x, 0);
+  }
+}
+#endif
 
 void timeline_layout_render_view(TimelineLayout *layout, GContext *ctx) {
   const bool render = true;
@@ -861,6 +894,10 @@ void timeline_layout_set_page(TimelineLayout *layout, GPoint origin, const GRect
   // The view caches the sizes of its text, so it is built again
   timeline_layout_deinit_view(layout);
   timeline_layout_init_view(layout, layout->layout_layer.mode);
+}
+
+void timeline_layout_set_page_perimeter(TimelineLayout *layout, const GPerimeter *perimeter) {
+  layout->page_perimeter = perimeter;
 }
 
 void timeline_layout_set_page_scroll(TimelineLayout *layout, int16_t scroll) {

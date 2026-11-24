@@ -160,6 +160,8 @@ struct TimelineLayout {
   GRect page_frame;
   /** How far the text is scrolled up through its pages. */
   int16_t page_scroll;
+  /** Perimeter the text flows inside when laid out in pages, or NULL for the display's. */
+  const GPerimeter *page_perimeter;
 
   /** Layout this one is transitioning to. */
   struct TimelineLayout *transition_layout;
@@ -373,6 +375,16 @@ void timeline_layout_set_page(TimelineLayout *layout, GPoint origin, const GRect
  * @param scroll How far the text is scrolled up, a whole number of pages at rest.
  */
 void timeline_layout_set_page_scroll(TimelineLayout *layout, int16_t scroll);
+
+/**
+ * @brief Set the perimeter the text of a pin laid out in pages flows inside, on round displays.
+ *
+ * Set it before the pin is laid out in pages.
+ *
+ * @param layout Layout of a compact pin.
+ * @param perimeter Perimeter in screen coordinates, or NULL for the display's.
+ */
+void timeline_layout_set_page_perimeter(TimelineLayout *layout, const GPerimeter *perimeter);
 
 /**
  * @brief Build a card view from a vertical container config.

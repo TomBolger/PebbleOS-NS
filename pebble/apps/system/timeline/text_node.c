@@ -264,6 +264,9 @@ static void prv_draw_text_node_text(GTextNodeDrawContext *ctx) {
     if (config->text_flow) {
       graphics_text_attributes_enable_screen_text_flow((TextLayout *)&layout,
                                                        config->content_inset);
+      if (config->perimeter) {
+        layout.flow_data.perimeter.impl = config->perimeter;
+      }
     }
     if (config->paging) {
       graphics_text_attributes_enable_paging((TextLayout *)&layout,

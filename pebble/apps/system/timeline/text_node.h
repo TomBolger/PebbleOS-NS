@@ -3,6 +3,7 @@
 
 #pragma once
 
+#include <applib/graphics/perimeter.h>
 #include <applib/graphics/text.h>
 
 //! GTextNode implements a stacking layout primarily for displaying complex compositions of text.
@@ -58,6 +59,8 @@ typedef struct {
   uint8_t content_inset;
   bool text_flow;
   bool paging;
+  //! Perimeter text flows inside, or nullptr for the display's
+  const GPerimeter *perimeter;
 } GTextNodeDrawConfig;
 
 typedef struct GTextNode GTextNode;
