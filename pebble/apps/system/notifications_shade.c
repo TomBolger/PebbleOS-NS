@@ -7,7 +7,7 @@
 
 #include <pbl/i18n/i18n.h>
 
-#include <applib/app_malloc.h>
+#include <applib/applib_malloc.auto.h>
 
 #define SECTION_MASK         0x03
 #define SECTION_CONVERSATION 1
@@ -26,9 +26,9 @@ void notification_shade_init(NotificationShade *shade, bool sections, bool stack
 }
 
 void notification_shade_deinit(NotificationShade *shade) {
-  app_free(shade->entries);
-  app_free(shade->order);
-  app_free(shade->rows);
+  applib_free(shade->entries);
+  applib_free(shade->order);
+  applib_free(shade->rows);
   shade->entries = nullptr;
   shade->order = nullptr;
   shade->rows = nullptr;
@@ -62,17 +62,17 @@ static bool prv_is_newer(const NotificationShadeEntry *a, const NotificationShad
 
 static void prv_grow(NotificationShade *shade) {
   const uint16_t capacity = shade->capacity ? shade->capacity * 2 : 16;
-  NotificationShadeEntry *entries = app_malloc_check(capacity * sizeof(*entries));
-  uint16_t *order = app_malloc_check(capacity * sizeof(*order));
+  NotificationShadeEntry *entries = applib_zalloc(capacity * sizeof(*entries));
+  uint16_t *order = applib_zalloc(capacity * sizeof(*order));
   // At most one header per group and one stack row per notification.
   NotificationShadeRow *rows =
-      app_malloc_check((2 * capacity + NotificationShadeGroupCount) * sizeof(*rows));
+      applib_zalloc((2 * capacity + NotificationShadeGroupCount) * sizeof(*rows));
   if (shade->num_entries) {
     memcpy(entries, shade->entries, shade->num_entries * sizeof(*entries));
   }
-  app_free(shade->entries);
-  app_free(shade->order);
-  app_free(shade->rows);
+  applib_free(shade->entries);
+  applib_free(shade->order);
+  applib_free(shade->rows);
   shade->entries = entries;
   shade->order = order;
   shade->rows = rows;
@@ -219,7 +219,7 @@ void notification_shade_rebuild(NotificationShade *shade) {
   if (shade->num_entries == 0) {
     return;
   }
-  bool *placed = app_zalloc_check(shade->num_entries * sizeof(bool));
+  bool *placed = applib_zalloc(shade->num_entries * sizeof(bool));
   uint16_t num_placed = 0;
 
   for (uint8_t group = 0; group < NotificationShadeGroupCount; group++) {
@@ -265,7 +265,7 @@ void notification_shade_rebuild(NotificationShade *shade) {
       }
     }
   }
-  app_free(placed);
+  applib_free(placed);
 }
 
 uint16_t notification_shade_row_count(const NotificationShade *shade) {
