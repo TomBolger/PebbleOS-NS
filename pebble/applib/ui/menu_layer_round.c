@@ -48,6 +48,12 @@ MenuRoundShape menu_round_bubble(GSize display, int16_t bottom) {
   };
 }
 
+int16_t menu_round_bubble_half_width(int16_t bottom, int16_t y) {
+  const int32_t radius = MENU_ROUND_BUBBLE_RADIUS;
+  const int32_t dy = PBL_ABS(y - (bottom - radius));
+  return (dy < radius) ? (int16_t)integer_sqrt((radius * radius) - (dy * dy)) : 0;
+}
+
 static int16_t prv_lerp(int16_t from, int16_t to, int32_t progress) {
   return (int16_t)(from + ((to - from) * progress / MENU_ROUND_MORPH_PILL));
 }

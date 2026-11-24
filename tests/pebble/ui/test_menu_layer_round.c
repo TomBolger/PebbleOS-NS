@@ -88,6 +88,11 @@ void test_menu_layer_round__bubble(void) {
   cl_assert_equal_i(bubble.circle_radius, MENU_ROUND_BUBBLE_RADIUS);
   cl_assert(grect_is_empty(&bubble.box));
 
+  cl_assert_equal_i(menu_round_bubble_half_width(80, 80), 0);
+  cl_assert_equal_i(menu_round_bubble_half_width(80, 100), 0);
+  const int16_t near_bottom = menu_round_bubble_half_width(80, 70);
+  cl_assert(near_bottom > 0);
+  cl_assert(menu_round_bubble_half_width(80, 40) > near_bottom);
 }
 
 void test_menu_layer_round__morph_ends(void) {

@@ -562,7 +562,7 @@ static bool prv_draws_round_pill(const MenuLayer *menu_layer) {
 }
 
 static bool prv_round_bubble_selected(const MenuLayer *menu_layer) {
-  return menu_layer->round_top_bubble && (menu_layer->selection.index.section == 0) &&
+  return (menu_layer->round_bubble_depth > 0) && (menu_layer->selection.index.section == 0) &&
          (menu_layer->selection.index.row == 0);
 }
 
@@ -576,13 +576,11 @@ static bool prv_round_pill(const MenuLayer *menu_layer, GPoint content_origin, G
                          menu_layer->round_pill_left_margin, pill);
 }
 
-//! The bubble over the first row, \a frame in content coordinates, on screen: its bottom rests
-//! where the row's pill would
+//! The bubble over the first row, \a frame in content coordinates, on screen
 static MenuRoundShape prv_round_bubble(const MenuLayer *menu_layer, GPoint content_origin,
                                        GRect frame) {
-  return menu_round_bubble(
-      GSize(PBL_DISPLAY_WIDTH, PBL_DISPLAY_HEIGHT),
-      content_origin.y + frame.origin.y + frame.size.h - MENU_ROUND_PILL_INSET_Y);
+  return menu_round_bubble(GSize(PBL_DISPLAY_WIDTH, PBL_DISPLAY_HEIGHT),
+                           content_origin.y + frame.origin.y + menu_layer->round_bubble_depth);
 }
 
 //! The highlight's shape as it is now, on screen, for content starting at \a content_origin on
@@ -1469,8 +1467,8 @@ static void prv_start_round_morph(MenuLayer *menu_layer, const MenuCellSpan *pre
   animation_schedule(animation);
 }
 
-void menu_layer_set_round_top_bubble(MenuLayer *menu_layer, bool enabled) {
-  menu_layer->round_top_bubble = enabled;
+void menu_layer_set_round_header_bubble(MenuLayer *menu_layer, uint8_t depth) {
+  menu_layer->round_bubble_depth = depth;
   layer_mark_dirty(&menu_layer->scroll_layer.layer);
 }
 #endif
@@ -1822,7 +1820,8 @@ static void prv_apply_selection_change(MenuLayer *menu_layer, MenuRowAlign scrol
   menu_layer->round_morph_interrupted = false;
   const bool first_row_before =
       (prev_selection->index.section == 0) && (prev_selection->index.row == 0);
-  if (animated && did_change && prv_draws_round_pill(menu_layer) && menu_layer->round_top_bubble &&
+  if (animated && did_change && prv_draws_round_pill(menu_layer) &&
+      (menu_layer->round_bubble_depth > 0) &&
       (first_row_before || prv_round_bubble_selected(menu_layer))) {
     Animation *scroll_animation = (Animation *)menu_layer->scroll_layer.animation;
     if (animation_is_scheduled(scroll_animation)) {

@@ -48,10 +48,11 @@ int16_t menu_cell_round_chord_inset(const GContext *ctx, GRect frame);
 //! MENU_CELL_ROUND_BEZEL_MARGIN in from the bezel at its row, following the curve of the display.
 GRect menu_cell_round_follow_bezel(const GContext *ctx, GRect frame);
 
-//! Highlights the first row with a bubble hanging from above the screen instead of a pill, the
-//! first row being laid out as a header at the top of the screen. Moving the selection to or from
-//! the first row morphs the bubble into the other row's pill.
-void menu_layer_set_round_top_bubble(MenuLayer *menu_layer, bool enabled);
+//! Highlights the first row, laid out as a header at the top of the screen, with a bubble
+//! hanging from above the screen instead of a pill. The bubble reaches \a depth down the row
+//! (0 for no bubble). Moving the selection to or from the first row morphs the bubble into the
+//! other row's pill and back.
+void menu_layer_set_round_header_bubble(MenuLayer *menu_layer, uint8_t depth);
 
 //! Moves the left end of the highlight pill \a margin further in from the bezel, e.g. to keep it
 //! clear of something drawn along the rim. 0 restores the default.
