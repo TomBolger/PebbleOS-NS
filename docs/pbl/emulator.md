@@ -77,6 +77,7 @@ pbl emulator feed calendar --title "Dentist" --start 15 --location "Downtown"
 pbl emulator feed calendar --clear                # remove every pin
 pbl emulator feed notifications                   # a few messages from two senders
 pbl emulator feed notifications --sender Anna --body "Lunch?" --app WhatsApp
+pbl emulator feed notifications --sender Anna --body "Look" --image   # with a picture; keeps serving it
 pbl emulator feed notifications --clear           # remove every notification
 ```
 
@@ -84,7 +85,8 @@ pbl emulator feed notifications --clear           # remove every notification
 writes a database, like weather, exits once the data is stored. One that
 stands in for the phone, like music, keeps running: it acts on the watch's
 controls, advances playback and draws album art when asked (album art is
-off by default, under Settings > Music). The emulator's port serves one
+off by default, under Settings > Music); notifications with `--image`
+likewise answer the watch's requests for their picture. The emulator's port serves one
 host client at a time, so run one such feed at once.
 
 The feeds live in `tools/libs/pbl-cli/pbl/feeds/`, one module per kind of
