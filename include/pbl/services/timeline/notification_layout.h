@@ -160,6 +160,16 @@ static const TimelineResourceId REMINDER_FALLBACK_ICON = TIMELINE_RESOURCE_NOTIF
 #define CARD_ICON_UPPER_PADDING                                          \
   ((LAYOUT_TOP_BANNER_HEIGHT - NOTIFICATION_TINY_RESOURCE_HEIGHT) / 2) + \
       NOTIFICATION_TINY_RESOURCE_VERTICAL_OFFSET
+/**
+ * @brief Distance from the top of the display to the center of the round top banner circle, once
+ * the card rests below the status bar. The center is above the display, so this is negative.
+ *
+ * Turned a quarter round, the same circle hangs off a side of the display just as deep.
+ */
+#define LAYOUT_TOP_BANNER_CENTER_Y_ROUND (STATUS_BAR_LAYER_HEIGHT + LAYOUT_TOP_BANNER_ORIGIN_Y)
+/** @brief Distance from the top of the display to the center of the round banner's icon. */
+#define LAYOUT_TOP_BANNER_ICON_CENTER_Y_ROUND \
+  (STATUS_BAR_LAYER_HEIGHT + CARD_ICON_UPPER_PADDING + NOTIFICATION_TINY_RESOURCE_HEIGHT / 2)
 
 /**
  * @brief Widest image band a notification can reserve, 4:1 landscape, as a height/width ratio in
