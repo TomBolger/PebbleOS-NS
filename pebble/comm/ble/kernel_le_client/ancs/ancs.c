@@ -149,6 +149,12 @@ typedef struct ANCSClient {
   uint8_t consecutive_busy_alive_checks;
   // Consecutive alive checks whose Control Point write iOS rejected.
   uint8_t consecutive_rejected_alive_checks;
+  //! UIDs the phone told of since subscribing to the Notification Source, when mirroring it.
+  uint32_t *snapshot_uids;
+  uint16_t snapshot_count;
+  //! Some UIDs did not fit or were dropped: the snapshot can't tell what's gone.
+  bool snapshot_incomplete;
+  EventedTimerID snapshot_timer;
 } ANCSClient;
 
 static ANCSClient *s_ancs_client;
@@ -618,7 +624,8 @@ static void prv_is_ancs_alive_fn(struct pbl_work *work) {
 // -----------------------------------------------------------------------------
 //! iOS re-sends the whole notification center as pre-existing right after (re)subscribing. Those
 //! are only handed over as recovered (missed while disconnected) for a bit after reconnection.
-//! Without a previous session to compare against, they are dropped.
+//! Without a previous session to compare against, they are dropped, unless the notification
+//! center is mirrored.
 #define POST_CONNECTION_IGNORE_TICKS (10 * PBL_TICK_HZ)
 static uint64_t s_connected_ticks;
 static bool s_connected_ticks_valid;
@@ -785,6 +792,69 @@ static bool prv_handle_notif_attrs(ClientEvent *event) {
 }
 
 // -----------------------------------------------------------------------------
+//! Snapshot of the notification center
+//!
+//! On subscribing to the Notification Source, iOS tells of every notification in its notification
+//! center. When mirroring it, the UIDs it told of are collected for a while, then stored
+//! notifications that were removed from the phone in the meantime are dropped.
+
+#define SNAPSHOT_TIME_MS  (10 * PBL_MSEC_PER_SEC)
+#define SNAPSHOT_MAX_UIDS 128
+
+//! A notification from the phone was dropped before reaching KernelMain.
+static atomic_bool s_snapshot_dropped_notification;
+
+static void prv_snapshot_stop(void) {
+  if (s_ancs_client->snapshot_timer != EVENTED_TIMER_INVALID_ID) {
+    evented_timer_cancel(s_ancs_client->snapshot_timer);
+    s_ancs_client->snapshot_timer = EVENTED_TIMER_INVALID_ID;
+  }
+  pbl_free(s_ancs_client->snapshot_uids);
+  s_ancs_client->snapshot_uids = nullptr;
+  s_ancs_client->snapshot_count = 0;
+}
+
+PBL_T_STATIC void prv_snapshot_done(void *unused) {
+  if (!s_ancs_client) {
+    return;
+  }
+  s_ancs_client->snapshot_timer = EVENTED_TIMER_INVALID_ID;
+  if (s_ancs_client->snapshot_incomplete || atomic_load(&s_snapshot_dropped_notification)) {
+    PBL_LOG_WRN("Incomplete ANCS snapshot, keeping stored notifications");
+  } else if (s_ancs_client->snapshot_uids) {
+    ancs_notifications_handle_snapshot(s_ancs_client->snapshot_uids, s_ancs_client->snapshot_count);
+  }
+  prv_snapshot_stop();
+}
+
+static void prv_snapshot_start(void) {
+  prv_snapshot_stop();
+  if (!ancs_notifications_is_mirroring()) {
+    return;
+  }
+  s_ancs_client->snapshot_uids = pbl_malloc(SNAPSHOT_MAX_UIDS * sizeof(uint32_t));
+  if (!s_ancs_client->snapshot_uids) {
+    PBL_LOG_WRN("No memory for an ANCS snapshot");
+    return;
+  }
+  s_ancs_client->snapshot_incomplete = false;
+  atomic_store(&s_snapshot_dropped_notification, false);
+  s_ancs_client->snapshot_timer =
+      evented_timer_register(SNAPSHOT_TIME_MS, false, prv_snapshot_done, nullptr);
+}
+
+static void prv_snapshot_add(uint32_t uid) {
+  if (!s_ancs_client->snapshot_uids) {
+    return;
+  }
+  if (s_ancs_client->snapshot_count >= SNAPSHOT_MAX_UIDS) {
+    s_ancs_client->snapshot_incomplete = true;
+    return;
+  }
+  s_ancs_client->snapshot_uids[s_ancs_client->snapshot_count++] = uid;
+}
+
+// -----------------------------------------------------------------------------
 // Subscriptions and the Notification Source
 
 static void prv_put_ancs_disconnected_event(void) {
@@ -808,6 +878,8 @@ static void prv_handle_subscribed(enum pbl_bt_ancs_source source, int error) {
       prv_ancs_is_alive_start_tracking();
       prv_start_post_connection_ignore_window();
       s_session_active = true;
+    } else if (source == PBL_BT_ANCS_SOURCE_NOTIFICATION) {
+      prv_snapshot_start();
     }
   } else {
     PBL_LOG_ERR("Failed to subscribe source: %u (error=%d)", source, error);
@@ -816,6 +888,7 @@ static void prv_handle_subscribed(enum pbl_bt_ancs_source source, int error) {
 
 static void prv_invalidate_all_references(void) {
   s_ancs_client->discovered = false;
+  prv_snapshot_stop();
 
   prv_reset_and_flush();
   prv_put_ancs_disconnected_event();
@@ -861,8 +934,9 @@ static void prv_handle_notification(const struct pbl_bt_ancs_notif *notif) {
       // By skipping the pre-existing check we will re-receive all the notifications
       // we got in the past 2 hours. To get past this ignore notifications for the first couple
       // seconds after connecting
+      prv_snapshot_add(notif->uid);
       if (prv_just_connected() && (notif->flags & PBL_BT_ANCS_FLAG_PRE_EXISTING)) {
-        if (s_had_session) {
+        if (s_had_session || ancs_notifications_is_mirroring()) {
           PBL_LOG_DBG("PreExisting ANCS notification after reconnecting");
           prv_notif_queue_push_attr_request(notif, true);
         } else {
@@ -876,6 +950,7 @@ static void prv_handle_notification(const struct pbl_bt_ancs_notif *notif) {
       break;
     case PBL_BT_ANCS_EVENT_MODIFIED:
       PBL_LOG_DBG("Modified ANCS notification!");
+      prv_snapshot_add(notif->uid);
       prv_notif_queue_push_attr_request(notif, false);
       break;
     case PBL_BT_ANCS_EVENT_REMOVED:
@@ -1008,6 +1083,7 @@ static void prv_put_client_event(const ClientEvent *template,
   if (atomic_fetch_add(&s_num_client_events, 1) >= CLIENT_EVENTS_MAX &&
       template->type == ClientEventNotification) {
     atomic_fetch_sub(&s_num_client_events, 1);
+    atomic_store(&s_snapshot_dropped_notification, true);
     PBL_LOG_WRN("Dropping ANCS notification");
     return;
   }
@@ -1023,6 +1099,9 @@ static void prv_put_client_event(const ClientEvent *template,
   ClientEvent *event = pbl_malloc(sizeof(*event) + data_size);
   if (event == nullptr) {
     atomic_fetch_sub(&s_num_client_events, 1);
+    if (template->type == ClientEventNotification) {
+      atomic_store(&s_snapshot_dropped_notification, true);
+    }
     PBL_LOG_WRN("Dropping ANCS event %d: out of memory", template->type);
     return;
   }
@@ -1129,6 +1208,7 @@ void ancs_destroy(void) {
   ++s_session;
   prv_ancs_is_alive_stop_timer();
   prv_op_timeout_stop();
+  prv_snapshot_stop();
 
   ancs_app_name_storage_deinit();
 
