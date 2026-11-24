@@ -8,7 +8,6 @@
 
 #include <applib/ui/vibes.h>
 #include <applib/ui/window_private.h>
-#include <apps/system/launcher/default/app_glance_structured.h>
 #include <apps/system/launcher/default/menu_layer.h>
 #include <apps/system/launcher/default/menu_layer_private.h>
 #include <clar.h>
@@ -419,20 +418,6 @@ static void prv_insert_glances_for_app_selected_and_apps_above_and_below_with_gl
              s_fake_app_nodes[i].node.name);
     cl_assert_equal_i(app_glance_db_insert_glance(&s_fake_app_nodes[i].node.uuid, &glance), 0);
   }
-}
-
-//! Round: the header's icon, title and subtitle sit tight under each other near the top, inside
-//! a bubble that ends before the second row
-void test_launcher_menu_layer__round_header_layout(void) {
-#if PBL_ROUND
-  const LauncherRoundHeaderLayout layout = launcher_menu_layer_round_header_layout(18, 14);
-  cl_assert(layout.title_top >= LAUNCHER_APP_GLANCE_STRUCTURED_ICON_LEGACY_MAX_SIZE.h);
-  cl_assert_equal_i(layout.subtitle_top, layout.title_top + 18);
-  cl_assert(layout.bubble_depth > layout.subtitle_top + 14);
-  const LauncherMenuLayerStyle *style = launcher_menu_layer_get_style();
-  cl_assert(launcher_menu_layer_round_header_layout_for_style(style).bubble_depth <
-            (PBL_DISPLAY_HEIGHT / 2) - (style->focused_cell_height / 2));
-#endif
 }
 
 void test_launcher_menu_layer__content_size_change_keeps_selection(void) {

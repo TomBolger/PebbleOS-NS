@@ -15,7 +15,6 @@
 #include <applib/app_malloc.h>
 #include <applib/graphics/gdraw_command_transforms.h>
 #include <applib/ui/kino/kino_reel_custom.h>
-#include <applib/ui/menu_layer_round.h>
 #include <process_management/app_install_manager.h>
 #include <resource/resource_ids.auto.h>
 #include <shell/prefs.h>
@@ -27,9 +26,6 @@
 #else
 #define LAUNCHER_APP_GLANCE_STRUCTURED_ICON_HORIZONTAL_MARGIN (5)
 #endif
-
-//! Round: the header row's text keeps this far in from the edge of its bubble
-#define LAUNCHER_APP_GLANCE_STRUCTURED_HEADER_TEXT_MARGIN (8)
 
 typedef struct GenericGlanceIconDrawCommandProcessor {
   GDrawCommandProcessor draw_command_processor;
@@ -448,70 +444,12 @@ static PBL_NOINLINE GTextNode *prv_create_structured_glance_node(
   return &horizontal_node->container.node;
 }
 
-#if PBL_ROUND
-//! Round: draws \a node centred in the header, \a top to \a top + \a height, as wide as the
-//! bubble with its \a bubble_bottom is at the line's bottom, less a margin
-static void prv_draw_round_header_node(GContext *ctx, GRect frame, int16_t bubble_bottom,
-                                       GTextNode *node, int16_t top, int16_t height) {
-  if (!node) {
-    return;
-  }
-  const int16_t half_w =
-      PBL_MIN(frame.size.w / 2, menu_round_bubble_half_width(bubble_bottom, top + height) -
-                                    LAUNCHER_APP_GLANCE_STRUCTURED_HEADER_TEXT_MARGIN);
-  if (half_w > 0) {
-    if ((node->type == GTextNodeType_Text) || (node->type == GTextNodeType_TextDynamic)) {
-      ((GTextNodeText *)node)->alignment = GTextAlignmentCenter;
-    } else if (node->type == GTextNodeType_Horizontal) {
-      ((GTextNodeHorizontal *)node)->horizontal_alignment = GTextAlignmentCenter;
-    }
-    const GRect box = GRect(frame.origin.x + (frame.size.w / 2) - half_w, top, 2 * half_w, height);
-    graphics_text_node_draw(node, ctx, &box, nullptr, nullptr);
-  }
-  graphics_text_node_destroy(node);
-}
-
-//! Round: the first row is a header at the top of the screen, its icon centred near the top
-//! with its title and subtitle centred under it, inside the bubble that highlights it
-static void prv_draw_round_header(LauncherAppGlanceStructured *structured_glance, GContext *ctx,
-                                  GRect frame) {
-  const LauncherRoundHeaderLayout layout =
-      launcher_menu_layer_round_header_layout_for_style(launcher_menu_layer_get_style());
-  const int16_t bubble_bottom = frame.origin.y + layout.bubble_depth;
-
-  const GSize icon_size = structured_glance->icon_max_size;
-  const GRect icon_rect =
-      GRect(frame.origin.x + ((frame.size.w - icon_size.w) / 2),
-            frame.origin.y + layout.title_top - icon_size.h, icon_size.w, icon_size.h);
-  prv_structured_glance_icon_node_draw_cb(ctx, &icon_rect, nullptr, true /* render */, nullptr,
-                                          structured_glance);
-
-  const int16_t title_top = frame.origin.y + layout.title_top;
-  const int16_t subtitle_top = frame.origin.y + layout.subtitle_top;
-  prv_draw_round_header_node(ctx, frame, bubble_bottom,
-                             prv_structured_glance_create_title_text_node(structured_glance),
-                             title_top, subtitle_top - title_top);
-  if (structured_glance->impl && structured_glance->impl->create_subtitle_node) {
-    prv_draw_round_header_node(
-        ctx, frame, bubble_bottom, structured_glance->impl->create_subtitle_node(structured_glance),
-        subtitle_top, fonts_get_font_height(structured_glance->subtitle_font));
-  }
-}
-#endif
-
 static void prv_draw_processed(KinoReel *reel, GContext *ctx, GPoint offset,
                                [[maybe_unused]] KinoReelProcessor *processor) {
   LauncherAppGlanceStructured *structured_glance = kino_reel_custom_get_data(reel);
   if (!structured_glance) {
     return;
   }
-#if PBL_ROUND
-  if (structured_glance->glance.is_round_header) {
-    prv_draw_round_header(structured_glance, ctx,
-                          (GRect){.origin = offset, .size = structured_glance->glance.size});
-    return;
-  }
-#endif
 
   GRect glance_frame = (GRect){.origin = offset, .size = structured_glance->glance.size};
   const LauncherMenuLayerStyle *style = launcher_menu_layer_get_style();

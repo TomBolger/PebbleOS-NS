@@ -33,8 +33,6 @@ struct LauncherAppGlance {
   bool is_highlighted;
   //! Screen Y center position for arc effect calculation
   int16_t screen_center_y;
-  //! Round: whether the glance is drawn as the header at the top of the launcher
-  bool is_round_header;
   //! Whether or not the launcher app glance should consider slices
   bool should_consider_slices;
   //! The current slice that should be drawn in the launcher app glance

@@ -35,26 +35,6 @@ typedef struct LauncherMenuLayerSelectionState {
 //! @return The style for the user's preferred content size
 const LauncherMenuLayerStyle *launcher_menu_layer_get_style(void);
 
-#if PBL_ROUND
-//! Round: where the first row, a header at the top of the screen, has its title and subtitle,
-//! under its icon, and how far down the row the bubble highlighting it reaches
-typedef struct LauncherRoundHeaderLayout {
-  int16_t title_top;
-  int16_t subtitle_top;
-  int16_t bubble_depth;
-} LauncherRoundHeaderLayout;
-
-//! Round: the header's layout for a title \a title_h and a subtitle \a subtitle_h tall: the icon
-//! box near the top of the screen, the title and subtitle tight under it, and the bubble just
-//! around them
-LauncherRoundHeaderLayout launcher_menu_layer_round_header_layout(int16_t title_h,
-                                                                  int16_t subtitle_h);
-
-//! Round: the header's layout with \a style's fonts
-LauncherRoundHeaderLayout launcher_menu_layer_round_header_layout_for_style(
-    const LauncherMenuLayerStyle *style);
-#endif
-
 void launcher_menu_layer_init(LauncherMenuLayer *launcher_menu_layer,
                               AppMenuDataSource *data_source);
 
