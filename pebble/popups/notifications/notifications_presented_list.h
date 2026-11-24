@@ -39,6 +39,9 @@ void notifications_presented_list_remove(Uuid *id);
 //! Add the given notification to the presented list
 void notifications_presented_list_add(Uuid *id, NotificationType type);
 
+//! Add the given notification to the end of the presented list, unless it is in it already
+void notifications_presented_list_append(Uuid *id, NotificationType type);
+
 //! Add the given notification to the presented list
 //! The comparator will have to compare two NotifList*
 void notifications_presented_list_add_sorted(Uuid *id, NotificationType type, Comparator comparator,
