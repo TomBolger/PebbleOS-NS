@@ -67,6 +67,10 @@ typedef struct {
   //! The pin was selected where the up/down animation starts; it keeps its text until the pins
   //! settle
   bool from_selected;
+  //! Where the pin's icon rests on the round arc, and where the up/down animation turns it from,
+  //! in steps from the selected pin's icon, down being positive
+  int8_t icon_slot;
+  int8_t icon_from_slot;
 } TimelineListPinView;
 
 //! The compact list: pins are as tall as their content, and the selected pin shows all its text
