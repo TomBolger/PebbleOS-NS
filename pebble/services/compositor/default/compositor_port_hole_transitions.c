@@ -60,14 +60,16 @@ static void prv_port_hole_transition_animation_update(GContext *ctx, Animation *
                                      direction_negative ? ring_max_thickness : -ring_max_thickness);
 
   if (distance_normalized > transition_progress_threshold) {
-    // Second half of the transition
-    const GRect rect = direction_vertical
-                           ? GRect(0, -current_offset_px, PBL_DISPLAY_WIDTH,
-                                   PBL_DISPLAY_HEIGHT - current_offset_px)
-                           : GRect(-current_offset_px, 0, PBL_DISPLAY_WIDTH - current_offset_px,
-                                   PBL_DISPLAY_HEIGHT);
-
-    compositor_scaled_app_fb_copy(rect, false /* copy_relative_to_origin */);
+    // Second half of the transition: the new frame, moved the way the first half moved the old
+    // one. What it uncovers lies under the ring.
+    compositor_scaled_app_fb_copy(GRect(0, 0, PBL_DISPLAY_WIDTH, PBL_DISPLAY_HEIGHT),
+                                  true /* copy_relative_to_origin */);
+    if (direction_vertical) {
+      graphics_private_move_pixels_vertically(&ctx->dest_bitmap, -current_offset_px);
+    } else {
+      graphics_private_move_pixels_horizontally(&ctx->dest_bitmap, -current_offset_px,
+                                                false /* patch_garbage */);
+    }
   } else {
     // First half of the transition
     const int16_t diff = s_data.animation_offset_px - current_offset_px;
