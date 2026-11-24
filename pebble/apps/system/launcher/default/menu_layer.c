@@ -16,6 +16,7 @@
 #include <applib/graphics/gtypes.h>
 #include <applib/ui/app_window_stack.h>
 #include <applib/ui/content_indicator.h>
+#include <applib/ui/menu_layer_private.h>
 #include <applib/ui/menu_layer_round.h>
 #include <resource/resource_ids.auto.h>
 #include <shell/prefs.h>
@@ -37,11 +38,17 @@ const LauncherMenuLayerStyle *launcher_menu_layer_get_style(void) {
 //! The banner's content sits this much below the middle of the banner, where it is wider
 #define ROUND_BANNER_CONTENT_OFFSET_Y 3
 
+//! Every app shows its glance's subtitle, so the rows are laid out tall enough for it
+static int16_t prv_round_subtitle_height(const LauncherMenuLayerStyle *style) {
+  return fonts_get_font_height(fonts_get_system_font(style->subtitle_font_key));
+}
+
 int16_t launcher_menu_layer_round_banner_height(const LauncherMenuLayerStyle *style) {
   // As deep as the space the menu leaves above the first app, which it then fills entirely, so the
   // first app rests right under it with the second one in the middle
-  const int16_t row_h = menu_round_row_height(PBL_DISPLAY_HEIGHT, style->focused_cell_height,
-                                              style->unfocused_cell_height);
+  const int16_t row_h =
+      menu_round_row_height(PBL_DISPLAY_HEIGHT, style->focused_cell_height,
+                            style->unfocused_cell_height, prv_round_subtitle_height(style));
   return menu_round_end_space(PBL_DISPLAY_HEIGHT, row_h, row_h);
 }
 
@@ -331,6 +338,12 @@ void launcher_menu_layer_init(LauncherMenuLayer *launcher_menu_layer,
   MenuLayer *menu_layer = &launcher_menu_layer->menu_layer;
   menu_layer_init(menu_layer, &menu_layer_frame);
   menu_layer_pad_bottom_enable(menu_layer, false);
+#if PBL_ROUND
+  menu_layer_set_round_subtitle_height(
+      menu_layer,
+      (uint8_t)prv_round_subtitle_height(
+          &system_theme_get_style_for_size(launcher_menu_layer->content_size)->launcher));
+#endif
   menu_layer_set_callbacks(menu_layer, launcher_menu_layer,
                            &(MenuLayerCallbacks){
                              .get_num_rows = prv_menu_layer_get_num_rows,
