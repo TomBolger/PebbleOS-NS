@@ -1547,8 +1547,11 @@ static void prv_round_end_spaces(MenuLayer *menu_layer, int16_t *top, int16_t *b
     return;
   }
   const int16_t frame_h = menu_layer->scroll_layer.layer.frame.size.h;
-  *top = menu_round_end_space(frame_h, prv_round_row_height(menu_layer, 0, 0),
-                              prv_round_row_height(menu_layer, 0, 1));
+  // A header bubble hangs from the top of the screen, so the list rests flush with its top
+  if (menu_layer->round_bubble_depth == 0) {
+    *top = menu_round_end_space(frame_h, prv_round_row_height(menu_layer, 0, 0),
+                                prv_round_row_height(menu_layer, 0, 1));
+  }
   const uint16_t last_section = sections - 1;
   const int32_t last = (int32_t)prv_menu_layer_get_num_rows(menu_layer, last_section) - 1;
   *bottom = menu_round_end_space(frame_h, prv_round_row_height(menu_layer, last_section, last),
