@@ -1452,11 +1452,16 @@ static int16_t prv_center_focus_rest_offset_y(MenuLayer *menu_layer, const MenuC
 #endif
 }
 
-//! Whether \a span rests at the centre, rather than clamped near an end of the content.
-static bool prv_center_focus_rests_centered(MenuLayer *menu_layer, const MenuCellSpan *span) {
-  const int16_t frame_h = menu_layer->scroll_layer.layer.frame.size.h;
-  return prv_center_focus_rest_offset_y(menu_layer, span) ==
-         (int16_t)((frame_h / 2) - span->y - (span->h / 2));
+//! Whether the list already rests where it does with \a span selected, so that moving the
+//! selection to it moves only the highlight. Never on rectangular displays, where every step moves
+//! the list.
+static bool prv_center_focus_keeps_offset(MenuLayer *menu_layer, const MenuCellSpan *span) {
+#if PBL_ROUND
+  return scroll_layer_get_content_offset(&menu_layer->scroll_layer).y ==
+         prv_center_focus_rest_offset_y(menu_layer, span);
+#else
+  return false;
+#endif
 }
 
 static MenuRowAlign prv_corrected_scroll_align(MenuLayer *menu_layer, MenuRowAlign align) {
@@ -1713,11 +1718,11 @@ static void prv_apply_selection_change(MenuLayer *menu_layer, MenuRowAlign scrol
   menu_layer->touch_center_pin = false;
 #endif
   if (menu_layer->center_focused && animated &&
-      prv_center_focus_rests_centered(menu_layer, prev_selection) &&
-      prv_center_focus_rests_centered(menu_layer, &menu_layer->selection)) {
+      !prv_center_focus_keeps_offset(menu_layer, &menu_layer->selection)) {
+    // Any step that moves the list does it as every centre-focused step does
     prv_schedule_center_focus_animation(menu_layer, up, prev_selection, was_animating);
   } else if (menu_layer->center_focused && animated) {
-    // Near the ends of a round list, or in one that fits, the content stays put, so the highlight
+    // Near the ends of a round list, or in one that fits, the list stays put, so the highlight
     // slides to the new row instead, as on a rectangular menu.
     Animation *scroll_animation = (Animation *)menu_layer->scroll_layer.animation;
     if (animation_is_scheduled(scroll_animation)) {
@@ -1728,8 +1733,6 @@ static void prv_apply_selection_change(MenuLayer *menu_layer, MenuRowAlign scrol
     } else {
       prv_setup_selection_animation(menu_layer, up);
     }
-    const int16_t rest_y = prv_center_focus_rest_offset_y(menu_layer, &menu_layer->selection);
-    scroll_layer_set_content_offset(&menu_layer->scroll_layer, GPoint(0, rest_y), true);
     if (did_change) {
       prv_announce_selection_changed(menu_layer, prev_selection->index);
     }
