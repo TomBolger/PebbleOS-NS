@@ -1571,9 +1571,9 @@ static int16_t prv_round_end_row_height(uint16_t i, void *context) {
 }
 
 //! A round list with the pill stops at its ends, where it selects the rows it shows without
-//! scrolling. These rows keep their focused height whatever is selected, so moving the selection between them moves
-//! only the highlight, see menu_round_end_rows(). Elsewhere the selected row grows as the list
-//! scrolls it to the middle.
+//! scrolling. These rows keep their focused height whatever is selected, so moving the selection
+//! between them moves only the highlight, see menu_round_end_rows(). Elsewhere the selected row
+//! grows as the list scrolls it to the middle.
 static bool prv_round_row_is_pinned(MenuLayer *menu_layer, const MenuIndex *index) {
   if (!menu_layer->center_focused || !prv_draws_round_pill(menu_layer)) {
     return false;
@@ -1589,14 +1589,15 @@ static bool prv_round_row_is_pinned(MenuLayer *menu_layer, const MenuIndex *inde
   if (index->section == 0) {
     MenuRoundEndRows top = {.menu_layer = menu_layer, .section = 0, .end_row = 0, .step = 1};
     const uint16_t rows = prv_menu_layer_get_num_rows(menu_layer, 0);
-    if (index->row < menu_round_end_rows(frame_h, top_space, rows, prv_round_end_row_height, &top)) {
+    if (index->row <
+        menu_round_end_rows(frame_h, top_space, rows, prv_round_end_row_height, &top)) {
       return true;
     }
   }
   if (index->section == sections - 1) {
     const uint16_t rows = prv_menu_layer_get_num_rows(menu_layer, index->section);
-    MenuRoundEndRows bottom = {
-      .menu_layer = menu_layer, .section = index->section, .end_row = rows - 1, .step = -1};
+    MenuRoundEndRows bottom =
+        {.menu_layer = menu_layer, .section = index->section, .end_row = rows - 1, .step = -1};
     if ((index->row < rows) &&
         (rows - 1 - index->row <
          menu_round_end_rows(frame_h, bottom_space, rows, prv_round_end_row_height, &bottom))) {
