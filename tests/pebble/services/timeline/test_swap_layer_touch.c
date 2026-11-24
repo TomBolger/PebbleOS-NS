@@ -288,7 +288,7 @@ void test_swap_layer_touch__scroll_1to1_and_next_peek(void) {
 }
 
 // =============================================================================================
-// The two-threshold liftoff decision (DRAG_THRESHOLD_PX = 10, SWAP_OVERPULL_PX = 40).
+// The two-threshold liftoff decision (DRAG_THRESHOLD_PX = 10, SWAP_OVERPULL_PX = 56).
 // =============================================================================================
 
 // max_dy for a mid-length notification used across the liftoff tests.
@@ -323,31 +323,96 @@ void test_swap_layer_touch__liftoff_subthreshold_noop(void) {
 
 void test_swap_layer_touch__liftoff_overpull_prev(void) {
   // At the top (offset 0), finger down far enough that requested_offset < -SWAP_OVERPULL_PX.
-  // requested_offset = base_offset - delta_y = 0 - 50 = -50 < -40 -> swap to previous.
-  cl_assert_equal_i(swap_layer_touch_liftoff_action(0, 50, TEST_MAX_DY), SwapTouchLiftoff_SwapPrev);
+  // requested_offset = base_offset - delta_y = 0 - 60 = -60 < -56 -> swap to previous.
+  cl_assert_equal_i(swap_layer_touch_liftoff_action(0, 60, TEST_MAX_DY), SwapTouchLiftoff_SwapPrev);
 }
 
 void test_swap_layer_touch__liftoff_overpull_next(void) {
   // At the bottom (offset == max_dy), finger up far enough that
-  // requested_offset > max_dy + SWAP_OVERPULL_PX. requested_offset = 200 - (-50) = 250 > 240.
-  cl_assert_equal_i(swap_layer_touch_liftoff_action(TEST_MAX_DY, -50, TEST_MAX_DY),
+  // requested_offset > max_dy + SWAP_OVERPULL_PX. requested_offset = 200 - (-60) = 260 > 256.
+  cl_assert_equal_i(swap_layer_touch_liftoff_action(TEST_MAX_DY, -60, TEST_MAX_DY),
                     SwapTouchLiftoff_SwapNext);
 }
 
 void test_swap_layer_touch__liftoff_reaching_edge_without_overpull_no_swap(void) {
   // Reaching the bottom edge WITHOUT over-pulling past SWAP_OVERPULL_PX must NOT swap: a plain
-  // scroll to (and a touch beyond) the edge settles. requested_offset = 200 - (-40) = 240, which is
+  // scroll to (and a touch beyond) the edge settles. requested_offset = 200 - (-56) = 256, which is
   // exactly max_dy + SWAP_OVERPULL_PX and therefore not strictly greater -> settle, not swap.
-  cl_assert_equal_i(swap_layer_touch_liftoff_action(TEST_MAX_DY, -40, TEST_MAX_DY),
+  cl_assert_equal_i(swap_layer_touch_liftoff_action(TEST_MAX_DY, -56, TEST_MAX_DY),
                     SwapTouchLiftoff_Settle);
-  // Symmetrically at the top: requested_offset = 0 - 40 = -40 == -SWAP_OVERPULL_PX, not strictly
+  // Symmetrically at the top: requested_offset = 0 - 56 = -56 == -SWAP_OVERPULL_PX, not strictly
   // less -> settle.
-  cl_assert_equal_i(swap_layer_touch_liftoff_action(0, 40, TEST_MAX_DY), SwapTouchLiftoff_Settle);
-  // Just PAST the threshold DOES swap (pins the just-past side the -50/250 cases leave open):
-  // requested = 0 - 41 = -41 < -40; and 200 - (-41) = 241 > 240.
-  cl_assert_equal_i(swap_layer_touch_liftoff_action(0, 41, TEST_MAX_DY), SwapTouchLiftoff_SwapPrev);
-  cl_assert_equal_i(swap_layer_touch_liftoff_action(TEST_MAX_DY, -41, TEST_MAX_DY),
+  cl_assert_equal_i(swap_layer_touch_liftoff_action(0, 56, TEST_MAX_DY), SwapTouchLiftoff_Settle);
+  // Just PAST the threshold DOES swap (pins the just-past side the -60/260 cases leave open):
+  // requested = 0 - 57 = -57 < -56; and 200 - (-57) = 257 > 256.
+  cl_assert_equal_i(swap_layer_touch_liftoff_action(0, 57, TEST_MAX_DY), SwapTouchLiftoff_SwapPrev);
+  cl_assert_equal_i(swap_layer_touch_liftoff_action(TEST_MAX_DY, -57, TEST_MAX_DY),
                     SwapTouchLiftoff_SwapNext);
+}
+
+// =============================================================================================
+// Rubber band, release velocity, momentum and the bottom edge swipe.
+// =============================================================================================
+
+void test_swap_layer_touch__rubber_band_resists_beyond_edges(void) {
+  // Inside the range the content follows the finger 1:1.
+  cl_assert_equal_i(swap_layer_touch_rubber_band(0, TEST_MAX_DY), 0);
+  cl_assert_equal_i(swap_layer_touch_rubber_band(120, TEST_MAX_DY), 120);
+  cl_assert_equal_i(swap_layer_touch_rubber_band(TEST_MAX_DY, TEST_MAX_DY), TEST_MAX_DY);
+  // Beyond either edge it moves a third as far.
+  cl_assert_equal_i(swap_layer_touch_rubber_band(-30, TEST_MAX_DY), -10);
+  cl_assert_equal_i(swap_layer_touch_rubber_band(TEST_MAX_DY + 60, TEST_MAX_DY), TEST_MAX_DY + 20);
+}
+
+void test_swap_layer_touch__release_velocity_over_last_120ms(void) {
+  // Finger moving up 10 px every 20 ms: -500 px/s.
+  const int16_t y[] = {0, -10, -20, -30};
+  const uint32_t ms[] = {1000, 1020, 1040, 1060};
+  cl_assert_equal_i(swap_layer_touch_release_velocity(y, ms, 4, 1070), -500);
+
+  // Only the last 120 ms count: an early slow stretch is ignored.
+  const int16_t y2[] = {0, 2, 4, 64};
+  const uint32_t ms2[] = {0, 100, 200, 300};
+  cl_assert_equal_i(swap_layer_touch_release_velocity(y2, ms2, 4, 300), 600);
+}
+
+void test_swap_layer_touch__release_velocity_zero_when_finger_rested(void) {
+  const int16_t y[] = {0, -10, -20, -30};
+  const uint32_t ms[] = {1000, 1020, 1040, 1060};
+  // Still for 90 ms before lifting: still a flick.
+  cl_assert_equal_i(swap_layer_touch_release_velocity(y, ms, 4, 1150), -500);
+  // Still for longer: no fling.
+  cl_assert_equal_i(swap_layer_touch_release_velocity(y, ms, 4, 1151), 0);
+  // Too few samples.
+  cl_assert_equal_i(swap_layer_touch_release_velocity(y, ms, 1, 1060), 0);
+}
+
+void test_swap_layer_touch__fling_target_and_duration(void) {
+  uint32_t duration;
+  // 1300 px/s finger up: coasts v^2 / (2 * 2600) = 325 px further, over 500 ms.
+  cl_assert_equal_i(swap_layer_touch_fling_target(100, -1300, 1000, &duration), 425);
+  cl_assert_equal_i(duration, 500);
+  // Finger down scrolls back toward the top, clamped there.
+  cl_assert_equal_i(swap_layer_touch_fling_target(100, 1300, 1000, &duration), 0);
+  // Clamped at the end too.
+  cl_assert_equal_i(swap_layer_touch_fling_target(900, -1300, 1000, &duration), 1000);
+  // A slow release still eases for at least 180 ms, a fast one for at most 900 ms.
+  cl_assert_equal_i(swap_layer_touch_fling_target(100, 0, 1000, &duration), 100);
+  cl_assert_equal_i(duration, 180);
+  swap_layer_touch_fling_target(100, -5000, 10000, &duration);
+  cl_assert_equal_i(duration, 900);
+  // From past an edge (rubber band) it comes back inside.
+  cl_assert_equal_i(swap_layer_touch_fling_target(-20, 0, 1000, &duration), 0);
+  cl_assert_equal_i(swap_layer_touch_fling_target(1020, 0, 1000, &duration), 1000);
+}
+
+void test_swap_layer_touch__edge_swipe_starts_in_bottom_strip_moving_up(void) {
+  // The strip is the bottom 26 px of the screen.
+  cl_assert(swap_layer_touch_is_edge_swipe(200 - 26, -12, 200));
+  cl_assert(swap_layer_touch_is_edge_swipe(199, -12, 200));
+  cl_assert(!swap_layer_touch_is_edge_swipe(200 - 27, -12, 200));
+  // Moving down from the strip is an ordinary drag.
+  cl_assert(!swap_layer_touch_is_edge_swipe(190, 12, 200));
 }
 
 // =============================================================================================
@@ -671,4 +736,56 @@ void test_swap_layer_touch__deregister_mid_gesture_clears_target(void) {
   swap_layer_touch_deregister(&fs.swap);
   cl_assert(!swap_layer_touch_is_gesture_target(&fs.swap));
   cl_assert(s_touch_nav_state.swap_head == nullptr);
+}
+
+// A pan beyond the bottom edge follows the finger at a third (rubber band) instead of stopping.
+void test_swap_layer_touch__dispatch_pan_rubber_bands_past_bottom(void) {
+  prv_live_state_setup();
+  FakeSwap fs;
+  prv_attach_and_register(&fs, 168, 200, false); // max_dy = 32
+  prv_drive(TouchEvent_Touchdown, 72, 150);
+  prv_advance_ms(20);
+  prv_drive(TouchEvent_PositionUpdate, 72, 130); // pan Starts (base 0)
+  prv_advance_ms(20);
+  prv_drive(TouchEvent_PositionUpdate, 72, 38); // 92 px past the start: raw offset 92
+  cl_assert_equal_i(prv_offset(&fs), 32 + (92 - 32) / 3);
+  prv_drive(TouchEvent_Liftoff, 0, 0);
+  swap_layer_touch_deregister(&fs.swap);
+}
+
+// A pan that starts in the bottom edge strip moving up does not scroll the content.
+void test_swap_layer_touch__dispatch_edge_swipe_does_not_scroll(void) {
+  prv_live_state_setup();
+  FakeSwap fs;
+  prv_attach_and_register(&fs, 168, 400, false);
+  prv_drive(TouchEvent_Touchdown, 72, PBL_DISPLAY_HEIGHT - 10);
+  prv_advance_ms(20);
+  prv_drive(TouchEvent_PositionUpdate, 72, PBL_DISPLAY_HEIGHT - 30);
+  prv_advance_ms(20);
+  prv_drive(TouchEvent_PositionUpdate, 72, PBL_DISPLAY_HEIGHT - 70);
+  cl_assert(fs.swap.touch.edge);
+  cl_assert_equal_i(prv_offset(&fs), 0);
+  prv_drive(TouchEvent_Liftoff, 0, 0);
+  cl_assert(!fs.swap.touch.edge);
+  swap_layer_touch_deregister(&fs.swap);
+}
+
+// A flick keeps the content moving after liftoff, further than the finger took it.
+void test_swap_layer_touch__dispatch_flick_coasts(void) {
+  prv_live_state_setup();
+  FakeSwap fs;
+  prv_attach_and_register(&fs, 168, 1000, false);
+  prv_drive(TouchEvent_Touchdown, 72, 150);
+  prv_advance_ms(20);
+  prv_drive(TouchEvent_PositionUpdate, 72, 130);
+  prv_advance_ms(20);
+  prv_drive(TouchEvent_PositionUpdate, 72, 100);
+  prv_advance_ms(20);
+  prv_drive(TouchEvent_PositionUpdate, 72, 70);
+  const int16_t at_liftoff = prv_offset(&fs);
+  prv_advance_ms(10);
+  prv_drive(TouchEvent_Liftoff, 0, 0);
+  cl_assert(fs.swap.scrolling);
+  cl_assert(fs.swap.scroll_target > at_liftoff + 50);
+  swap_layer_touch_deregister(&fs.swap);
 }
