@@ -56,6 +56,11 @@ const PanRecognizerData *pan_recognizer_get_data(const Recognizer *recognizer);
 //! @return total delta from touchdown
 GPoint pan_recognizer_get_total_delta(const Recognizer *recognizer);
 
+//! Get the point where the finger touched down, in the coordinates of the touch events.
+//! @param recognizer recognizer from which to get the point
+//! @return touchdown point
+GPoint pan_recognizer_get_touch_down_point(const Recognizer *recognizer);
+
 //! Get the movement of the pan since it Started (i.e. since the start threshold was crossed). This
 //! is exactly (0, 0) at the instant the recognizer transitions to Started, so live scroll that
 //! consumes this value does not jump at gesture start. Component-wise.
