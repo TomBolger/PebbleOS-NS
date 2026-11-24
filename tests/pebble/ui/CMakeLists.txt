@@ -338,6 +338,7 @@ pbl_clar_test(test_notification_window
     pebble/services/timeline/layout_layer.c
     pebble/services/timeline/layout_node.c
     pebble/services/timeline/notification_layout.c
+    pebble/services/notifications/notification_style.c
     pebble/services/timeline/swap_layer.c
     pebble/services/timeline/timeline_layout.c
     pebble/services/timeline/timeline_resources.c
@@ -533,6 +534,7 @@ pbl_clar_test(test_jumboji
     pebble/applib/fonts/codepoint.c
     pebble/applib/graphics/utf8.c
     pebble/services/timeline/notification_layout.c
+    pebble/services/notifications/notification_style.c
 )
 
 pbl_clar_test(test_timeline_peek
