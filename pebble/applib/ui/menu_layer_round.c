@@ -41,6 +41,21 @@ bool menu_round_pill(GSize display, GRect bounds, GRect frame, int16_t rest_h, i
   return true;
 }
 
+int16_t menu_round_row_end_x(GSize display, GRect row, int16_t top, int16_t bottom, int16_t gap) {
+  MenuRoundShape pill;
+  if (!menu_round_pill(display, GRect(0, 0, display.w, display.h), row, row.size.h, 0, &pill)) {
+    return (int16_t)(display.w / 2);
+  }
+  // The centre of the pill's round end nearest the span, and how far the span reaches past it
+  const int32_t r = pill.radius;
+  const int32_t center_x = grect_get_max_x(&pill.box) - r;
+  const int32_t d =
+      PBL_MAX(PBL_MAX((pill.box.origin.y + r) - top, bottom - (grect_get_max_y(&pill.box) - r)), 0);
+  const int32_t reach = r - gap;
+  const int32_t dx = (reach > d) ? integer_sqrt((reach * reach) - (d * d)) : 0;
+  return (int16_t)(center_x + dx);
+}
+
 int16_t menu_round_end_space(int16_t frame_h, int16_t end_h, int16_t next_h) {
   return PBL_MAX((int16_t)((frame_h / 2) - end_h - (next_h / 2)), 0);
 }
