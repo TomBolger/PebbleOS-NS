@@ -82,3 +82,13 @@ PBL_WEAK void action_menu_hierarchy_destroy(const ActionMenuLevel *root,
                                             ActionMenuEachItemCb each_cb, void *context) {
   return;
 }
+
+PBL_WEAK bool action_menu_is_hosted(ActionMenu *action_menu) {
+  return false;
+}
+
+PBL_WEAK void action_menu_hosted_perform(ActionMenu *action_menu, const ActionMenuItem *item) {
+}
+
+PBL_WEAK void action_menu_hosted_did_close(ActionMenu *action_menu) {
+}
