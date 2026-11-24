@@ -45,10 +45,17 @@ int notif_db_insert(const uint8_t *key, int key_len, const uint8_t *val, int val
   const bool live = exists && notification_storage_get_status(&notification.header.id, &status);
 
   if (live) {
-    // If the notification already exists, only update the status flags
-    notification_storage_set_status(&notification.header.id, notification.header.status);
-    PBL_LOG_INFO("Notification modified: %s", uuid_string);
-    notifications_handle_notification_acted_upon(id);
+    // A stored notification only gains status bits from the phone. Sent again unchanged (a
+    // phone resending what the watch should hold), it is left alone.
+    const uint8_t merged = status | notification.header.status;
+    if (merged != status) {
+      notification_storage_set_status(&notification.header.id, merged);
+      PBL_LOG_INFO("Notification modified: %s", uuid_string);
+      notifications_handle_notification_acted_upon(id);
+    } else {
+      PBL_LOG_DBG("Notification unchanged: %s", uuid_string);
+      pbl_free(id);
+    }
   } else if (exists && alerts_preferences_get_notification_dismissal_sync()) {
     PBL_LOG_DBG("Notification already dismissed: %s", uuid_string);
     pbl_free(id);
