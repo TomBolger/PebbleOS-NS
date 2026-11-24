@@ -21,55 +21,51 @@ int16_t timeline_list_page_height(const TimelineListGeometry *geometry) {
   return geometry->height;
 }
 
-//! Where the selected pin rests if it fits on a page
-static int16_t prv_selected_top(const TimelineListGeometry *geometry, const TimelineListPin *pins,
-                                int num_pins, int selected, const bool *allowed) {
+int16_t timeline_list_selected_top(const TimelineListGeometry *geometry,
+                                   const TimelineListPin *pins, int num_pins, int selected,
+                                   bool *whole_screen_out) {
   const TimelineListPin *pin = &pins[selected];
-  const bool above_allowed = (selected > 0) && (!allowed || allowed[selected - 1]);
-  const bool below_allowed = (selected + 1 < num_pins) && (!allowed || allowed[selected + 1]);
-  const TimelineListPin *above = above_allowed ? &pins[selected - 1] : nullptr;
-  const TimelineListPin *below = below_allowed ? &pins[selected + 1] : nullptr;
-  const TimelineListPin *next = geometry->next_is_down ? below : above;
   const int16_t margin = geometry->margin;
-  // The whole pin is on screen
+  if (geometry->align == TimelineListAlignAnchor) {
+    // Its anchor always rests on the geometry's anchor
+    const int16_t top = geometry->anchor_y - pin->anchor_y;
+    *whole_screen_out = (top < margin) || (top + pin->height > geometry->height - margin);
+    return top;
+  }
+  *whole_screen_out = (pin->height > geometry->height - 2 * margin);
+  if (*whole_screen_out) {
+    return geometry->page_top;
+  }
+  const TimelineListPin *above = (selected > 0) ? &pins[selected - 1] : nullptr;
+  const TimelineListPin *below = (selected + 1 < num_pins) ? &pins[selected + 1] : nullptr;
+  const TimelineListPin *next = geometry->next_is_down ? below : above;
+  // The whole pin is on screen, and the pin after it if there is room, then the pin before it
   int16_t lo = margin;
   int16_t hi = geometry->height - margin - pin->height;
-  if (geometry->align == TimelineListAlignAnchor) {
-    // Its anchor stays where it can be pointed at, if the pin fits that way
-    const int16_t anchor_lo = PBL_MAX(lo, geometry->anchor_min - pin->anchor_y);
-    const int16_t anchor_hi = PBL_MIN(hi, geometry->anchor_max - pin->anchor_y);
-    if (anchor_lo <= anchor_hi) {
-      lo = anchor_lo;
-      hi = anchor_hi;
-    }
-  }
-  // The pin after it stays on screen if there is room, and then the pin before it
   const TimelineListPin *neighbours[] = {next, (next == below) ? above : below};
   for (size_t i = 0; i < PBL_ARRAY_SIZE(neighbours); i++) {
     const TimelineListPin *neighbour = neighbours[i];
     if (!neighbour) {
       continue;
     }
-    const int16_t room = neighbour->height + geometry->gap;
-    const int16_t keep_lo =
-        (neighbour == above) ? PBL_MAX(lo, geometry->neighbour_margin + room) : lo;
-    const int16_t keep_hi =
-        (neighbour == below)
-            ? PBL_MIN(hi, geometry->height - geometry->neighbour_margin_bottom - room - pin->height)
-            : hi;
+    int16_t keep_lo = lo;
+    int16_t keep_hi = hi;
+    if (neighbour == above) {
+      keep_lo = PBL_MAX(lo, neighbour->reach_top + neighbour->height + geometry->gap);
+    } else {
+      keep_hi =
+          PBL_MIN(hi, neighbour->reach_bottom - neighbour->height - geometry->gap - pin->height);
+    }
     if (keep_lo <= keep_hi) {
       lo = keep_lo;
       hi = keep_hi;
     }
   }
-  if (geometry->align == TimelineListAlignAnchor) {
-    return PBL_CLAMP(geometry->anchor_y - pin->anchor_y, lo, hi);
-  }
+  // The top pin rests at the top
   const int16_t top = margin + geometry->top_space;
   if (above) {
-    const int16_t below_above =
-        PBL_CLAMP(geometry->neighbour_margin + above->height + geometry->gap, lo, hi);
-    if (below_above - geometry->gap - above->height >= geometry->neighbour_margin) {
+    const int16_t below_above = PBL_CLAMP(above->edge_top + above->height + geometry->gap, lo, hi);
+    if (below_above - geometry->gap - above->height >= above->edge_top) {
       return PBL_MAX(below_above, top);
     }
   }
@@ -78,24 +74,21 @@ static int16_t prv_selected_top(const TimelineListGeometry *geometry, const Time
 }
 
 void timeline_list_arrange(const TimelineListGeometry *geometry, const TimelineListPin *pins,
-                           int num_pins, int selected, int16_t scroll, const bool *allowed,
-                           int16_t *tops_out, bool *shown_out) {
+                           int num_pins, int selected, int16_t scroll, int16_t *tops_out,
+                           bool *shown_out) {
   const int16_t height = geometry->height;
-  const int16_t edge = geometry->neighbour_margin;
-  // A pin that does not fit between the margins takes the whole screen, page after page
-  const bool whole_screen = (pins[selected].height > height - 2 * geometry->margin);
-  const int16_t sel_top = whole_screen
-                              ? (geometry->page_top - scroll)
-                              : prv_selected_top(geometry, pins, num_pins, selected, allowed);
+  bool whole_screen;
+  const int16_t sel_top =
+      timeline_list_selected_top(geometry, pins, num_pins, selected, &whole_screen) - scroll;
   tops_out[selected] = sel_top;
   shown_out[selected] = true;
-  // The pins around the selected one stack beyond the gap from it, those that fit resting out
-  // toward the edge, the others pushed off it with the pins past them
+  // The pins around the selected one stack beyond the gap from it, those within reach resting out
+  // toward their edge, the others pushed off it with the pins past them
   int16_t bottom = sel_top - geometry->gap;
   int first_shown = selected;
   for (int i = selected - 1; i >= 0; i--) {
     const int16_t top = bottom - pins[i].height;
-    shown_out[i] = shown_out[i + 1] && (!allowed || allowed[i]) && (top >= edge);
+    shown_out[i] = shown_out[i + 1] && (top >= pins[i].reach_top);
     if (shown_out[i]) {
       first_shown = i;
       tops_out[i] = top;
@@ -106,15 +99,14 @@ void timeline_list_arrange(const TimelineListGeometry *geometry, const TimelineL
       bottom = tops_out[i];
     }
   }
-  const int16_t push_up = tops_out[first_shown] - edge;
+  const int16_t push_up = PBL_MAX(tops_out[first_shown] - pins[first_shown].edge_top, 0);
   for (int i = first_shown; i < selected; i++) {
     tops_out[i] -= push_up;
   }
   int16_t top = sel_top + pins[selected].height + geometry->gap;
   int last_shown = selected;
   for (int i = selected + 1; i < num_pins; i++) {
-    shown_out[i] = shown_out[i - 1] && (!allowed || allowed[i]) &&
-                   (top + pins[i].height <= height - geometry->neighbour_margin_bottom);
+    shown_out[i] = shown_out[i - 1] && (top + pins[i].height <= pins[i].reach_bottom);
     if (shown_out[i]) {
       last_shown = i;
     } else {
@@ -123,10 +115,8 @@ void timeline_list_arrange(const TimelineListGeometry *geometry, const TimelineL
     tops_out[i] = top;
     top += pins[i].height;
   }
-  const int16_t push_down = (last_shown > selected)
-                                ? (height - geometry->neighbour_margin_bottom -
-                                   tops_out[last_shown] - pins[last_shown].height)
-                                : 0;
+  const int16_t push_down = PBL_MAX(
+      height - pins[last_shown].edge_bottom - tops_out[last_shown] - pins[last_shown].height, 0);
   for (int i = selected + 1; i <= last_shown; i++) {
     tops_out[i] += push_down;
   }
@@ -172,6 +162,7 @@ static int16_t prv_edge_inset(const TimelineListArc *arc, int16_t top, int16_t b
 
 int16_t timeline_list_arc_text_range(const TimelineListArc *arc, int16_t top, int16_t bottom,
                                      int16_t *end_out) {
+  // The gap short of the circle, or of the display's edge where the circle is beyond it
   const int16_t start = prv_edge_inset(arc, top, bottom);
   const int16_t clear = timeline_list_arc_depth(arc, top, bottom) + arc->gap;
   *end_out = 2 * arc->display_radius - PBL_MAX(start, clear);
@@ -202,15 +193,11 @@ int16_t timeline_list_arc_drawn_range(const TimelineListArc *arc, int16_t top, i
                                       int16_t dy, int16_t *end_out) {
   int16_t end;
   const int16_t start = timeline_list_arc_text_range(arc, top, bottom, &end);
-  int16_t drawn_end = end;
-  if (dy) {
-    // Off the display, text follows the edge where it leaves it
-    const int16_t last = 2 * arc->display_radius - 1;
-    timeline_list_arc_text_range(arc, PBL_CLAMP(top + dy, 0, last), PBL_CLAMP(bottom + dy, 0, last),
-                                 &drawn_end);
-  }
-  *end_out = drawn_end;
-  return start + drawn_end - end;
+  // It moves along the circle, as far from it as where it rests, the display cutting it off
+  const int16_t shift = timeline_list_arc_depth(arc, top, bottom) -
+                        timeline_list_arc_depth(arc, top + dy, bottom + dy);
+  *end_out = end + shift;
+  return start + shift;
 }
 
 int32_t timeline_list_arc_angle(int16_t distance, int16_t length) {
@@ -247,4 +234,27 @@ int32_t timeline_list_arc_max_angle(const TimelineListArc *arc, int16_t distance
     }
   }
   return lo;
+}
+
+//! Depth of the sidebar's circle on a row a distance from its middle row
+static int16_t prv_circle_depth(const TimelineListSidebar *sidebar, int16_t distance) {
+  // The circle covers the column of its edge
+  return sidebar->center_inset + prv_half_width(sidebar->radius, distance) + 1;
+}
+
+int16_t timeline_list_sidebar_depth(const TimelineListSidebar *sidebar, int16_t row) {
+  const int16_t distance = PBL_ABS(row - sidebar->height / 2);
+  if (distance > sidebar->radius) {
+    return 0;
+  }
+  const int16_t depth = prv_circle_depth(sidebar, distance);
+  const int16_t half_notch = sidebar->notch_height / 2;
+  if (distance >= half_notch || sidebar->notch_width <= 0) {
+    return depth;
+  }
+  // The notch's sides run straight from its tip to its base on the circle's edge, so each row
+  // steps evenly and no pixel sticks out
+  const int16_t tip = prv_circle_depth(sidebar, 0) - sidebar->notch_width;
+  const int16_t base = prv_circle_depth(sidebar, half_notch);
+  return PBL_MIN(depth, tip + (base - tip) * distance / half_notch);
 }

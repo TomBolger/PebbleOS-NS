@@ -16,11 +16,7 @@
 static const TimelineListGeometry s_centered = {
   .height = HEIGHT,
   .anchor_y = HEIGHT / 2,
-  .anchor_min = 0,
-  .anchor_max = HEIGHT,
   .margin = MARGIN,
-  .neighbour_margin = EDGE,
-  .neighbour_margin_bottom = EDGE,
   .gap = GAP,
   .align = TimelineListAlignAnchor,
   .next_is_down = true,
@@ -29,16 +25,29 @@ static const TimelineListGeometry s_centered = {
 static const TimelineListGeometry s_top = {
   .height = HEIGHT,
   .margin = MARGIN,
-  .neighbour_margin = EDGE,
-  .neighbour_margin_bottom = EDGE,
   .gap = GAP,
   .align = TimelineListAlignTop,
   .next_is_down = true,
 };
 
-//! Pins anchored at their middle, as when the selected pin is centered
+//! Pins anchored at their middle that show whole, as on rect
 static TimelineListPin prv_pin(int16_t height) {
-  return (TimelineListPin){.height = height, .anchor_y = height / 2};
+  return (TimelineListPin){
+    .height = height,
+    .anchor_y = height / 2,
+    .edge_top = EDGE,
+    .edge_bottom = EDGE,
+    .reach_top = EDGE,
+    .reach_bottom = HEIGHT - EDGE,
+  };
+}
+
+//! Pins anchored at their middle that show as long as their anchor is on screen, as on round
+static TimelineListPin prv_cut_pin(int16_t height) {
+  TimelineListPin pin = prv_pin(height);
+  pin.reach_top = -pin.anchor_y;
+  pin.reach_bottom = HEIGHT - 1 - pin.anchor_y + height;
+  return pin;
 }
 
 static void prv_assert_stacked(const TimelineListPin *pins, int num_pins, const int16_t *tops) {
@@ -57,11 +66,11 @@ static void prv_assert_out_at_edges(const TimelineListPin *pins, const int16_t *
 
 static void prv_arrange(const TimelineListGeometry *geometry, const TimelineListPin *pins,
                         int num_pins, int selected, int16_t *tops, bool *shown) {
-  timeline_list_arrange(geometry, pins, num_pins, selected, 0 /* scroll */, nullptr, tops, shown);
+  timeline_list_arrange(geometry, pins, num_pins, selected, 0 /* scroll */, tops, shown);
 }
 
 void test_timeline_list_layout__selected_rests_on_anchor(void) {
-  const TimelineListPin pins[] = {prv_pin(30), prv_pin(60), prv_pin(30)};
+  const TimelineListPin pins[] = {prv_cut_pin(30), prv_pin(60), prv_cut_pin(30)};
   int16_t tops[3];
   bool shown[3];
   prv_arrange(&s_centered, pins, 3, 1, tops, shown);
@@ -71,7 +80,9 @@ void test_timeline_list_layout__selected_rests_on_anchor(void) {
 }
 
 void test_timeline_list_layout__anchor_inside_pin(void) {
-  const TimelineListPin pins[] = {prv_pin(40), {.height = 70, .anchor_y = 25}, prv_pin(40)};
+  TimelineListPin pin = prv_pin(70);
+  pin.anchor_y = 25;
+  const TimelineListPin pins[] = {prv_cut_pin(40), pin, prv_cut_pin(40)};
   int16_t tops[3];
   bool shown[3];
   prv_arrange(&s_centered, pins, 3, 1, tops, shown);
@@ -97,76 +108,50 @@ void test_timeline_list_layout__top(void) {
   cl_assert_equal_i(tops[0], MARGIN + 20);
 }
 
-void test_timeline_list_layout__room_pushes_previous_off(void) {
-  // The selected pin and the next fit, but not with the previous one
-  const TimelineListPin pins[] = {prv_pin(50), {.height = 140, .anchor_y = 30}, prv_pin(50)};
+void test_timeline_list_layout__neighbours_cut_by_the_display(void) {
+  // Pins around the selected one show as long as their anchor is on screen
+  const TimelineListPin pins[] = {prv_cut_pin(60), prv_pin(100), prv_cut_pin(60)};
   int16_t tops[3];
   bool shown[3];
   prv_arrange(&s_centered, pins, 3, 1, tops, shown);
-  // It moves up from the anchor just enough for the next pin to fit
-  cl_assert_equal_i(tops[1] + 140 + GAP + 50, HEIGHT - EDGE);
-  cl_assert(tops[1] + 30 < HEIGHT / 2);
-  cl_assert(shown[2]);
-  cl_assert_equal_i(tops[2] + 50, HEIGHT - EDGE);
-  // The previous pin is pushed off the top
-  cl_assert(!shown[0]);
-  cl_assert(tops[0] + 50 <= 0);
-  // Rect alike: the selected pin then rests at the top
-  prv_arrange(&s_top, pins, 3, 1, tops, shown);
-  cl_assert(!shown[0]);
-  cl_assert_equal_i(tops[1], MARGIN);
-  cl_assert(shown[2]);
+  cl_assert(shown[0] && shown[2]);
+  cl_assert(tops[0] < 0);
+  cl_assert(tops[0] + 30 >= 0);
+  cl_assert(tops[2] + 60 > HEIGHT);
+  cl_assert(tops[2] + 30 < HEIGHT);
 }
 
-void test_timeline_list_layout__room_pushes_later_off_in_the_past(void) {
-  // In the past the pins after the selected one are above it: the pin below is pushed off
-  TimelineListGeometry geometry = s_centered;
-  geometry.next_is_down = false;
-  const TimelineListPin pins[] = {prv_pin(50), {.height = 140, .anchor_y = 30}, prv_pin(50)};
+void test_timeline_list_layout__tall_details_push_neighbours_off(void) {
+  // The selected pin stays on the anchor; the pin its details reach over is pushed off
+  TimelineListPin pin = prv_pin(110);
+  pin.anchor_y = 20;
+  const TimelineListPin pins[] = {prv_cut_pin(50), pin, prv_cut_pin(50)};
   int16_t tops[3];
   bool shown[3];
-  prv_arrange(&geometry, pins, 3, 1, tops, shown);
+  prv_arrange(&s_centered, pins, 3, 1, tops, shown);
+  cl_assert_equal_i(tops[1] + 20, HEIGHT / 2);
   cl_assert(shown[0]);
   cl_assert(!shown[2]);
   cl_assert(tops[2] >= HEIGHT);
-  // The selected pin fits whole, and the pin above it with it
-  cl_assert(tops[1] + 140 <= HEIGHT - MARGIN);
-  cl_assert_equal_i(tops[0], EDGE);
-  cl_assert(tops[0] + 50 + GAP <= tops[1]);
+  // Alike in the past, where the pin below is the one after it
+  TimelineListGeometry past = s_centered;
+  past.next_is_down = false;
+  prv_arrange(&past, pins, 3, 1, tops, shown);
+  cl_assert_equal_i(tops[1] + 20, HEIGHT / 2);
+  cl_assert(shown[0] && !shown[2]);
 }
 
-void test_timeline_list_layout__anchor_limits(void) {
-  const TimelineListPin pins[] = {prv_pin(50), {.height = 110, .anchor_y = 30}, prv_pin(50)};
+void test_timeline_list_layout__top_room_pushes_previous_off(void) {
+  // Aligned to the top, the selected pin and the next fit, but not with the previous one
+  const TimelineListPin pins[] = {prv_pin(50), prv_pin(140), prv_pin(50)};
   int16_t tops[3];
   bool shown[3];
-  // Without limits, the selected pin moves up for the next pin to fit
-  prv_arrange(&s_centered, pins, 3, 1, tops, shown);
-  cl_assert_equal_i(tops[1] + 110 + GAP + 50, HEIGHT - EDGE);
-  cl_assert(shown[2]);
-  // Its anchor stays within its rows if the pin fits that way, even if the next pin then goes
-  TimelineListGeometry geometry = s_centered;
-  geometry.anchor_min = HEIGHT / 2 - 10;
-  geometry.anchor_max = HEIGHT / 2 + 10;
-  prv_arrange(&geometry, pins, 3, 1, tops, shown);
-  cl_assert_equal_i(tops[1] + 30, HEIGHT / 2);
-  cl_assert(!shown[2]);
-  // Unless the pin itself does not fit that way
-  const TimelineListPin tall[] = {prv_pin(50), {.height = 180, .anchor_y = 30}, prv_pin(50)};
-  prv_arrange(&geometry, tall, 3, 1, tops, shown);
-  cl_assert_equal_i(tops[1] + 180, HEIGHT - MARGIN);
-}
-
-void test_timeline_list_layout__allowed(void) {
-  // A pin that may not show is pushed off, and the selected pin does not keep room for it
-  const TimelineListPin pins[] = {prv_pin(30), prv_pin(60), prv_pin(30)};
-  const bool allowed[] = {false, true, true};
-  int16_t tops[3];
-  bool shown[3];
-  timeline_list_arrange(&s_centered, pins, 3, 1, 0, allowed, tops, shown);
+  prv_arrange(&s_top, pins, 3, 1, tops, shown);
   cl_assert(!shown[0]);
-  cl_assert(tops[0] + 30 <= 0);
-  cl_assert_equal_i(tops[1], HEIGHT / 2 - 30);
+  cl_assert(tops[0] + 50 <= 0);
+  cl_assert_equal_i(tops[1], MARGIN);
   cl_assert(shown[2]);
+  cl_assert_equal_i(tops[2] + 50, HEIGHT - EDGE);
 }
 
 void test_timeline_list_layout__pushed_off_with_those_past_it(void) {
@@ -181,7 +166,9 @@ void test_timeline_list_layout__pushed_off_with_those_past_it(void) {
 
 void test_timeline_list_layout__neighbours_stay_together(void) {
   // Pins past a neighbour that fit stack against it, the run resting out at the edge
-  const TimelineListPin pins[] = {prv_pin(20), prv_pin(20), prv_pin(40), prv_pin(20), prv_pin(20)};
+  const TimelineListPin pins[] = {
+    prv_cut_pin(20), prv_cut_pin(20), prv_pin(40), prv_cut_pin(20), prv_cut_pin(20)
+  };
   int16_t tops[5];
   bool shown[5];
   prv_arrange(&s_centered, pins, 5, 2, tops, shown);
@@ -192,28 +179,47 @@ void test_timeline_list_layout__neighbours_stay_together(void) {
   prv_assert_stacked(pins + 3, 2, tops + 3);
 }
 
-void test_timeline_list_layout__tall_selected_takes_the_screen(void) {
-  const TimelineListPin pins[] = {prv_pin(30), prv_pin(2 * HEIGHT - 100), prv_pin(30)};
-  int16_t tops[3];
-  bool shown[3];
-  prv_arrange(&s_centered, pins, 3, 1, tops, shown);
-  // The selected pin takes the whole screen from its top, its neighbours are off screen
-  cl_assert_equal_i(tops[1], 0);
-  cl_assert(!shown[0] && !shown[2]);
-  cl_assert(tops[0] + pins[0].height <= 0);
-  cl_assert(tops[2] >= HEIGHT);
-  // The list scrolls through it a screen at a time, and the next pin comes in at its end
+void test_timeline_list_layout__whole_screen_anchored(void) {
+  // A selected pin that does not fit below its anchor takes the screen from there, page after page
+  TimelineListPin pin = prv_pin(200);
+  pin.anchor_y = 20;
+  const TimelineListPin pins[] = {prv_cut_pin(30), pin, prv_cut_pin(30)};
+  bool whole;
+  const int16_t top = timeline_list_selected_top(&s_centered, pins, 3, 1, &whole);
+  cl_assert(whole);
+  cl_assert_equal_i(top + 20, HEIGHT / 2);
   const int16_t page = timeline_list_page_height(&s_centered);
   cl_assert_equal_i(page, HEIGHT);
-  const int16_t max_scroll = timeline_list_max_scroll(pins[1].height, page);
-  timeline_list_arrange(&s_centered, pins, 3, 1, max_scroll, nullptr, tops, shown);
-  cl_assert_equal_i(tops[1], -max_scroll);
+  const int16_t max_scroll = timeline_list_max_scroll(top + 200, page);
+  cl_assert_equal_i(max_scroll, HEIGHT);
+  // The next pin comes in at its end
+  int16_t tops[3];
+  bool shown[3];
+  timeline_list_arrange(&s_centered, pins, 3, 1, max_scroll, tops, shown);
+  cl_assert_equal_i(tops[1], top - max_scroll);
   cl_assert(shown[2]);
-  cl_assert_equal_i(tops[2] + 30, HEIGHT - EDGE);
+  cl_assert(!shown[0]);
+}
+
+void test_timeline_list_layout__whole_screen_top(void) {
+  TimelineListGeometry geometry = s_top;
+  geometry.page_top = -4;
+  const TimelineListPin pins[] = {prv_pin(30), prv_pin(2 * HEIGHT - 100), prv_pin(30)};
+  bool whole;
+  cl_assert_equal_i(timeline_list_selected_top(&geometry, pins, 3, 1, &whole), -4);
+  cl_assert(whole);
+  int16_t tops[3];
+  bool shown[3];
+  prv_arrange(&geometry, pins, 3, 1, tops, shown);
+  cl_assert(!shown[0] && !shown[2]);
+  const int16_t max_scroll = timeline_list_max_scroll(-4 + pins[1].height, HEIGHT);
+  timeline_list_arrange(&geometry, pins, 3, 1, max_scroll, tops, shown);
+  cl_assert_equal_i(tops[1], -4 - max_scroll);
+  cl_assert(shown[2]);
   // A pin that fits on the screen but not between the margins takes the whole screen too
   const TimelineListPin fits[] = {prv_pin(30), prv_pin(HEIGHT - MARGIN), prv_pin(30)};
-  prv_arrange(&s_centered, fits, 3, 1, tops, shown);
-  cl_assert_equal_i(tops[1], 0);
+  cl_assert_equal_i(timeline_list_selected_top(&geometry, fits, 3, 1, &whole), -4);
+  cl_assert(whole);
 }
 
 void test_timeline_list_layout__max_scroll(void) {
@@ -284,18 +290,25 @@ void test_timeline_list_layout__arc_drawn_range(void) {
   const int16_t rest_start = timeline_list_arc_text_range(&s_arc, 60, 70, &rest_end);
   cl_assert_equal_i(timeline_list_arc_drawn_range(&s_arc, 60, 70, 0, &end), rest_start);
   cl_assert_equal_i(end, rest_end);
-  // Drawn anywhere else, it keeps its width and ends where text on the rows it is on ends: the
-  // gap before the circle, or inside the display's edge above and below it
+  // Drawn anywhere else, it keeps its width and its distance from the circle, past the display's
+  // edge too, so it never drifts toward the middle as it leaves
+  const int16_t rest_depth = timeline_list_arc_depth(&s_arc, 60, 70);
   for (int16_t dy = -120; dy <= 120; dy += 3) {
     const int16_t start = timeline_list_arc_drawn_range(&s_arc, 60, 70, dy, &end);
     cl_assert_equal_i(end - start, rest_end - rest_start);
-    int16_t drawn_end;
-    timeline_list_arc_text_range(&s_arc, PBL_CLAMP(60 + dy, 0, 259), PBL_CLAMP(70 + dy, 0, 259),
-                                 &drawn_end);
-    cl_assert_equal_i(end, drawn_end);
-    // So it never runs over the circle
-    cl_assert(end + s_arc.gap + timeline_list_arc_depth(&s_arc, 60 + dy, 70 + dy) <= 260);
+    cl_assert_equal_i(end + timeline_list_arc_depth(&s_arc, 60 + dy, 70 + dy),
+                      rest_end + rest_depth);
   }
+  // Text resting on the middle rows leaves the top further out than the display's edge there,
+  // moving out as the circle does
+  int16_t middle_end;
+  const int16_t middle_start = timeline_list_arc_text_range(&s_arc, 120, 140, &middle_end);
+  const int16_t start = timeline_list_arc_drawn_range(&s_arc, 120, 140, -125, &end);
+  int16_t edge_end;
+  timeline_list_arc_text_range(&s_arc, 0, 15, &edge_end);
+  cl_assert(end > edge_end);
+  cl_assert(end > middle_end);
+  cl_assert_equal_i(end - start, middle_end - middle_start);
 }
 
 void test_timeline_list_layout__arc_angle(void) {
@@ -353,6 +366,14 @@ void test_timeline_list_layout__arc_max_angle(void) {
     dy = y - 130;
     cl_assert(dx * dx + dy * dy > 126 * 126);
   }
+  // A negative inset turns the icon's center past the display's edge, wholly out of view
+  const int32_t out = timeline_list_arc_max_angle(&s_arc, 119, -19);
+  cl_assert(out > max && out < TRIG_MAX_ANGLE / 4);
+  const int16_t inset = timeline_list_arc_icon_inset(&s_arc, 119, out, &y);
+  const int32_t dx = 130 - inset;
+  const int32_t dy = y - 130;
+  cl_assert(dx * dx + dy * dy <= 149 * 149);
+  cl_assert(dx * dx + dy * dy > 148 * 148);
 }
 
 void test_timeline_list_layout__arc_band(void) {
@@ -372,4 +393,41 @@ void test_timeline_list_layout__arc_band(void) {
   int16_t wide_bottom;
   cl_assert(timeline_list_arc_band(&s_arc, 150, &wide_bottom) > top);
   cl_assert(wide_bottom > bottom);
+}
+
+void test_timeline_list_layout__sidebar_depth(void) {
+  // The circle of the arc above, its notch 7 deep and 28 tall in the middle row
+  const TimelineListSidebar sidebar = {
+    .height = 260,
+    .center_inset = -81,
+    .radius = 140,
+    .notch_width = 7,
+    .notch_height = 28,
+  };
+  TimelineListSidebar plain = sidebar;
+  plain.notch_width = 0;
+  // Without a notch, it reaches as deep as the circle on every row
+  for (int16_t row = 0; row < 260; row++) {
+    TimelineListArc arc = s_arc;
+    cl_assert_equal_i(timeline_list_sidebar_depth(&plain, row),
+                      timeline_list_arc_depth(&arc, row, row));
+  }
+  // The notch cuts its full depth at its tip, less toward its base, and nothing beyond it
+  cl_assert_equal_i(timeline_list_sidebar_depth(&sidebar, 130),
+                    timeline_list_sidebar_depth(&plain, 130) - 7);
+  int16_t last_cut = 7;
+  for (int16_t d = 1; d < 14; d++) {
+    const int16_t cut = timeline_list_sidebar_depth(&plain, 130 + d) -
+                        timeline_list_sidebar_depth(&sidebar, 130 + d);
+    cl_assert(cut >= 0 && cut <= last_cut);
+    last_cut = cut;
+    // Its sides open steadily from the tip, a row never reaching less deep than the one before
+    cl_assert(timeline_list_sidebar_depth(&sidebar, 130 + d) >=
+              timeline_list_sidebar_depth(&sidebar, 130 + d - 1));
+    // Alike above and below, so the notch points straight at the middle row
+    cl_assert_equal_i(timeline_list_sidebar_depth(&sidebar, 130 - d),
+                      timeline_list_sidebar_depth(&sidebar, 130 + d));
+  }
+  cl_assert_equal_i(timeline_list_sidebar_depth(&sidebar, 130 + 14),
+                    timeline_list_sidebar_depth(&plain, 130 + 14));
 }

@@ -11,15 +11,13 @@
 
 //! Spacing of the list, by display shape. The selected pin keeps the margin from the top and
 //! bottom of the screen and the gap from the pins around it, which rest out toward the top and
-//! bottom, as far as their own margin.
+//! bottom: on rect as far as their margin, on round as far as their time and title fit beside
+//! the circle.
 #define TIMELINE_LIST_MARGIN_RECT           4
 #define TIMELINE_LIST_MARGIN_ROUND          16
 #define TIMELINE_LIST_GAP_RECT              8
-#define TIMELINE_LIST_GAP_ROUND             12
+#define TIMELINE_LIST_GAP_ROUND             10
 #define TIMELINE_LIST_NEIGHBOUR_MARGIN_RECT 2
-//! On round, the other pins rest out into the narrow top and bottom of the display as far as their
-//! text keeps this much room beside the circle.
-#define TIMELINE_LIST_NEIGHBOUR_TEXT_WIDTH_ROUND 110
 
 //! A pin of the list, in on-screen order from the top.
 typedef struct TimelineListPin {
@@ -27,6 +25,14 @@ typedef struct TimelineListPin {
   int16_t height;
   //! Offset from the pin's top of the point that rests on the geometry's anchor when selected.
   int16_t anchor_y;
+  //! How close to the top and to the bottom of the viewport the pin rests when it is not
+  //! selected, out toward them.
+  int16_t edge_top;
+  int16_t edge_bottom;
+  //! Highest its top, and lowest its bottom, can be for it to show when it is not selected, the
+  //! display cutting off what is beyond its edges.
+  int16_t reach_top;
+  int16_t reach_bottom;
 } TimelineListPin;
 
 //! Where the list rests.
@@ -41,51 +47,58 @@ typedef enum TimelineListAlign {
 typedef struct TimelineListGeometry {
   //! Height of the viewport.
   int16_t height;
-  //! Where the selected pin's anchor rests when nothing pushes it, with TimelineListAlignAnchor.
+  //! Where the selected pin's anchor rests, with TimelineListAlignAnchor.
   int16_t anchor_y;
-  //! Rows the selected pin's anchor can rest on, with TimelineListAlignAnchor.
-  int16_t anchor_min;
-  int16_t anchor_max;
   //! Space kept free at the top and bottom of the viewport around the selected pin.
   int16_t margin;
-  //! Space kept free at the top and at the bottom of the viewport around the other pins.
-  int16_t neighbour_margin;
-  int16_t neighbour_margin_bottom;
   //! Space kept between the selected pin and the pins around it.
   int16_t gap;
   //! Space kept above the top pin with TimelineListAlignTop, for what shows before it.
   int16_t top_space;
-  //! Where the top of a selected pin taking the whole screen rests, scrolled to its first page.
+  //! Where the top of a selected pin taking the whole screen rests, scrolled to its first page,
+  //! with TimelineListAlignTop.
   int16_t page_top;
   TimelineListAlign align;
   //! The pins after the selected one are below it, so the pins before it are above.
   bool next_is_down;
 } TimelineListGeometry;
 
-//! Height of a page of a selected pin that does not fit between the margins: it takes the whole
-//! screen, and the list scrolls through it a whole screen at a time, so no line is ever cut.
+//! Height of a page of a selected pin that does not fit between the margins: the whole screen,
+//! as the list scrolls through it a whole screen at a time.
 //! @param geometry The viewport.
 int16_t timeline_list_page_height(const TimelineListGeometry *geometry);
 
-//! Places the pins where the list rests.
+//! Where the selected pin rests, before the list scrolls through it.
 //!
-//! The selected pin always shows in full: it rests as the geometry aligns it, moving just enough
-//! for it to fit between the margins, and for the pin after it to fit too if there is room. The
-//! other pins stack beyond the gap from it and rest out toward the top and bottom of the viewport;
-//! those that do not fit are pushed off screen beyond the edge they are by, as are the pins past
-//! them. A selected pin taller than the screen between the margins takes the whole screen from its
-//! top, scrolled through by whole pages.
+//! Anchored, its anchor always rests on the geometry's anchor. Aligned to the top, the top pin
+//! rests at the top, the selected pin moving up just enough for it to fit between the margins,
+//! and for the pin after it, then the one before it, to fit too if there is room. A selected pin
+//! that does not fit between the margins takes the whole screen, and the list scrolls through it
+//! a page at a time: anchored from where its anchor rests, aligned to the top from its top.
 //! @param geometry The viewport.
 //! @param pins The pins, in on-screen order from the top.
 //! @param num_pins Number of pins, at least 1.
 //! @param selected Index of the selected pin.
-//! @param scroll How far the list is scrolled through a selected pin taller than a page.
-//! @param allowed Whether each pin may be on screen, or nullptr for all of them.
+//! @param[out] whole_screen_out Whether the selected pin takes the whole screen.
+//! @return Top of the selected pin.
+int16_t timeline_list_selected_top(const TimelineListGeometry *geometry,
+                                   const TimelineListPin *pins, int num_pins, int selected,
+                                   bool *whole_screen_out);
+
+//! Places the pins where the list rests: the selected pin as timeline_list_selected_top() places
+//! it, less the scroll, and the other pins stacked beyond the gap from it, resting out toward
+//! their edges, showing as far as they reach. Those that do not are pushed off screen beyond the
+//! edge they are by, as are the pins past them.
+//! @param geometry The viewport.
+//! @param pins The pins, in on-screen order from the top.
+//! @param num_pins Number of pins, at least 1.
+//! @param selected Index of the selected pin.
+//! @param scroll How far the list is scrolled through a selected pin taking the whole screen.
 //! @param[out] tops_out Top of each pin.
 //! @param[out] shown_out Whether each pin is on screen.
 void timeline_list_arrange(const TimelineListGeometry *geometry, const TimelineListPin *pins,
-                           int num_pins, int selected, int16_t scroll, const bool *allowed,
-                           int16_t *tops_out, bool *shown_out);
+                           int num_pins, int selected, int16_t scroll, int16_t *tops_out,
+                           bool *shown_out);
 
 //! How far the list scrolls through a pin to show its end, in whole pages.
 //! @param content_height Height of the pin.
@@ -129,8 +142,8 @@ typedef struct TimelineListArc {
 int16_t timeline_list_arc_depth(const TimelineListArc *arc, int16_t top, int16_t bottom);
 
 //! Where text runs across a run of rows: from inside the display's edge on the side opposite the
-//! circle to the gap short of the circle, or to inside the display's edge above and below it.
-//! Text aligned toward the circle follows its curve.
+//! circle to the gap short of the circle, or short of the display's edge where the circle is
+//! beyond it. Text aligned toward the circle sits that gap from it, following its curve.
 //! @param arc The circle.
 //! @param top First row.
 //! @param bottom Last row.
@@ -149,8 +162,8 @@ int16_t timeline_list_arc_text_range(const TimelineListArc *arc, int16_t top, in
 int16_t timeline_list_arc_band(const TimelineListArc *arc, int16_t width, int16_t *bottom_out);
 
 //! Where text laid out on a run of rows runs when it is drawn on other rows: as wide as where it
-//! is laid out, so it wraps alike, and ending where text on the rows it is drawn on ends, so text
-//! aligned toward the circle follows its curve wherever it is drawn.
+//! is laid out, so it wraps alike, and as far from the circle as where it is laid out, so it moves
+//! along the circle's curve, even past the display's edge, where the display cuts it off.
 //! @param arc The circle.
 //! @param top First row of the text where it is laid out.
 //! @param bottom Last row of the text where it is laid out.
@@ -193,3 +206,26 @@ int32_t timeline_list_arc_row_angle(const TimelineListArc *arc, int16_t distance
 //! @param inset How far inside the display's edge the icon's center stays.
 //! @return Angle, TRIG_MAX_ANGLE being a full turn.
 int32_t timeline_list_arc_max_angle(const TimelineListArc *arc, int16_t distance, int16_t inset);
+
+//! The round sidebar: a circle hanging off a side of the display, its notch cut into its edge in
+//! the middle row, pointing at the selected pin.
+typedef struct TimelineListSidebar {
+  //! Height of the display; its middle row is half of it from the top.
+  int16_t height;
+  //! Distance from the sidebar's side of the display to the circle's center, negative when the
+  //! center is beyond that side. The center is on the middle row.
+  int16_t center_inset;
+  //! Radius of the circle.
+  int16_t radius;
+  //! How deep the notch cuts into the circle at its tip, and how tall it is at the circle's edge.
+  int16_t notch_width;
+  int16_t notch_height;
+} TimelineListSidebar;
+
+//! How far the sidebar reaches into the display on a row, notch included, for it to be filled one
+//! row at a time.
+//! @param sidebar The sidebar.
+//! @param row The row.
+//! @return Distance from the sidebar's side of the display to its edge on the row, 0 or less if
+//! the row misses it.
+int16_t timeline_list_sidebar_depth(const TimelineListSidebar *sidebar, int16_t row);
