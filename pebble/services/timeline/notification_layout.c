@@ -342,9 +342,10 @@ static PBL_NOINLINE GTextNode *prv_create_view(NotificationLayout *layout, bool 
 
   const bool is_reminder = prv_is_reminder(layout);
   // Notifications: who it is from (the title, else the app), then the message without a
-  // leading "Sender: " repeating it, in Gothic sized by the notification text size.
+  // leading "Sender: " repeating it, in Gothic sized by the notification text size: the header
+  // regular, the message bold.
   static const char *const s_header_fonts[] = {
-    FONT_KEY_GOTHIC_14_BOLD, FONT_KEY_GOTHIC_18_BOLD, FONT_KEY_GOTHIC_24_BOLD};
+    FONT_KEY_GOTHIC_14, FONT_KEY_GOTHIC_18, FONT_KEY_GOTHIC_24};
   static const char *const s_body_fonts[] = {
     FONT_KEY_GOTHIC_18_BOLD, FONT_KEY_GOTHIC_24_BOLD, FONT_KEY_GOTHIC_28_BOLD};
   const uint8_t ns_size = notification_style_text_size();
