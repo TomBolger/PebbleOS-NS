@@ -97,9 +97,15 @@ int16_t timeline_layer_get_icon_outer_inset(void);
 //! Extra x origin for pin text when the sidebar is on the left, so the gap matches right_margin.
 int16_t timeline_layer_get_pin_text_origin_x(void);
 
-void timeline_layer_get_layout_frame(TimelineLayer *layer, int index, GRect *frame_out);
-
 void timeline_layer_get_icon_frame(TimelineLayer *layer, int index, GRect *frame_out);
+
+//! Frame the selected pin's icon rests in, for animations that hand the icon over to the pin
+void timeline_layer_get_current_icon_frame(TimelineLayer *layer, GRect *frame_out);
+
+//! Timing of the pin shown at a layout index, where TIMELINE_LAYER_FIRST_VISIBLE_LAYOUT is the
+//! selected pin and the next index the pin after it
+//! @return nullptr if no pin is shown there
+TimelineLayoutInfo *timeline_layer_get_layout_info(TimelineLayer *layer, int index);
 
 Animation *timeline_layer_create_up_down_animation(TimelineLayer *layer, uint32_t duration,
                                                    InterpolateInt64Function interpolate);
