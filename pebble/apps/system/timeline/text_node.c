@@ -285,7 +285,22 @@ static void prv_draw_text_node_text(GTextNodeDrawContext *ctx) {
                                            (TextLayout *)&layout);
   }
   if (ctx->size_out) {
-    *ctx->size_out = layout.max_used_size;
+    // Rendering skips the lines that are clipped, so static text that is partly clipped keeps
+    // the size it was measured at
+    const GSize measured = {
+      text_node->node.cached_size.w - text_node->node.margin.w,
+      text_node->node.cached_size.h - text_node->node.margin.h
+    };
+    bool keep = ctx->render && (text_node->node.type == GTextNodeType_Text) &&
+                (ctx->size_out == &text_node->node.cached_size) && measured.h > 0;
+    if (keep) {
+      const GRect global =
+          grect_to_global_coordinates((GRect){ctx->box.origin, measured}, ctx->gcontext);
+      GRect visible = global;
+      grect_clip(&visible, &ctx->gcontext->draw_state.clip_box);
+      keep = !grect_equal(&visible, &global);
+    }
+    *ctx->size_out = keep ? measured : layout.max_used_size;
   }
 }
 
