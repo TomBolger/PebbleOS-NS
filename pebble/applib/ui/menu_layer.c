@@ -504,8 +504,30 @@ static inline int16_t prv_menu_layer_get_header_height(MenuLayer *menu_layer,
   }
 }
 
+#if PBL_ROUND
+//! Height of \a index as if it were selected
+static int16_t prv_round_focused_height(MenuLayer *menu_layer, MenuIndex index) {
+  if (!menu_layer->callbacks.get_cell_height) {
+    return menu_cell_basic_cell_height();
+  }
+  const MenuIndex selected_index = menu_layer->selection.index;
+  menu_layer->selection.index = index;
+  const int16_t result =
+      menu_layer->callbacks.get_cell_height(menu_layer, &index, menu_layer->callback_context);
+  menu_layer->selection.index = selected_index;
+  return result;
+}
+
+static bool prv_round_row_is_pinned(MenuLayer *menu_layer, const MenuIndex *index);
+#endif
+
 static inline int16_t prv_menu_layer_get_cell_height(MenuLayer *menu_layer, MenuIndex *cell_index,
                                                      bool provide_correct_selection_index) {
+#if PBL_ROUND
+  if (prv_round_row_is_pinned(menu_layer, cell_index)) {
+    return prv_round_focused_height(menu_layer, *cell_index);
+  }
+#endif
   if (menu_layer->callbacks.get_cell_height) {
     const MenuIndex prev_selection_index = menu_layer->selection.index;
     if (!provide_correct_selection_index) {
@@ -1383,20 +1405,97 @@ static void prv_menu_layer_update_selection_highlight(MenuLayer *menu_layer, boo
   }
 }
 
-//! Content offset at which \a span rests on a center-focused menu: centred. On round, a list
-//! that scrolls stops at its ends instead, so the first and last rows rest at the top and bottom
-//! edges with no blank space around them, and a list that fits is centred as a whole.
+#if PBL_ROUND
+//! Focused height of the row \a row of \a section, or 0 if there is none
+static int16_t prv_round_row_height(MenuLayer *menu_layer, uint16_t section, int32_t row) {
+  if ((row < 0) || (row >= prv_menu_layer_get_num_rows(menu_layer, section))) {
+    return 0;
+  }
+  return prv_round_focused_height(menu_layer, MenuIndex(section, (uint16_t)row));
+}
+
+//! Round menus with the pill rest past their ends far enough that the first and last rows stop
+//! with their neighbour in the middle, keeping the pill where the screen is wide. Others stop at
+//! their ends. The space follows from the rows' focused heights, the heights they keep there
+//! whatever is selected, so it is the same for every selection.
+static void prv_round_end_spaces(MenuLayer *menu_layer, int16_t *top, int16_t *bottom) {
+  *top = 0;
+  *bottom = 0;
+  const uint16_t sections = prv_menu_layer_get_num_sections(menu_layer);
+  if (!prv_draws_round_pill(menu_layer) || (sections == 0)) {
+    return;
+  }
+  const int16_t frame_h = menu_layer->scroll_layer.layer.frame.size.h;
+  *top = menu_round_end_space(frame_h, prv_round_row_height(menu_layer, 0, 0),
+                              prv_round_row_height(menu_layer, 0, 1));
+  const uint16_t last_section = sections - 1;
+  const int32_t last = (int32_t)prv_menu_layer_get_num_rows(menu_layer, last_section) - 1;
+  *bottom = menu_round_end_space(frame_h, prv_round_row_height(menu_layer, last_section, last),
+                                 prv_round_row_height(menu_layer, last_section, last - 1));
+}
+
+typedef struct {
+  MenuLayer *menu_layer;
+  uint16_t section;
+  int32_t end_row;
+  int32_t step;
+} MenuRoundEndRows;
+
+static int16_t prv_round_end_row_height(uint16_t i, void *context) {
+  const MenuRoundEndRows *end = context;
+  return prv_round_row_height(end->menu_layer, end->section, end->end_row + (end->step * i));
+}
+
+//! A round list with the pill stops at its ends, where it selects the rows it shows without
+//! scrolling. These rows keep their focused height whatever is selected, so moving the selection
+//! between them moves only the highlight, see menu_round_end_rows(). Elsewhere the selected row
+//! grows as the list scrolls it to the middle.
+static bool prv_round_row_is_pinned(MenuLayer *menu_layer, const MenuIndex *index) {
+  if (!menu_layer->center_focused || !prv_draws_round_pill(menu_layer)) {
+    return false;
+  }
+  const uint16_t sections = prv_menu_layer_get_num_sections(menu_layer);
+  if ((sections == 0) || (index->section >= sections)) {
+    return false;
+  }
+  const int16_t frame_h = menu_layer->scroll_layer.layer.frame.size.h;
+  int16_t top_space;
+  int16_t bottom_space;
+  prv_round_end_spaces(menu_layer, &top_space, &bottom_space);
+  if (index->section == 0) {
+    MenuRoundEndRows top = {.menu_layer = menu_layer, .section = 0, .end_row = 0, .step = 1};
+    const uint16_t rows = prv_menu_layer_get_num_rows(menu_layer, 0);
+    if (index->row <
+        menu_round_end_rows(frame_h, top_space, rows, prv_round_end_row_height, &top)) {
+      return true;
+    }
+  }
+  if (index->section == sections - 1) {
+    const uint16_t rows = prv_menu_layer_get_num_rows(menu_layer, index->section);
+    MenuRoundEndRows bottom =
+        {.menu_layer = menu_layer, .section = index->section, .end_row = rows - 1, .step = -1};
+    if ((index->row < rows) &&
+        (rows - 1 - index->row <
+         menu_round_end_rows(frame_h, bottom_space, rows, prv_round_end_row_height, &bottom))) {
+      return true;
+    }
+  }
+  return false;
+}
+#endif
+
+//! Content offset at which \a span rests on a center-focused menu: centred, but on round, the
+//! list stops at its ends, see prv_round_end_spaces().
 static int16_t prv_center_focus_rest_offset_y(MenuLayer *menu_layer, const MenuCellSpan *span) {
   const int16_t frame_h = menu_layer->scroll_layer.layer.frame.size.h;
-  const int16_t y = (int16_t)((frame_h / 2) - span->y - (span->h / 2));
 #if PBL_ROUND
-  const int16_t content_h = scroll_layer_get_content_size(&menu_layer->scroll_layer).h;
-  if (content_h <= frame_h) {
-    return (int16_t)((frame_h - content_h) / 2);
-  }
-  return PBL_CLAMP(y, (int16_t)(frame_h - content_h), (int16_t)0);
+  int16_t top_space;
+  int16_t bottom_space;
+  prv_round_end_spaces(menu_layer, &top_space, &bottom_space);
+  return menu_round_rest_offset(frame_h, scroll_layer_get_content_size(&menu_layer->scroll_layer).h,
+                                span->y, span->h, top_space, bottom_space);
 #else
-  return y;
+  return (int16_t)((frame_h / 2) - span->y - (span->h / 2));
 #endif
 }
 
