@@ -155,9 +155,3 @@ int32_t timeline_list_arc_angle(int16_t distance, int16_t length);
 //! @return Distance from the circle's side of the display to the icon's center.
 int16_t timeline_list_arc_icon_inset(const TimelineListArc *arc, int16_t distance, int32_t angle,
                                      int16_t *y_out);
-
-//! How far in from the side of a round display its edge is, at a distance from its middle row.
-//! @param radius Radius of the display.
-//! @param distance_y Distance from the middle row; beyond the radius counts as the radius.
-//! @return Distance from the side of the display's bounds to its edge.
-int16_t timeline_list_round_edge_inset(int16_t radius, int16_t distance_y);
