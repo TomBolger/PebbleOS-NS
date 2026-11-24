@@ -15,6 +15,7 @@
 #include <applib/app_malloc.h>
 #include <applib/graphics/gdraw_command_transforms.h>
 #include <applib/ui/kino/kino_reel_custom.h>
+#include <applib/ui/menu_layer_private.h>
 #include <process_management/app_install_manager.h>
 #include <resource/resource_ids.auto.h>
 #include <shell/prefs.h>
@@ -26,6 +27,13 @@
 #else
 #define LAUNCHER_APP_GLANCE_STRUCTURED_ICON_HORIZONTAL_MARGIN (5)
 #endif
+
+//! Round: the header row's icon sits this far below the top of the screen
+#define LAUNCHER_APP_GLANCE_STRUCTURED_HEADER_TOP (10)
+//! Round: space between the header row's icon and its title
+#define LAUNCHER_APP_GLANCE_STRUCTURED_HEADER_GAP (2)
+//! Round: the header row's title keeps this far in from the edge of its bubble
+#define LAUNCHER_APP_GLANCE_STRUCTURED_HEADER_TITLE_MARGIN (10)
 
 typedef struct GenericGlanceIconDrawCommandProcessor {
   GDrawCommandProcessor draw_command_processor;
@@ -444,12 +452,57 @@ static PBL_NOINLINE GTextNode *prv_create_structured_glance_node(
   return &horizontal_node->container.node;
 }
 
+#if PBL_ROUND
+//! Round: the first row is a header at the top of the screen, its icon centred with its title
+//! centred under it, both inside the bubble that highlights it.
+static void prv_draw_round_header(LauncherAppGlanceStructured *structured_glance, GContext *ctx,
+                                  GRect frame) {
+  const GSize icon_size = structured_glance->icon_max_size;
+  const int16_t title_height = fonts_get_font_height(structured_glance->title_font);
+  const int16_t icon_top = frame.origin.y + LAUNCHER_APP_GLANCE_STRUCTURED_HEADER_TOP;
+  const GRect icon_rect = GRect(frame.origin.x + ((frame.size.w - icon_size.w) / 2), icon_top,
+                                icon_size.w, icon_size.h);
+  prv_structured_glance_icon_node_draw_cb(ctx, &icon_rect, nullptr, true /* render */, nullptr,
+                                          structured_glance);
+
+  // The title keeps clear of the bubble's edge at its bottom
+  const int16_t title_top = grect_get_max_y(&icon_rect) + LAUNCHER_APP_GLANCE_STRUCTURED_HEADER_GAP;
+  const int32_t bubble_center_y =
+      frame.origin.y + frame.size.h - MENU_ROUND_PILL_INSET_Y - MENU_ROUND_BUBBLE_RADIUS;
+  const int32_t dy = title_top + title_height - bubble_center_y;
+  const int32_t radius = MENU_ROUND_BUBBLE_RADIUS;
+  const int32_t half_chord =
+      (dy < radius) ? integer_sqrt(((int64_t)radius * radius) - ((int64_t)dy * dy)) : 0;
+  const int16_t title_w =
+      PBL_MIN(frame.size.w, 2 * (half_chord - LAUNCHER_APP_GLANCE_STRUCTURED_HEADER_TITLE_MARGIN));
+  if (title_w <= 0) {
+    return;
+  }
+  GTextNode *title_node = prv_structured_glance_create_title_text_node(structured_glance);
+  if (!title_node) {
+    return;
+  }
+  ((GTextNodeText *)title_node)->alignment = GTextAlignmentCenter;
+  const GRect title_rect =
+      GRect(frame.origin.x + ((frame.size.w - title_w) / 2), title_top, title_w, title_height);
+  graphics_text_node_draw(title_node, ctx, &title_rect, nullptr, nullptr);
+  graphics_text_node_destroy(title_node);
+}
+#endif
+
 static void prv_draw_processed(KinoReel *reel, GContext *ctx, GPoint offset,
                                [[maybe_unused]] KinoReelProcessor *processor) {
   LauncherAppGlanceStructured *structured_glance = kino_reel_custom_get_data(reel);
   if (!structured_glance) {
     return;
   }
+#if PBL_ROUND
+  if (structured_glance->glance.is_round_header) {
+    prv_draw_round_header(structured_glance, ctx,
+                          (GRect){.origin = offset, .size = structured_glance->glance.size});
+    return;
+  }
+#endif
 
   GRect glance_frame = (GRect){.origin = offset, .size = structured_glance->glance.size};
   const LauncherMenuLayerStyle *style = launcher_menu_layer_get_style();

@@ -13,6 +13,7 @@
 #include <applib/graphics/gtypes.h>
 #include <applib/ui/app_window_stack.h>
 #include <applib/ui/content_indicator.h>
+#include <applib/ui/menu_layer_private.h>
 #include <resource/resource_ids.auto.h>
 #include <shell/prefs.h>
 #include <shell/system_theme.h>
@@ -28,8 +29,10 @@ const LauncherMenuLayerStyle *launcher_menu_layer_get_style(void) {
 }
 
 #if PBL_ROUND
-static int prv_num_unfocused_rows_per_side(const LauncherMenuLayerStyle *style) {
-  return (PBL_DISPLAY_HEIGHT - style->focused_cell_height) / (2 * style->unfocused_cell_height);
+//! The first row is a header from the top of the screen down to the second row, which then sits
+//! in the middle.
+static int16_t prv_round_header_height(const LauncherMenuLayerStyle *style) {
+  return (int16_t)((PBL_DISPLAY_HEIGHT - style->focused_cell_height) / 2);
 }
 #endif
 
@@ -122,9 +125,9 @@ static void prv_menu_layer_draw_row(GContext *ctx, const Layer *cell_layer, Menu
   const int16_t screen_center_y =
       global_frame.origin.y + animation_offset + (global_frame.size.h / 2);
 
-  launcher_app_glance_service_draw_glance_for_app_node(&launcher_menu_layer->glance_service, ctx,
-                                                       cell_layer_bounds, is_highlighted,
-                                                       screen_center_y, node);
+  launcher_app_glance_service_draw_glance_for_app_node(
+      &launcher_menu_layer->glance_service, ctx, cell_layer_bounds, is_highlighted, screen_center_y,
+      PBL_IF_ROUND_ELSE(cell_index->row == 0, false), node);
 
   // If we should launch an app after this render, push a callback to do that on the app task
   if (launcher_menu_layer->app_to_launch_after_next_render != INSTALL_ID_INVALID) {
@@ -147,6 +150,9 @@ static int16_t prv_menu_layer_get_cell_height([[maybe_unused]] MenuLayer *menu_l
 #if PBL_RECT
   return style->cell_height;
 #elif PBL_ROUND
+  if (cell_index->row == 0) {
+    return prv_round_header_height(style);
+  }
   return menu_layer_is_index_selected(menu_layer, cell_index) ? style->focused_cell_height
                                                               : style->unfocused_cell_height;
 #else
@@ -207,20 +213,14 @@ void launcher_menu_layer_init(LauncherMenuLayer *launcher_menu_layer,
 
   launcher_menu_layer->data_source = data_source;
 
-  GRect menu_layer_frame = frame;
-#if PBL_ROUND
-  const LauncherMenuLayerStyle *style =
-      &system_theme_get_style_for_size(launcher_menu_layer->content_size)->launcher;
-  const int top_bottom_inset =
-      (frame.size.h - style->focused_cell_height -
-       (2 * prv_num_unfocused_rows_per_side(style) * style->unfocused_cell_height)) /
-      2;
-  const GEdgeInsets menu_layer_frame_insets = GEdgeInsets(top_bottom_inset, 0);
-  menu_layer_frame = grect_inset(menu_layer_frame, menu_layer_frame_insets);
-#endif
+  // Round: the whole screen, so the first row's bubble hangs from the top of the screen
+  const GRect menu_layer_frame = frame;
 
   MenuLayer *menu_layer = &launcher_menu_layer->menu_layer;
   menu_layer_init(menu_layer, &menu_layer_frame);
+#if PBL_ROUND
+  menu_layer_set_round_top_bubble(menu_layer, true);
+#endif
   menu_layer_pad_bottom_enable(menu_layer, false);
   menu_layer_set_callbacks(menu_layer, launcher_menu_layer,
                            &(MenuLayerCallbacks){
