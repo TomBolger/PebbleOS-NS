@@ -91,6 +91,10 @@ TimelineIterState *timeline_model_get_current_state(void) {
   return timeline_model_get_iter_state(0);
 }
 
+Iterator *timeline_model_get_current_iter(void) {
+  return prv_get_iter(0);
+}
+
 static int prv_find_item_by_uuid(Uuid *id) {
   for (int i = 0; i < TIMELINE_NUM_VISIBLE_ITEMS; i++) {
     if (timeline_model_get_iter_state(i)->node &&

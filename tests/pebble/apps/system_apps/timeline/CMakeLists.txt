@@ -36,6 +36,7 @@ pbl_clar_test(test_timeline_list_view
     pebble/apps/system/timeline/timeline.c
     pebble/apps/system/timeline/animations.c
     pebble/apps/system/timeline/layer.c
+    pebble/apps/system/timeline/list_layout.c
     pebble/apps/system/timeline/model.c
     pebble/apps/system/timeline/relbar.c
     pebble/popups/timeline/timeline_item_layer.c
@@ -97,6 +98,7 @@ pbl_clar_test(test_timeline_no_events
     pebble/apps/system/timeline/timeline.c
     pebble/apps/system/timeline/animations.c
     pebble/apps/system/timeline/layer.c
+    pebble/apps/system/timeline/list_layout.c
     pebble/apps/system/timeline/model.c
     pebble/apps/system/timeline/relbar.c
     pebble/popups/timeline/timeline_item_layer.c
