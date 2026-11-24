@@ -235,10 +235,7 @@ static void prv_get_icon_animation_frame(TimelineAppData *data, GRect *icon_fram
   GRect icon_frame;
   TimelineLayout *first_timeline_layout = timeline_layer_get_current_layout(&data->timeline_layer);
   if (first_timeline_layout && use_pin) {
-    GRect frame;
-    timeline_layer_get_layout_frame(&data->timeline_layer, TIMELINE_LAYER_FIRST_VISIBLE_LAYOUT,
-                                    &frame);
-    timeline_layout_get_icon_frame(&frame, data->timeline_layer.scroll_direction, &icon_frame);
+    timeline_layer_get_current_icon_frame(&data->timeline_layer, &icon_frame);
   } else {
     // Since there is no pin, we need the peek size, which is the large size
     icon_frame = (GRect){.size = TIMELINE_LARGE_RESOURCE_SIZE};
@@ -804,10 +801,8 @@ static void prv_scale_peek_to_first_pin_icon(TimelineAppData *data, uint32_t dur
   }
 
   // scale the peek layer icon to the pin position
-  GRect frame;
-  layer_get_global_frame((Layer *)first_timeline_layout, &frame);
   GRect icon_to;
-  timeline_layout_get_icon_frame(&frame, data->timeline_layer.scroll_direction, &icon_to);
+  timeline_layer_get_current_icon_frame(&data->timeline_layer, &icon_to);
   const bool align_in_frame = true;
   PeekLayer *peek_layer = &data->peek_layer;
   peek_layer_set_scale_to_image(peek_layer, &first_timeline_layout->icon_info,
