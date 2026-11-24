@@ -41,8 +41,9 @@ typedef struct MenuRenderIterator {
 //! middle, on each side.
 int16_t menu_cell_round_chord_inset(const GContext *ctx, GRect frame);
 
-//! Moves \a frame, an icon on the right of the cell being drawn, so it sits
-//! MENU_CELL_ROUND_BEZEL_MARGIN in from the bezel at its row, following the curve of the display.
+//! Moves \a frame, an icon on the right of the cell being drawn, into the column right-aligned
+//! icons share in every row: inside the round end of the pill of a row as tall resting a row from
+//! the middle, as far in as MENU_CELL_ROUND_BEZEL_MARGIN is from the bezel in the middle.
 GRect menu_cell_round_follow_bezel(const GContext *ctx, GRect frame);
 
 //! Moves the left end of the highlight pill \a margin further in from the bezel, e.g. to keep it
