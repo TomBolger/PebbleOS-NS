@@ -55,82 +55,36 @@ typedef struct TimelineListGeometry {
   int16_t gap;
   //! Space kept above the top pin with TimelineListAlignTop, for what shows before it.
   int16_t top_space;
-  //! Where the top of a selected pin taking the whole screen rests, scrolled to its first page,
-  //! with TimelineListAlignTop.
-  int16_t page_top;
   TimelineListAlign align;
   //! The pins after the selected one are below it, so the pins before it are above.
   bool next_is_down;
 } TimelineListGeometry;
 
-//! Height of a page of a selected pin that does not fit between the margins: the whole screen,
-//! as the list scrolls through it a whole screen at a time.
-//! @param geometry The viewport.
-int16_t timeline_list_page_height(const TimelineListGeometry *geometry);
-
-//! Where the selected pin rests, before the list scrolls through it.
+//! Where the selected pin rests.
 //!
 //! Anchored, its anchor always rests on the geometry's anchor. Aligned to the top, the top pin
 //! rests at the top, the selected pin moving up just enough for it to fit between the margins,
-//! and for the pin after it, then the one before it, to fit too if there is room. A selected pin
-//! that does not fit between the margins takes the whole screen, and the list scrolls through it
-//! a page at a time: anchored from where its anchor rests, aligned to the top from its top.
+//! and for the pin after it, then the one before it, to fit too if there is room.
 //! @param geometry The viewport.
 //! @param pins The pins, in on-screen order from the top.
 //! @param num_pins Number of pins, at least 1.
 //! @param selected Index of the selected pin.
-//! @param[out] whole_screen_out Whether the selected pin takes the whole screen.
 //! @return Top of the selected pin.
 int16_t timeline_list_selected_top(const TimelineListGeometry *geometry,
-                                   const TimelineListPin *pins, int num_pins, int selected,
-                                   bool *whole_screen_out);
+                                   const TimelineListPin *pins, int num_pins, int selected);
 
 //! Places the pins where the list rests: the selected pin as timeline_list_selected_top() places
-//! it, less the scroll, and the other pins stacked beyond the gap from it, resting out toward
-//! their edges, showing as far as they reach. Those that do not are pushed off screen beyond the
-//! edge they are by, as are the pins past them.
+//! it, and the other pins stacked beyond the gap from it, resting out toward their edges, showing
+//! as far as they reach. Those that do not are pushed off screen beyond the edge they are by, as
+//! are the pins past them.
 //! @param geometry The viewport.
 //! @param pins The pins, in on-screen order from the top.
 //! @param num_pins Number of pins, at least 1.
 //! @param selected Index of the selected pin.
-//! @param scroll How far the list is scrolled through a selected pin taking the whole screen.
 //! @param[out] tops_out Top of each pin.
 //! @param[out] shown_out Whether each pin is on screen.
 void timeline_list_arrange(const TimelineListGeometry *geometry, const TimelineListPin *pins,
-                           int num_pins, int selected, int16_t scroll, int16_t *tops_out,
-                           bool *shown_out);
-
-//! Computes the top of each pin.
-//!
-//! The pins stack without gaps and rest as the geometry aligns them, except that the selected
-//! pin's top never rests above the margin: a selected pin taller than the screen shows from its
-//! top and pushes its neighbours off screen.
-//! @param geometry The viewport.
-//! @param pins The pins, in on-screen order from the top.
-//! @param num_pins Number of pins, at least 1.
-//! @param selected Index of the selected pin.
-//! @param[out] tops_out Top of each pin.
-void timeline_list_layout(const TimelineListGeometry *geometry, const TimelineListPin *pins,
-                          int num_pins, int selected, int16_t *tops_out);
-
-//! Bottom of the page the selected pin shows its text in: above the pin after it on screen, so
-//! that pin stays whole on screen, unless that leaves the page too short. A page is never
-//! shorter than the shortest page, even if it goes on below the screen.
-//! @param geometry The viewport.
-//! @param pins The pins, in on-screen order from the top.
-//! @param num_pins Number of pins, at least 1.
-//! @param selected Index of the selected pin.
-//! @param page_top Top of the page.
-//! @param min_height Shortest page.
-//! @return Bottom of the page.
-int16_t timeline_list_page_bottom(const TimelineListGeometry *geometry, const TimelineListPin *pins,
-                                  int num_pins, int selected, int16_t page_top, int16_t min_height);
-
-//! How far the list scrolls through a pin to show its end, in whole pages.
-//! @param content_height Height of the pin.
-//! @param page_height Height of a page.
-//! @return The largest scroll, a multiple of the page height, or 0 if the pin fits on a page.
-int16_t timeline_list_max_scroll(int16_t content_height, int16_t page_height);
+                           int num_pins, int selected, int16_t *tops_out, bool *shown_out);
 
 //! Places the pins outside a run of placed pins against their neighbours, without gaps.
 //! @param pins The pins, in on-screen order from the top.
@@ -166,40 +120,6 @@ typedef struct TimelineListArc {
 //! @return Distance from the circle's side of the display to its farthest edge across the rows,
 //! 0 or less if the rows miss it.
 int16_t timeline_list_arc_depth(const TimelineListArc *arc, int16_t top, int16_t bottom);
-
-//! How far in from the side of the display opposite the circle its edge is across a run of rows,
-//! where text there starts.
-//! @param arc The circle.
-//! @param top First row.
-//! @param bottom Last row.
-//! @return Distance from the side of the display's bounds to inside its edge where the rows are
-//! narrowest, at least the minimum inset. Off the display, its middle.
-int16_t timeline_list_arc_edge_inset(const TimelineListArc *arc, int16_t top, int16_t bottom);
-
-//! How much room text beside the circle has to rest in: from the edge inset across its head to
-//! the display's edge on the other side, but the gap short of the circle anywhere across its rows.
-//! @param arc The circle.
-//! @param head_top First row of the text's head, the lines it is placed by.
-//! @param head_bottom Last row of the text's head.
-//! @param top First row of the text.
-//! @param bottom Last row of the text.
-//! @return Width of the text.
-int16_t timeline_list_arc_text_width(const TimelineListArc *arc, int16_t head_top,
-                                     int16_t head_bottom, int16_t top, int16_t bottom);
-
-//! Where text beside the circle starts, from the side of the display opposite the circle: at the
-//! edge inset across its head, but never closer to the circle than the gap anywhere across its
-//! rows. Text is placed alike at rest and moving, keeping the width it rests in.
-//! @param arc The circle.
-//! @param head_top First row of the text's head.
-//! @param head_bottom Last row of the text's head.
-//! @param top First row of the text.
-//! @param bottom Last row of the text.
-//! @param width How far the text reaches toward the circle from where it starts.
-//! @return Distance from the side of the display's bounds to where the text starts.
-int16_t timeline_list_arc_text_inset(const TimelineListArc *arc, int16_t head_top,
-                                     int16_t head_bottom, int16_t top, int16_t bottom,
-                                     int16_t width);
 
 //! Where text runs across a run of rows: from inside the display's edge on the side opposite the
 //! circle to the gap short of the circle. Text aligned toward the circle always sits that gap from
