@@ -77,7 +77,11 @@ static void prv_set_sub_menu_colors(GContext *ctx, const Layer *cell_layer, bool
     graphics_context_set_fill_color(ctx, system_theme_get_bg_color());
     graphics_context_set_text_color(ctx, system_theme_get_fg_color());
   }
+#if PBL_RECT
   graphics_fill_rect(ctx, &cell_layer->bounds);
+#else
+  // The menu has already drawn the row, with its highlight pill
+#endif
 }
 
 // Menu Layer Handling
