@@ -48,6 +48,56 @@ typedef struct {
   void *timeline_layer;         // Necessary for the layer update proc to access the TimelineLayer
 } RelationshipBarLayer;
 
+//! Pins the compact list shows: the selected pin and the pins before and after it
+#define TIMELINE_LIST_MAX_PINS 3
+
+//! A pin of the compact list. It owns a copy of the timeline iterator, so it outlives the model's
+//! window of pins.
+typedef struct {
+  Iterator iter;
+  TimelineIterState state;
+  TimelineLayoutInfo info;
+  TimelineLayout *layout;
+  //! Offset from the pin's top of the point that rests on the selection anchor when selected
+  int16_t anchor_y;
+  //! Resting frame
+  GRect frame;
+  //! Frame the next up/down animation starts from
+  GRect from;
+  //! The pin was selected where the up/down animation starts; it keeps its text until the pins
+  //! settle
+  bool from_selected;
+} TimelineListPinView;
+
+//! The compact list: pins are as tall as their content, and the selected pin shows all its text
+//! between the pins before and after it, instead of in fixed slots.
+typedef struct {
+  //! Pins in timeline order, the one before the selected pin first
+  TimelineListPinView *pins[TIMELINE_LIST_MAX_PINS];
+  int num_pins;
+  int selected;
+  //! Pins that scrolled out and are destroyed once the up/down animation stops
+  TimelineListPinView *leaving[TIMELINE_LIST_MAX_PINS];
+  int num_leaving;
+  //! What follows the selected pin when no pin does: nothing, or a pin of another day
+  bool ends_timeline;
+  bool ends_day;
+  //! Pins the day separator dot and the end-of-timeline fin follow, if shown
+  TimelineListPinView *day_end;
+  TimelineListPinView *timeline_end;
+  //! The move goes to another day, behind the day separator
+  bool crosses_day;
+  //! The move selects another pin, rather than scrolling through the selected one
+  bool selection_changed;
+  //! How far the selected pin's text is scrolled through its pages, where the running up/down
+  //! animation scrolls it from, and how far it can be
+  int16_t scroll;
+  int16_t scroll_from;
+  int16_t max_scroll;
+  //! Interpolation of the running up/down animation
+  InterpolateInt64Function interpolate;
+} TimelineList;
+
 // The timeline layer is the view(controller, sort of) for the timeline -- it uses
 // TIMELINE_NUM_ITEMS_IN_TIMELINE_LAYER layout layers, timeline layouts and view slots
 // layouts[1] is the first item shown, layouts[0] and layouts[TIMELINE_NUM_VISIBLE_ITEMS + 1]
@@ -68,6 +118,9 @@ typedef struct {
   Animation *animation;
   RelationshipBarLayer relbar_layer;
   bool animating_intro_or_exit;
+  //! Lay the pins out as the compact list instead of in the fixed slots
+  bool compact;
+  TimelineList list;
 } TimelineLayer;
 
 void timeline_layer_reset(TimelineLayer *layer);
@@ -109,6 +162,12 @@ TimelineLayoutInfo *timeline_layer_get_layout_info(TimelineLayer *layer, int ind
 
 Animation *timeline_layer_create_up_down_animation(TimelineLayer *layer, uint32_t duration,
                                                    InterpolateInt64Function interpolate);
+
+//! Scrolls a page through the selected pin's text if it goes on that way, for the up/down
+//! animation to show
+//! @param down Toward the end of the pin
+//! @return whether it scrolled; the selected pin stays the same
+bool timeline_layer_scroll_selected(TimelineLayer *layer, bool down);
 
 // TODO: move animation logic to timeline_animations.c
 // Returns whether the move animation should animate the day separator
