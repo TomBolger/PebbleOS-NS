@@ -11,6 +11,7 @@
 
 #include <applib/graphics/gpath.h>
 #include <applib/graphics/gtypes.h>
+#include <applib/graphics/perimeter.h>
 #include <applib/ui/kino/kino_layer.h>
 #include <applib/ui/status_bar_layer.h>
 #include <apps/system/timeline/text_node.h>
@@ -157,12 +158,12 @@ struct TimelineLayout {
   GTextNode *view_node;
   /** Size of the view. */
   GSize view_size;
-  /** Where the pin's top rests on screen, when it is laid out in pages. */
-  GPoint page_origin;
-  /** Page of the screen the pin is laid out in, or empty. */
-  GRect page_frame;
-  /** How far the text is scrolled up through its pages. */
-  int16_t page_scroll;
+  /** Where the pin's top rests on screen, which its text is laid out for. */
+  GPoint flow_origin;
+  /** What the pin's text flows inside where it rests, or nullptr. */
+  const GPerimeter *flow_perimeter;
+  /** Height of the pages of the screen the pin is laid out in from where it rests, or 0. */
+  int16_t flow_page_height;
 
   /** Layout this one is transitioning to. */
   struct TimelineLayout *transition_layout;
@@ -285,27 +286,6 @@ void timeline_layout_get_icon_frame(const GRect *bounds, TimelineScrollDirection
 int16_t timeline_layout_get_title_center_y(TimelineLayout *layout);
 
 /**
- * @brief Get the bottom of a pin's title.
- *
- * @param layout Pin layout, laid out in a pinned mode.
- * @return Offset of the bottom of the title from the top of the layout's content.
- */
-int16_t timeline_layout_get_title_bottom_y(TimelineLayout *layout);
-
-/**
- * @brief Get the rows of a pin's head, its time and the first line of its title, as text flow
- * sees them: the lower half of each line, where its glyphs are.
- *
- * The selected pin of the compact list, laid out in pages, places its time inside the display on
- * its own, so its head is only the first line of its title.
- *
- * @param layout Pin layout, laid out in a pinned mode.
- * @param[out] top_out Offset of the head's first row from the top of the layout's content.
- * @param[out] bottom_out Offset of the head's last row from the top of the layout's content.
- */
-void timeline_layout_get_head_rows(TimelineLayout *layout, int16_t *top_out, int16_t *bottom_out);
-
-/**
  * @brief LayoutLayerSizeGetter of timeline layouts.
  *
  * @param ctx Graphics context.
@@ -370,25 +350,20 @@ void timeline_layout_render_view(TimelineLayout *timeline_layout, GContext *ctx)
 void timeline_layout_get_size(TimelineLayout *timeline_layout, GContext *ctx, GSize *size_out);
 
 /**
- * @brief Lay the selected pin of the compact list out in pages of the screen, where it rests.
+ * @brief Lay a pin of the compact list out for where it rests on screen.
  *
- * Its lines do not straddle a page break, so the list can scroll through it a page at a time,
- * and on round displays they flow inside the display as they are at rest, wherever the pin is
- * drawn while it moves. Builds the view again.
+ * On round displays its text flows inside a perimeter as it is where it rests, wherever the pin is
+ * drawn while it moves. A pin taller than the screen is laid out in pages of the screen from where
+ * it rests, no line straddling a page break, so the list can scroll through it a page at a time.
+ * Builds the view again.
  *
  * @param layout Layout of a compact pin.
  * @param origin Where the top of the layout rests on screen.
- * @param page_frame Page of the screen.
+ * @param perimeter What the text flows inside, or nullptr.
+ * @param page_height Height of a page, or 0.
  */
-void timeline_layout_set_page(TimelineLayout *layout, GPoint origin, const GRect *page_frame);
-
-/**
- * @brief Scroll the text of a pin laid out in pages.
- *
- * @param layout Layout of a compact pin.
- * @param scroll How far the text is scrolled up, a whole number of pages at rest.
- */
-void timeline_layout_set_page_scroll(TimelineLayout *layout, int16_t scroll);
+void timeline_layout_set_flow(TimelineLayout *layout, GPoint origin, const GPerimeter *perimeter,
+                              int16_t page_height);
 
 /**
  * @brief Build a card view from a vertical container config.
