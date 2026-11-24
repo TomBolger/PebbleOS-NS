@@ -109,8 +109,3 @@ int16_t timeline_list_arc_icon_inset(const TimelineListArc *arc, int16_t distanc
   *y_out = arc->display_radius + (int16_t)(sin_lookup(angle) * distance / TRIG_MAX_RATIO);
   return arc->center_inset + (int16_t)(cos_lookup(angle) * distance / TRIG_MAX_RATIO);
 }
-
-int16_t timeline_list_round_edge_inset(int16_t radius, int16_t distance_y) {
-  const int32_t distance = PBL_MIN(PBL_ABS(distance_y), radius);
-  return radius - integer_sqrt((int32_t)radius * radius - distance * distance);
-}
