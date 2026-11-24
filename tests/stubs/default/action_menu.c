@@ -5,6 +5,7 @@
 
 #include <applib/ui/action_menu_hierarchy.h>
 #include <applib/ui/action_menu_window.h>
+#include <applib/ui/action_menu_window_private.h>
 
 PBL_WEAK void *action_menu_get_context(ActionMenu *action_menu) {
   return nullptr;
@@ -91,4 +92,14 @@ PBL_WEAK void action_menu_hosted_perform(ActionMenu *action_menu, const ActionMe
 }
 
 PBL_WEAK void action_menu_hosted_did_close(ActionMenu *action_menu) {
+}
+
+PBL_WEAK ActionMenu *action_menu_open_hosted(WindowStack *window_stack, ActionMenuConfig *config,
+                                             const ActionMenuHost *host,
+                                             void *host_context) {
+  return nullptr;
+}
+
+PBL_WEAK WindowStack *action_menu_get_window_stack(ActionMenu *action_menu) {
+  return nullptr;
 }
