@@ -38,6 +38,8 @@ enum NotificationsItem {
 #endif
   NotificationsItemVibeDelay,
   NotificationsItemBacklight,
+  NotificationsItemSections,
+  NotificationsItemGroupByApp,
   NotificationsItemGroupBySender,
   NotificationsItemStatusBarStyle,
   NotificationsItem_Count,
@@ -380,6 +382,21 @@ static void prv_draw_row_cb(SettingsCallbacks *context, GContext *ctx, const Lay
                                                                  : pbl_i18n_noop("Off");
       break;
     }
+    case NotificationsItemSections: {
+      /// Notification settings item for listing notifications in the phone's sections
+      /// (Conversations, Notifications, Silent)
+      title = pbl_i18n_noop("Sections");
+      subtitle = alerts_preferences_get_notification_sections() ? pbl_i18n_noop("On")
+                                                                : pbl_i18n_noop("Off");
+      break;
+    }
+    case NotificationsItemGroupByApp: {
+      /// Notification settings item for stacking notifications by app, as the phone does
+      title = pbl_i18n_noop("Group by App");
+      subtitle = alerts_preferences_get_notification_group_by_app() ? pbl_i18n_noop("On")
+                                                                    : pbl_i18n_noop("Off");
+      break;
+    }
     case NotificationsItemGroupBySender: {
       /// Notification settings item for grouping notifications by sender
       title = pbl_i18n_noop("Group by Sender");
@@ -432,6 +449,13 @@ static void prv_select_click_cb(SettingsCallbacks *context, uint16_t row) {
       // Toggle backlight directly without submenu
       alerts_preferences_set_notification_backlight(
           !alerts_preferences_get_notification_backlight());
+      break;
+    case NotificationsItemSections:
+      alerts_preferences_set_notification_sections(!alerts_preferences_get_notification_sections());
+      break;
+    case NotificationsItemGroupByApp:
+      alerts_preferences_set_notification_group_by_app(
+          !alerts_preferences_get_notification_group_by_app());
       break;
     case NotificationsItemGroupBySender:
       prv_notification_grouping_range_menu_push(data);
