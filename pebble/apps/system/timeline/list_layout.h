@@ -100,32 +100,6 @@ void timeline_list_arrange(const TimelineListGeometry *geometry, const TimelineL
                            int num_pins, int selected, int16_t scroll, int16_t *tops_out,
                            bool *shown_out);
 
-//! Computes the top of each pin.
-//!
-//! The pins stack without gaps and rest as the geometry aligns them, except that the selected
-//! pin's top never rests above the margin: a selected pin taller than the screen shows from its
-//! top and pushes its neighbours off screen.
-//! @param geometry The viewport.
-//! @param pins The pins, in on-screen order from the top.
-//! @param num_pins Number of pins, at least 1.
-//! @param selected Index of the selected pin.
-//! @param[out] tops_out Top of each pin.
-void timeline_list_layout(const TimelineListGeometry *geometry, const TimelineListPin *pins,
-                          int num_pins, int selected, int16_t *tops_out);
-
-//! Bottom of the page the selected pin shows its text in: above the pin after it on screen, so
-//! that pin stays whole on screen, unless that leaves the page too short. A page is never
-//! shorter than the shortest page, even if it goes on below the screen.
-//! @param geometry The viewport.
-//! @param pins The pins, in on-screen order from the top.
-//! @param num_pins Number of pins, at least 1.
-//! @param selected Index of the selected pin.
-//! @param page_top Top of the page.
-//! @param min_height Shortest page.
-//! @return Bottom of the page.
-int16_t timeline_list_page_bottom(const TimelineListGeometry *geometry, const TimelineListPin *pins,
-                                  int num_pins, int selected, int16_t page_top, int16_t min_height);
-
 //! How far the list scrolls through a pin to show its end, in whole pages.
 //! @param content_height Height of the pin.
 //! @param page_height Height of a page.
@@ -166,40 +140,6 @@ typedef struct TimelineListArc {
 //! @return Distance from the circle's side of the display to its farthest edge across the rows,
 //! 0 or less if the rows miss it.
 int16_t timeline_list_arc_depth(const TimelineListArc *arc, int16_t top, int16_t bottom);
-
-//! How far in from the side of the display opposite the circle its edge is across a run of rows,
-//! where text there starts.
-//! @param arc The circle.
-//! @param top First row.
-//! @param bottom Last row.
-//! @return Distance from the side of the display's bounds to inside its edge where the rows are
-//! narrowest, at least the minimum inset. Off the display, its middle.
-int16_t timeline_list_arc_edge_inset(const TimelineListArc *arc, int16_t top, int16_t bottom);
-
-//! How much room text beside the circle has to rest in: from the edge inset across its head to
-//! the display's edge on the other side, but the gap short of the circle anywhere across its rows.
-//! @param arc The circle.
-//! @param head_top First row of the text's head, the lines it is placed by.
-//! @param head_bottom Last row of the text's head.
-//! @param top First row of the text.
-//! @param bottom Last row of the text.
-//! @return Width of the text.
-int16_t timeline_list_arc_text_width(const TimelineListArc *arc, int16_t head_top,
-                                     int16_t head_bottom, int16_t top, int16_t bottom);
-
-//! Where text beside the circle starts, from the side of the display opposite the circle: at the
-//! edge inset across its head, but never closer to the circle than the gap anywhere across its
-//! rows. Text is placed alike at rest and moving, keeping the width it rests in.
-//! @param arc The circle.
-//! @param head_top First row of the text's head.
-//! @param head_bottom Last row of the text's head.
-//! @param top First row of the text.
-//! @param bottom Last row of the text.
-//! @param width How far the text reaches toward the circle from where it starts.
-//! @return Distance from the side of the display's bounds to where the text starts.
-int16_t timeline_list_arc_text_inset(const TimelineListArc *arc, int16_t head_top,
-                                     int16_t head_bottom, int16_t top, int16_t bottom,
-                                     int16_t width);
 
 //! Where text runs across a run of rows: from inside the display's edge on the side opposite the
 //! circle to the gap short of the circle, or short of the display's edge where the circle is
