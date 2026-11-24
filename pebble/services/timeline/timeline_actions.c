@@ -178,8 +178,23 @@ static void prv_cleanup_action_result(ActionResultData *data, bool succeeded) {
   applib_free(data);
 }
 
+static TimelineActionsDismissedHandler s_dismissed_handler;
+
+void timeline_actions_set_dismissed_handler(TimelineActionsDismissedHandler handler) {
+  s_dismissed_handler = handler;
+}
+
 static void prv_show_result_window(ActionResultData *data, const TimelineResourceId timeline_res_id,
                                    const char *msg, bool succeeded) {
+  // A dismissed notification plays its own animation instead of a result dialog.
+  if (succeeded && data->action_menu && (timeline_res_id == TIMELINE_RESOURCE_RESULT_DISMISSED) &&
+      s_dismissed_handler && s_dismissed_handler()) {
+    action_menu_close(data->action_menu, false /* animated */);
+    data->action_menu = nullptr;
+    prv_cleanup_action_result(data, succeeded);
+    return;
+  }
+
   const GSize simple_dialog_icon_size = timeline_resources_get_gsize(TimelineResourceSizeLarge);
   const bool use_status_bar = true;
   const bool use_simple_dialog =
