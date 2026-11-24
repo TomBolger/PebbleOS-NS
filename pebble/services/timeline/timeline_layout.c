@@ -13,6 +13,7 @@
 
 #include <applib/applib_malloc.auto.h>
 #include <applib/graphics/gcontext.h>
+#include <applib/graphics/perimeter.h>
 #include <applib/graphics/text_resources.h>
 #include <applib/graphics/utf8.h>
 #include <applib/preferred_content_size.h>
@@ -99,11 +100,12 @@ static const TimelineLayoutStyle *prv_get_style(void) {
 }
 
 // Pin text (time, title, subtitle) is left-aligned on rect and right-aligned on round with the
-// right-hand strip; mirror it when the sidebar sits on the left.
-static GTextAlignment prv_get_pin_text_alignment(void) {
+// right-hand strip; mirror it when the sidebar sits on the left. The round compact list aligns it
+// to the display's edge instead, which it follows.
+static GTextAlignment prv_get_pin_text_alignment(const TimelineLayout *layout) {
   const bool on_right = timeline_layer_sidebar_is_on_right();
-  return PBL_IF_RECT_ELSE(on_right ? GTextAlignmentLeft : GTextAlignmentRight,
-                          on_right ? GTextAlignmentRight : GTextAlignmentLeft);
+  const bool toward_sidebar = PBL_IF_ROUND_ELSE(!layout->info->compact, false);
+  return (on_right == toward_sidebar) ? GTextAlignmentRight : GTextAlignmentLeft;
 }
 
 TimelineResourceId timeline_layout_get_icon_resource_id(LayoutLayerMode mode,
@@ -418,6 +420,10 @@ void timeline_layout_get_head_rows(TimelineLayout *layout, int16_t *top_out, int
   *bottom_out = title_top + font_height;
 }
 
+#if PBL_ROUND
+static void prv_flow_time(TimelineLayout *layout);
+#endif
+
 void timeline_layout_init_view(TimelineLayout *layout, LayoutLayerMode mode) {
   GTextNode *view_node = nullptr;
   switch (mode) {
@@ -441,6 +447,7 @@ void timeline_layout_init_view(TimelineLayout *layout, LayoutLayerMode mode) {
     GTextNodeContainer *container = (GTextNodeContainer *)layout->view_node;
     container->node.offset.y = -timeline_layout_get_title_center_y(layout);
   }
+  prv_flow_time(layout);
 #endif
 }
 
@@ -475,7 +482,7 @@ static GTextNode *prv_create_all_day_text_node(const TimelineLayout *layout) {
   };
   GTextNodeText *text_node = (GTextNodeText *)layout_create_text_node_from_config(
       &layout->layout_layer, &s_all_day_config.text.extent.node);
-  text_node->alignment = prv_get_pin_text_alignment();
+  text_node->alignment = prv_get_pin_text_alignment(layout);
   if (layout->info->compact) {
     // A compact pin's pages start at its top, so its padding holds all of what rises above
     text_node->node.offset.y =
@@ -541,7 +548,7 @@ static GTextNode *prv_create_hour_text_node(const TimelineLayout *layout) {
 
   GTextNodeHorizontal *horizontal_node = (GTextNodeHorizontal *)layout_create_text_node_from_config(
       &layout->layout_layer, &s_horizontal_config.container.extent.node);
-  horizontal_node->horizontal_alignment = prv_get_pin_text_alignment();
+  horizontal_node->horizontal_alignment = prv_get_pin_text_alignment(layout);
   return &horizontal_node->container.node;
 }
 
@@ -643,7 +650,7 @@ static GTextNode *prv_create_pin_view_node(TimelineLayout *layout) {
             ?: attribute_get_string(attributes, AttributeIdShortTitle, nullptr)
             ?: attribute_get_string(attributes, layout->impl->attributes.primary_id, "");
     if (!is_peek) {
-      primary_node->alignment = prv_get_pin_text_alignment();
+      primary_node->alignment = prv_get_pin_text_alignment(layout);
     }
     primary_node->line_spacing_delta = style->primary_line_spacing_delta;
     int num_primary_lines = is_fat ? 2 : 1;
@@ -688,7 +695,7 @@ static GTextNode *prv_create_pin_view_node(TimelineLayout *layout) {
       secondary_node->text = secondary_text;
     }
     if (!is_peek) {
-      secondary_node->alignment = prv_get_pin_text_alignment();
+      secondary_node->alignment = prv_get_pin_text_alignment(layout);
     }
     secondary_node->overflow = is_whole ? GTextOverflowModeWordWrap : overflow;
     graphics_text_node_container_add_child(&vertical_node->container, &secondary_node->node);
@@ -712,7 +719,7 @@ static GTextNode *prv_create_pin_view_node(TimelineLayout *layout) {
     GTextNodeText *body_node = (GTextNodeText *)layout_create_text_node_from_config(
         &layout->layout_layer, &s_body_config.extent.node);
     body_node->text = body_text;
-    body_node->alignment = prv_get_pin_text_alignment();
+    body_node->alignment = prv_get_pin_text_alignment(layout);
     body_node->overflow = GTextOverflowModeWordWrap;
     graphics_text_node_container_add_child(&vertical_node->container, &body_node->node);
   }
@@ -866,6 +873,38 @@ void timeline_layout_get_size(TimelineLayout *layout, GContext *ctx, GSize *size
   const bool render = false;
   prv_render_view(layout, ctx, render, size_out);
 }
+
+#if PBL_ROUND
+//! Text flow keeps each text node inside the display on its own, and the time is two side by side,
+//! so flowing would push the first onto the second: move them together to inside the display,
+//! where text flow would start them
+static void prv_flow_time(TimelineLayout *layout) {
+  if (!prv_is_paged_pin(layout)) {
+    return;
+  }
+  GRect box;
+  prv_get_pin_view_bounds(layout, &box);
+  GTextNode *time_node = ((GTextNodeContainer *)layout->view_node)->nodes[0];
+  const int16_t time_height = time_node->cached_size.h;
+  const GPoint origin = gpoint_add(layout->page_origin, box.origin);
+  const GSize display_size = {PBL_DISPLAY_WIDTH, PBL_DISPLAY_HEIGHT};
+  // Its glyphs may rise into the padding above it
+  const GRangeVertical rows = {
+    .origin_y = origin.y - TIMELINE_LAYOUT_COMPACT_PADDING_TOP,
+    .size_h = TIMELINE_LAYOUT_COMPACT_PADDING_TOP + time_height,
+  };
+  const GRangeHorizontal inside = g_perimeter_for_display->callback(
+      g_perimeter_for_display, &display_size, rows, TIMELINE_LAYOUT_TEXT_FLOW_INSET);
+  if (inside.size_w == 0) {
+    return;
+  }
+  if (prv_get_pin_text_alignment(layout) == GTextAlignmentLeft) {
+    time_node->offset.x += PBL_MAX(inside.origin_x - origin.x, 0);
+  } else {
+    time_node->offset.x -= PBL_MAX(origin.x + box.size.w - (inside.origin_x + inside.size_w), 0);
+  }
+}
+#endif
 
 void timeline_layout_set_page(TimelineLayout *layout, GPoint origin, const GRect *page_frame) {
   if (gpoint_equal(&layout->page_origin, &origin) && grect_equal(&layout->page_frame, page_frame)) {
