@@ -40,6 +40,9 @@ TimelineIterState *timeline_model_get_iter_state(int index);
 
 TimelineIterState *timeline_model_get_current_state(void);
 
+//! Iterator of the current pin, to walk the timeline from it without moving the model
+Iterator *timeline_model_get_current_iter(void);
+
 bool timeline_model_is_empty(void);
 
 int timeline_model_get_num_items(void);
