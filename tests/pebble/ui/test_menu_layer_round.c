@@ -157,3 +157,65 @@ void test_menu_layer_round__shape_bounds(void) {
   cl_assert_equal_i(grect_get_max_y(&bounds), 70);
 }
 
+// 10 rows of ROW_H in a 260 px frame
+#define CONTENT_H (10 * ROW_H)
+#define SPACE     (130 - ROW_H - ROW_H / 2)
+
+static int16_t prv_rest(int16_t row, int16_t space) {
+  return menu_round_rest_offset(260, CONTENT_H, row * ROW_H, ROW_H, space, space);
+}
+
+void test_menu_layer_round__end_space(void) {
+  cl_assert_equal_i(menu_round_end_space(260, ROW_H, ROW_H), SPACE);
+  // A header tall enough to put the next row in the middle needs no space
+  cl_assert_equal_i(menu_round_end_space(260, 130 - ROW_H / 2, ROW_H), 0);
+  cl_assert_equal_i(menu_round_end_space(260, 200, ROW_H), 0);
+}
+
+void test_menu_layer_round__rest_offset_centres_the_middle(void) {
+  cl_assert_equal_i(prv_rest(4, SPACE), 130 - 4 * ROW_H - ROW_H / 2);
+}
+
+void test_menu_layer_round__rest_offset_stops_at_the_ends(void) {
+  cl_assert_equal_i(prv_rest(0, 0), 0);
+  cl_assert_equal_i(prv_rest(1, 0), 0);
+  cl_assert_equal_i(prv_rest(9, 0), 260 - CONTENT_H);
+}
+
+void test_menu_layer_round__rest_offset_near_the_middle(void) {
+  // The first row rests with the second one in the middle...
+  const int16_t first = prv_rest(0, SPACE);
+  cl_assert_equal_i(first + ROW_H + ROW_H / 2, 130);
+  // ... where the second one rests too, so moving between them doesn't move the list
+  cl_assert_equal_i(prv_rest(1, SPACE), first);
+  // Likewise at the bottom
+  const int16_t last = prv_rest(9, SPACE);
+  cl_assert_equal_i(last + 8 * ROW_H + ROW_H / 2, 130);
+  cl_assert_equal_i(prv_rest(8, SPACE), last);
+  // Rows in between scroll a row at a time
+  for (int16_t row = 2; row < 8; row++) {
+    cl_assert_equal_i(prv_rest(row, SPACE), first - (row - 1) * ROW_H);
+  }
+}
+
+void test_menu_layer_round__rest_offset_under_a_header(void) {
+  const int16_t header_h = 130 - ROW_H / 2;
+  const int16_t content_h = header_h + 9 * ROW_H;
+  const int16_t top = menu_round_end_space(260, header_h, ROW_H);
+  // The header at the top, and the row under it in the middle, rest without moving the list
+  cl_assert_equal_i(menu_round_rest_offset(260, content_h, 0, header_h, top, SPACE), 0);
+  cl_assert_equal_i(menu_round_rest_offset(260, content_h, header_h, ROW_H, top, SPACE), 0);
+}
+
+void test_menu_layer_round__rest_offset_centres_a_list_that_fits(void) {
+  cl_assert_equal_i(menu_round_rest_offset(260, 3 * ROW_H, ROW_H, ROW_H, 0, 0),
+                    (260 - 3 * ROW_H) / 2);
+  cl_assert_equal_i(menu_round_rest_offset(260, 2 * ROW_H, 0, ROW_H, 40, 40),
+                    (260 - 2 * ROW_H) / 2);
+}
+
+void test_menu_layer_round__rest_offset_measures_from_the_selection(void) {
+  // Content measured before the last row grew still ends the list at that row's bottom
+  cl_assert_equal_i(menu_round_rest_offset(260, CONTENT_H - 10, 9 * ROW_H, ROW_H, 0, 0),
+                    260 - CONTENT_H);
+}
