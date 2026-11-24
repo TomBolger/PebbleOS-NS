@@ -517,14 +517,34 @@ typedef struct MenuLayer {
   bool round_pill_highlight : 1;
 
   //! @internal
+  //! Round only: the highlight is morphing between the header row's bubble and another row's
+  //! pill. Packs into \ref normal_colors_follow_theme's byte.
+  bool round_morph_running : 1;
+
+  //! @internal
+  //! Round only: a morph was stopped before reaching its end, at \ref round_morph. Packs into
+  //! \ref normal_colors_follow_theme's byte.
+  bool round_morph_interrupted : 1;
+
+  //! @internal
   //! Round only: extra room between the bezel and the left end of the highlight pill, see
   //! menu_layer_set_round_pill_left_margin(). Carved from \ref padding.
   uint8_t round_pill_left_margin;
 
+  //! @internal
+  //! Round only: how far a running morph is from the bubble (0) to the pill (1000), overshooting
+  //! on the way. Carved from \ref padding.
+  int16_t round_morph;
+
+  //! @internal
+  //! Round only: how far down the first row the bubble highlighting it reaches, or 0 for no
+  //! bubble, see menu_layer_set_round_header_bubble(). Carved from \ref padding.
+  uint8_t round_bubble_depth;
+
   //! Add some padding to keep track of the \ref MenuLayer size budget.
   //! As long as the size stays within this budget, 2.x apps can safely use the 3.x MenuLayer type.
   //! The actual size check is generated from applib_malloc.json, not asserted here.
-  uint8_t padding[13];
+  uint8_t padding[10];
 } MenuLayer;
 
 //! Padding used below the last item in pixels
