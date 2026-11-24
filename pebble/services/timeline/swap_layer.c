@@ -15,8 +15,6 @@
 #include <applib/ui/window.h>
 #include <kernel/ui/kernel_ui.h>
 #include <process_state/app_state/app_state.h>
-#include <resource/resource_ids.auto.h>
-#include <shell/system_theme.h>
 
 #ifdef CONFIG_TOUCH
 #include <pbl/util/testing.h>
@@ -167,7 +165,6 @@ static void prv_refresh_next_layer(SwapLayer *swap_layer) {
     next_frame.origin.y = current_frame->origin.y + current_frame->size.h;
     prv_layout_set_frame(swap_layer->next, &next_frame);
     layer_add_child(&swap_layer->layer, (Layer *)swap_layer->next);
-    layer_insert_below_sibling((Layer *)swap_layer->next, &swap_layer->arrow_layer.layer);
   }
 }
 
@@ -201,65 +198,6 @@ static void prv_update_status_bar_color(SwapLayer *swap_layer) {
   }
 
   prv_update_colors(swap_layer, bg_color, color_status_bar);
-}
-
-/////////////////////////
-// ARROW LAYER FUNCTIONS
-/////////////////////////
-
-//! Hides or shows the arrow (or two arrows, on S4) depending on where the layouts sit within the
-//! primary layer.
-static void prv_update_arrow(SwapLayer *swap_layer) {
-  bool hide_it = true;
-
-  // If there is a current layout, then we will need to compute whether to show the arrow
-  // If there is no current layout, then we should hide it.
-  if (swap_layer->current) {
-    const GRect *cur_frame = &swap_layer->current->layer.frame;
-    const GRect *layer_frame = &swap_layer->layer.frame;
-    const bool viewing_entire_notif = (cur_frame->size.h == layer_frame->size.h);
-    const bool at_top = (cur_frame->origin.y == 0);
-    if (at_top && (!viewing_entire_notif || swap_layer->next)) {
-      hide_it = false;
-    }
-  }
-
-  layer_set_hidden(&swap_layer->arrow_layer.layer, hide_it);
-}
-
-static void prv_arrow_layer_update_proc(Layer *layer, GContext *ctx) {
-  ArrowLayer *arrow_layer = (ArrowLayer *)layer;
-
-  const GRect *layer_bounds = &layer->bounds;
-
-#if PBL_RECT
-  graphics_context_set_fill_color(ctx, system_theme_get_bg_color());
-  graphics_fill_rect(ctx, layer_bounds);
-#endif
-
-  GRect arrow_bounds = arrow_layer->arrow_bitmap.bounds;
-  const GAlign arrow_alignment = PBL_IF_RECT_ELSE(GAlignTop, GAlignBottom);
-  grect_align(&arrow_bounds, layer_bounds, arrow_alignment, false /* clip */);
-  const int16_t arrow_nudge_y = PBL_IF_RECT_ELSE(7, -8);
-  arrow_bounds.origin.y += arrow_nudge_y;
-
-  // For some reason the down arrow bitmap is drawn as all-black in the test_notification_window
-  // unit test on Silk unless we draw it with GCompOpSet, yet this results in the arrow being drawn
-  // as all-white on a real Silk watch/QEMU; choosing the compositing mode this way ensures the
-  // arrow is drawn correctly in both environments
-#if UNITTEST
-  const GCompOp compositing_mode = GCompOpSet;
-#elif PBL_COLOR
-  // The arrow bitmap is black: tint it to stay visible in dark mode
-  const GCompOp compositing_mode = system_theme_is_dark_mode() ? GCompOpTint : GCompOpSet;
-  graphics_context_set_tint_color(ctx, system_theme_get_fg_color());
-#else
-  const GCompOp compositing_mode =
-      system_theme_is_dark_mode() ? GCompOpAssignInverted : GCompOpAssign;
-#endif
-  graphics_context_set_compositing_mode(ctx, compositing_mode);
-
-  graphics_draw_bitmap_in_rect(ctx, &arrow_layer->arrow_bitmap, &arrow_bounds);
 }
 
 ////////////////////////////////
@@ -377,7 +315,6 @@ static bool prv_setup_swap_up(SwapLayer *swap_layer) {
   prev_frame.origin.y = -prev_frame.size.h + current_frame->origin.y;
   prv_layout_set_frame(swap_layer->previous, &prev_frame);
   layer_add_child(&swap_layer->layer, (Layer *)swap_layer->previous);
-  layer_insert_below_sibling((Layer *)swap_layer->previous, &swap_layer->arrow_layer.layer);
 
   return true;
 }
@@ -702,7 +639,6 @@ static void prv_swap_layer_click_config_provider(void *context) {
 
 static void prv_swap_layer_update_proc(Layer *layer, GContext *ctx) {
   SwapLayer *swap_layer = (SwapLayer *)layer;
-  prv_update_arrow(swap_layer);
   prv_update_status_bar_color(swap_layer);
 }
 
@@ -731,7 +667,6 @@ void swap_layer_reload_data(SwapLayer *swap_layer) {
   current_frame.origin = (GPoint){0, 0};
   prv_layout_set_frame(current, &current_frame);
   layer_add_child(&swap_layer->layer, (Layer *)current);
-  layer_insert_below_sibling((Layer *)current, &swap_layer->arrow_layer.layer);
   swap_layer->current = current;
 
   prv_announce_layout_will_appear(swap_layer, swap_layer->current);
@@ -744,7 +679,6 @@ void swap_layer_reload_data(SwapLayer *swap_layer) {
     next_frame.origin.y = swap_layer->current->layer.frame.size.h;
     prv_layout_set_frame(next, &next_frame);
     layer_add_child(&swap_layer->layer, (Layer *)next);
-    layer_insert_below_sibling((Layer *)next, &swap_layer->arrow_layer.layer);
     swap_layer->next = next;
   }
 }
@@ -1114,14 +1048,6 @@ void swap_layer_init(SwapLayer *swap_layer, const GRect *frame) {
   layer_init(layer, frame);
   layer_set_update_proc(layer, prv_swap_layer_update_proc);
 
-  gbitmap_init_with_resource(&swap_layer->arrow_layer.arrow_bitmap, RESOURCE_ID_ARROW_DOWN);
-
-  const GRect arrow_frame =
-      GRect(0, frame->size.h - LAYOUT_ARROW_HEIGHT, frame->size.w, LAYOUT_ARROW_HEIGHT);
-  layer_init(&swap_layer->arrow_layer.layer, &arrow_frame);
-  layer_set_update_proc(&swap_layer->arrow_layer.layer, prv_arrow_layer_update_proc);
-  layer_add_child(layer, &swap_layer->arrow_layer.layer);
-
 #ifdef CONFIG_TOUCH
   swap_layer_touch_register(swap_layer);
 #endif
@@ -1135,8 +1061,6 @@ void swap_layer_deinit(SwapLayer *swap_layer) {
   // targets this layer, so a torn-down widget cannot be reached by a later touch event.
   swap_layer_touch_deregister(swap_layer);
 #endif
-  gbitmap_deinit(&swap_layer->arrow_layer.arrow_bitmap);
-  layer_deinit(&swap_layer->arrow_layer.layer);
   prv_swap_layer_reset(swap_layer);
   layer_deinit(&swap_layer->layer);
 }

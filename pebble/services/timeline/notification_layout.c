@@ -210,29 +210,6 @@ static bool prv_should_enlarge_emoji(NotificationLayout *layout) {
 #define NOTIFICATION_IMAGE_PADDING       (8)
 #define NOTIFICATION_IMAGE_CORNER_RADIUS (4)
 
-#if PBL_ROUND
-//! Round cards page in fixed steps and the usable width narrows towards the top and bottom of the
-//! circle, so the image takes a page of its own and sits centred in it.
-#define NOTIFICATION_IMAGE_CIRCLE_INSET (8)
-#define NOTIFICATION_IMAGE_RADIUS       (PBL_DISPLAY_HEIGHT / 2 - NOTIFICATION_IMAGE_CIRCLE_INSET)
-//! Centre of the page the image gets, which sits between the status bar and the paging arrow and so
-//! is a couple of pixels below the circle's own centre.
-#define NOTIFICATION_IMAGE_PAGE_CENTRE_Y (STATUS_BAR_LAYER_HEIGHT + LAYOUT_HEIGHT / 2)
-
-//! Whether a `width`-wide image of this aspect, centred in its page, clears the bezel.
-//!
-//! Checking the rectangle's own corners against the circle rather than bounding it by the inscribed
-//! square: a landscape photo is far wider than the square that fits the same circle, and photos are
-//! mostly landscape.
-static bool prv_image_fits_circle(int16_t width, uint8_t aspect) {
-  const int32_t half_w = width / 2;
-  const int32_t half_h = ((int32_t)width * aspect) / 32;
-  const int32_t dy = PBL_ABS(NOTIFICATION_IMAGE_PAGE_CENTRE_Y - PBL_DISPLAY_HEIGHT / 2) + half_h;
-  const int32_t r = NOTIFICATION_IMAGE_RADIUS;
-  return (half_w * half_w) + (dy * dy) <= (r * r);
-}
-#endif
-
 //! Clamped height/width in sixteenths of the image the phone holds, or 0 for none. Clamping bounds
 //! the band a malformed attribute can reserve.
 static uint8_t prv_image_aspect(const NotificationLayout *layout) {
@@ -247,16 +224,7 @@ static uint8_t prv_image_aspect(const NotificationLayout *layout) {
 //! do — and so the requester and the renderer ask for the same thing.
 static GSize prv_image_size(const NotificationLayout *layout, int16_t width) {
   const uint8_t aspect = prv_image_aspect(layout);
-  GSize size = {width, (width * aspect) / 16};
-#if PBL_ROUND
-  // Shrink to the widest that still clears the bezel. Bounded by the content width, so this is a
-  // few dozen integer comparisons at most, and the result is cached with the node's size.
-  while (size.w > 0 && !prv_image_fits_circle(size.w, aspect)) {
-    size.w--;
-    size.h = (size.w * aspect) / 16;
-  }
-#endif
-  return size;
+  return (GSize){width, (width * aspect) / 16};
 }
 
 static void prv_image_node_callback(GContext *ctx, const GRect *box,
@@ -264,23 +232,7 @@ static void prv_image_node_callback(GContext *ctx, const GRect *box,
                                     void *user_data) {
   NotificationLayout *layout = user_data;
   const GSize image = prv_image_size(layout, box->size.w);
-  GSize band = {box->size.w, image.h};
-  GPoint origin = box->origin;
-
-#if PBL_ROUND
-  // Give the image a page to itself: a fixed-height band that straddled a page seam would be
-  // sliced in half, since paging only knows how to break text.
-  if (config && config->paging && config->page_frame->size.h > 0) {
-    const int16_t page_h = config->page_frame->size.h;
-    const int16_t page_y =
-        config->origin_on_screen->y + box->origin.y - config->page_frame->origin.y;
-    const int16_t into_page = (page_y > 0) ? (page_y % page_h) : 0;
-    const int16_t skip = into_page ? (page_h - into_page) : 0;
-    band.h = skip + page_h;
-    origin.y += skip + (page_h - image.h) / 2;
-  }
-#endif
-  origin.x += (band.w - image.w) / 2;
+  const GPoint origin = box->origin;
 
   if (render) {
     const Uuid *item_id = &layout->info.item->header.id;
@@ -303,7 +255,7 @@ static void prv_image_node_callback(GContext *ctx, const GRect *box,
     notification_image_unlock();
   }
   if (size_out) {
-    *size_out = band;
+    *size_out = image;
   }
 }
 
@@ -540,7 +492,7 @@ static void PBL_NOINLINE prv_init_view(NotificationLayout *layout) {
     // Only calculate size if using a body icon, calculating size is stack expensive
     prv_card_render(layout, graphics_context_get_current_context(), false /* render */);
 
-    if ((layout->view_size.h > (LAYOUT_HEIGHT + LAYOUT_ARROW_HEIGHT))) {
+    if (layout->view_size.h > LAYOUT_HEIGHT) {
       // The large emoji won't fit in a single screen, so don't use the large emoji
       prv_destroy_view(layout);
       layout->view_node = prv_create_view(layout, false /* use_body_icon */);
@@ -641,7 +593,7 @@ static PBL_NOINLINE void prv_card_render_internal(NotificationLayout *layout, GC
   };
   static const GRect page_frame_on_screen = {
     .origin = {0, STATUS_BAR_LAYER_HEIGHT},
-    .size = {PBL_DISPLAY_WIDTH, PBL_DISPLAY_HEIGHT - STATUS_BAR_LAYER_HEIGHT - LAYOUT_ARROW_HEIGHT}
+    .size = {PBL_DISPLAY_WIDTH, LAYOUT_HEIGHT}
   };
   static const GTextNodeDrawConfig config = {
     .page_frame = &page_frame_on_screen,
@@ -663,9 +615,9 @@ static PBL_NOINLINE void prv_card_render_internal(NotificationLayout *layout, GC
 
   layout->view_size.h += LAYOUT_TOP_BANNER_HEIGHT;
 
-  // Room at the bottom for the arrow to the next card, and never shorter than the screen.
-  layout->view_size.h += CARD_BOTTOM_PADDING + LAYOUT_ARROW_HEIGHT;
-  layout->view_size.h = PBL_MAX(layout->view_size.h, PBL_DISPLAY_HEIGHT - STATUS_BAR_LAYER_HEIGHT);
+  // Some room at the bottom, and never shorter than the screen.
+  layout->view_size.h += CARD_BOTTOM_PADDING;
+  layout->view_size.h = PBL_MAX(layout->view_size.h, LAYOUT_HEIGHT);
 }
 
 static void prv_card_render(NotificationLayout *layout, GContext *ctx, bool render) {
