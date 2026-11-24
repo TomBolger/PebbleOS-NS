@@ -35,6 +35,14 @@ typedef struct LauncherMenuLayerSelectionState {
 //! @return The style for the user's preferred content size
 const LauncherMenuLayerStyle *launcher_menu_layer_get_style(void);
 
+#if PBL_ROUND
+//! Round: how deep the banner over the apps is with \a style
+int16_t launcher_menu_layer_round_banner_height(const LauncherMenuLayerStyle *style);
+
+//! Round: draws the "Apps" icon, its 24 px box at \a origin, with \a line outlines over \a fill
+void launcher_menu_layer_draw_apps_icon(GContext *ctx, GPoint origin, GColor line, GColor fill);
+#endif
+
 void launcher_menu_layer_init(LauncherMenuLayer *launcher_menu_layer,
                               AppMenuDataSource *data_source);
 
