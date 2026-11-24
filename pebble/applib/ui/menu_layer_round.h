@@ -16,6 +16,8 @@
 #define MENU_ROUND_PILL_BEZEL_MARGIN 4
 //! Gap between the highlight pill and the top and bottom of its row
 #define MENU_ROUND_PILL_INSET_Y 3
+//! Gap between right-aligned cell content, such as a radio button, and the end of its row's pill
+#define MENU_ROUND_PILL_END_GAP 7
 
 //! The highlight: a box with rounded corners
 typedef struct {
@@ -31,6 +33,12 @@ typedef struct {
 //! @return false if there is no room for a pill
 bool menu_round_pill(GSize display, GRect bounds, GRect frame, int16_t rest_h, int16_t left_margin,
                      MenuRoundShape *pill);
+
+//! Where right-aligned content of \a row, in screen coordinates, ends: \a gap inside the right end
+//! of the pill the row rests with, over its span from \a top to \a bottom. The ends of the pill
+//! keep to a circle concentric with the \a display, so the content of every row follows the curve
+//! of the bezel as they do, and stays inside the pill when the row is selected.
+int16_t menu_round_row_end_x(GSize display, GRect row, int16_t top, int16_t bottom, int16_t gap);
 
 //! How far past one end a round list may rest so that, with the row at that end, \a end_h tall,
 //! selected, its neighbour, \a next_h tall, is in the middle of a frame \a frame_h tall. Resting
