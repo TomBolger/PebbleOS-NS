@@ -22,3 +22,6 @@ uint32_t fake_kernel_services_notifications_ancs_notifications_count(void);
 
 //! @return Number of times notifications_handle_notification_acted_upon() was called.
 uint32_t fake_kernel_services_notifications_acted_upon_count(void);
+
+//! Notifications added with an alert, by notifications_add_notification()
+uint32_t fake_kernel_services_notifications_alert_count(void);
