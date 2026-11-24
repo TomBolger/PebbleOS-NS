@@ -162,7 +162,7 @@ struct TimelineLayout {
   GPoint flow_origin;
   /** What the pin's text flows inside where it rests, or nullptr. */
   const GPerimeter *flow_perimeter;
-  /** Height of the pages of the screen the pin is laid out in from where it rests, or 0. */
+  /** Height of the pages of the screen the pin is laid out in, or 0. */
   int16_t flow_page_height;
 
   /** Layout this one is transitioning to. */
@@ -275,6 +275,15 @@ void timeline_layout_get_icon_frame(const GRect *bounds, TimelineScrollDirection
                                     GRect *frame);
 
 /**
+ * @brief Get the width of a pin's head, its time and the first line of its title, as they are
+ * on a line as wide as the display, wherever the pin is laid out.
+ *
+ * @param layout Pin layout, laid out in a pinned mode.
+ * @return Width of the wider of the two.
+ */
+int16_t timeline_layout_get_head_width(TimelineLayout *layout);
+
+/**
  * @brief Get the vertical center of a pin's title.
  *
  * The center is that of the title's glyphs rather than of its line boxes, so it lines up with the
@@ -353,8 +362,9 @@ void timeline_layout_get_size(TimelineLayout *timeline_layout, GContext *ctx, GS
  * @brief Lay a pin of the compact list out for where it rests on screen.
  *
  * On round displays its text flows inside a perimeter as it is where it rests, wherever the pin is
- * drawn while it moves. A pin taller than the screen is laid out in pages of the screen from where
- * it rests, no line straddling a page break, so the list can scroll through it a page at a time.
+ * drawn while it moves. A pin taller than the screen is laid out in pages of the screen, as it
+ * rests on the first one, no line straddling a page break, so the list can scroll through it a
+ * page at a time.
  * Builds the view again.
  *
  * @param layout Layout of a compact pin.

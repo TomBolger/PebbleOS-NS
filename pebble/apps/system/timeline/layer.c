@@ -152,8 +152,6 @@ static bool prv_is_compact(void) {
 #define LIST_ARC_CENTER_INSET  LAYOUT_TOP_BANNER_CENTER_Y_ROUND
 #define LIST_ARC_DEPTH         (LIST_ARC_CENTER_INSET + LIST_ARC_RADIUS + 1)
 #define LIST_ARC_ICON_DISTANCE (LAYOUT_TOP_BANNER_ICON_CENTER_Y_ROUND - LIST_ARC_CENTER_INSET)
-//! Length along the arc between the icons of pins next to each other
-#define LIST_ARC_ICON_SPACING (8 * TIMELINE_TINY_RESOURCE_SIZE.h / 5)
 #endif
 
 uint16_t timeline_layer_get_ideal_sidebar_width(void) {
@@ -588,8 +586,10 @@ Animation *timeline_layer_create_day_sep_show(TimelineLayer *timeline_layer) {
 //! Distance from the selected pin to the day separator dot and the end-of-timeline fin
 #define LIST_INDICATOR_SPACING 12
 #if PBL_ROUND
-//! How far inside the display's edge the center of an icon on the arc stays while it is in view
-#define LIST_ARC_ICON_VIEW_INSET 0
+//! How far inside the display's edge the center of an icon on the arc stays, for all of it to show
+#define LIST_ARC_ICON_VIEW_INSET (TIMELINE_TINY_RESOURCE_SIZE.h / 2)
+//! How far past the display's edge an icon's center is once its corners are out of view
+#define LIST_ARC_ICON_OUT_INSET (3 * TIMELINE_TINY_RESOURCE_SIZE.h / 4 + 1)
 #endif
 
 static LayoutLayerMode prv_list_mode(bool selected) {
@@ -630,14 +630,46 @@ static TimelineListArc prv_list_arc(TimelineLayer *layer) {
   };
 }
 
-//! Angle on the arc between the icons of pins next to each other
-static int32_t prv_list_icon_step(void) {
-  return timeline_list_arc_angle(LIST_ARC_ICON_DISTANCE, LIST_ARC_ICON_SPACING);
-}
-
 //! How far an icon on the arc turns either way before it leaves the display
 static int32_t prv_list_max_angle(const TimelineList *list) {
   return timeline_list_arc_max_angle(&list->arc, LIST_ARC_ICON_DISTANCE, LIST_ARC_ICON_VIEW_INSET);
+}
+
+//! Angle past which an icon on the arc is wholly out of view, on one side
+static int32_t prv_list_hidden_angle(const TimelineList *list, int side) {
+  return side *
+         timeline_list_arc_max_angle(&list->arc, LIST_ARC_ICON_DISTANCE, -LIST_ARC_ICON_OUT_INSET);
+}
+
+//! Side of the screen's middle a row is on
+static int prv_list_side(TimelineLayer *layer, int16_t row) {
+  return (row < layer->layer.bounds.size.h / 2) ? -1 : 1;
+}
+
+//! Where a pin's icon rests on the arc, like a spoke from its title: the selected pin's at the
+//! notch, the others' beside their title as far as they stay wholly in view and clear of the
+//! selected one. Where a pin's title is off screen, its icon is wholly out of view too.
+static int32_t prv_list_rest_icon_angle(TimelineLayer *layer, const TimelineListPinView *pin,
+                                        const GRect *frame, bool selected,
+                                        const GRect *selected_frame, int32_t selected_angle) {
+  const TimelineList *list = &layer->list;
+  const int16_t row = frame->origin.y + pin->anchor_y;
+  const int side = selected ? prv_list_side(layer, row)
+                            : ((frame->origin.y < selected_frame->origin.y) ? -1 : 1);
+  if (row < 0 || row >= layer->layer.bounds.size.h) {
+    return prv_list_hidden_angle(list, side);
+  }
+  const int32_t max_angle = prv_list_max_angle(list);
+  int32_t angle = timeline_list_arc_row_angle(&list->arc, LIST_ARC_ICON_DISTANCE, row);
+  angle = PBL_CLAMP(angle, -max_angle, max_angle);
+  if (selected) {
+    return angle;
+  }
+  const int32_t spacing =
+      timeline_list_arc_angle(LIST_ARC_ICON_DISTANCE, 6 * TIMELINE_TINY_RESOURCE_SIZE.h / 5);
+  angle = (side < 0) ? PBL_MIN(angle, selected_angle - spacing)
+                     : PBL_MAX(angle, selected_angle + spacing);
+  return (PBL_ABS(angle) > max_angle) ? prv_list_hidden_angle(list, side) : angle;
 }
 
 //! Frame of an icon on the arc. Icons turn about the circle's center as the arc turns, and are
@@ -699,7 +731,8 @@ static GRangeHorizontal prv_list_perimeter(const GPerimeter *perimeter, const GS
   };
 }
 
-//! Offset from a pin's top of where it rests on the anchor: the round arc points at its title
+//! Offset from a pin's top of where it rests on the anchor: as in the stock round timeline, the
+//! notch and the pin's icon point at its title
 static int16_t prv_list_get_anchor_y(TimelineLayout *layout) {
   return PBL_IF_ROUND_ELSE(
       TIMELINE_LAYOUT_COMPACT_PADDING_TOP + timeline_layout_get_title_center_y(layout), 0);
@@ -812,12 +845,12 @@ static void prv_list_set_frame(TimelineLayer *layer, TimelineListPinView *pin, c
   prv_list_follow_arc(pin, frame);
 #endif
   layer_set_frame((Layer *)pin->layout, frame);
-  GRect icon_frame;
-  prv_list_get_icon_frame(layer, pin, frame, &icon_frame);
-  layer_set_frame((Layer *)&pin->layout->icon_layer, &icon_frame);
 #if PBL_ROUND
   pin->icon_current_angle = pin->icon_angle;
 #endif
+  GRect icon_frame;
+  prv_list_get_icon_frame(layer, pin, frame, &icon_frame);
+  layer_set_frame((Layer *)&pin->layout->icon_layer, &icon_frame);
 }
 
 //! Whether the pins after the selected one are below it on screen
@@ -931,9 +964,29 @@ static void prv_list_get_pins(TimelineLayer *layer, TimelineListPin *pins) {
   TimelineList *list = &layer->list;
   for (int i = 0; i < list->num_pins; i++) {
     const TimelineListPinView *pin = list->pins[i];
+    const int16_t height = prv_list_pin_height(pin);
+    const int16_t screen_height = layer->layer.bounds.size.h;
+    // On rect, a pin shows whole
+    int16_t edge_top = TIMELINE_LIST_NEIGHBOUR_MARGIN_RECT;
+    int16_t edge_bottom = TIMELINE_LIST_NEIGHBOUR_MARGIN_RECT;
+    int16_t reach_top = edge_top;
+    int16_t reach_bottom = screen_height - edge_bottom;
+#if PBL_ROUND
+    // On round, it rests out as far as its time and title fit beside the circle, its padding above
+    // them, and shows as long as its title does, the display cutting off what does not fit
+    const int16_t band_top = timeline_list_arc_band(
+        &list->arc, timeline_layout_get_head_width(pin->layout), &edge_bottom);
+    edge_top = band_top - TIMELINE_LAYOUT_COMPACT_PADDING_TOP;
+    reach_top = band_top - pin->anchor_y;
+    reach_bottom = screen_height - edge_bottom + height - pin->anchor_y;
+#endif
     pins[prv_list_screen_index(layer, list->num_pins, i)] = (TimelineListPin){
-      .height = prv_list_pin_height(pin),
+      .height = height,
       .anchor_y = pin->anchor_y,
+      .edge_top = edge_top,
+      .edge_bottom = edge_bottom,
+      .reach_top = reach_top,
+      .reach_bottom = reach_bottom,
     };
   }
 }
@@ -956,9 +1009,8 @@ static int16_t prv_list_get_top_indicator_space(TimelineLayer *layer) {
 }
 
 //! Places the pins at their resting frames. The selected pin shows in full: pins that no longer
-//! fit around it are pushed off screen, and on round the arc turns for its notch to point at the
-//! selected pin's title, the other icons turning with it. A pin whose icon would turn out of view
-//! is pushed off screen too.
+//! fit around it are pushed off screen, and one that does not fit on the screen takes it, the
+//! list scrolling through it.
 static void prv_list_layout(TimelineLayer *layer) {
   TimelineList *list = &layer->list;
   const int num_pins = list->num_pins;
@@ -966,16 +1018,12 @@ static void prv_list_layout(TimelineLayer *layer) {
     return;
   }
   const int16_t height = layer->layer.bounds.size.h;
-  // The round arc's notch rests in the middle when nothing pushes the selected pin; the rect list
-  // starts at the top and the arrow follows the selected pin's icon
-  TimelineListGeometry geometry = {
+  // The selected pin's title rests in the middle of the round display, at the arc's notch; the rect
+  // list starts at the top and the arrow follows the selected pin's icon
+  const TimelineListGeometry geometry = {
     .height = height,
     .anchor_y = height / 2,
-    .anchor_min = 0,
-    .anchor_max = height,
     .margin = LIST_MARGIN,
-    .neighbour_margin = TIMELINE_LIST_NEIGHBOUR_MARGIN_RECT,
-    .neighbour_margin_bottom = TIMELINE_LIST_NEIGHBOUR_MARGIN_RECT,
     .gap = PBL_IF_RECT_ELSE(TIMELINE_LIST_GAP_RECT, TIMELINE_LIST_GAP_ROUND),
     .top_space = prv_list_get_top_indicator_space(layer),
     // A pin taking the whole screen shows its content from below the margin
@@ -983,50 +1031,26 @@ static void prv_list_layout(TimelineLayer *layer) {
     .align = PBL_IF_RECT_ELSE(TimelineListAlignTop, TimelineListAlignAnchor),
     .next_is_down = prv_list_next_is_down(layer),
   };
-#if PBL_ROUND
-  const int32_t max_angle = prv_list_max_angle(list);
-  const int32_t step = prv_list_icon_step();
-  // The selected pin's title stays where the notch can point at it
-  const int16_t reach = sin_lookup(max_angle) * LIST_ARC_ICON_DISTANCE / TRIG_MAX_RATIO;
-  geometry.anchor_min = height / 2 - reach;
-  geometry.anchor_max = height / 2 + reach;
-  // The other pins rest out as far as their text has room, their padding above it
-  int16_t band_bottom;
-  const int16_t band_top =
-      timeline_list_arc_band(&list->arc, TIMELINE_LIST_NEIGHBOUR_TEXT_WIDTH_ROUND, &band_bottom);
-  geometry.neighbour_margin = band_top - TIMELINE_LAYOUT_COMPACT_PADDING_TOP;
-  geometry.neighbour_margin_bottom = band_bottom;
-#endif
   const int16_t page_height = timeline_list_page_height(&geometry);
   const int selected = prv_list_screen_index(layer, num_pins, list->selected);
   TimelineListPin pins[TIMELINE_LIST_MAX_PINS];
   int16_t tops[TIMELINE_LIST_MAX_PINS];
   bool shown[TIMELINE_LIST_MAX_PINS];
-  bool allowed[TIMELINE_LIST_MAX_PINS] = {true, true, true};
   // A pin's text flows as it rests, which can change its height and where its title is, so the
   // pins are placed again until they stay
   const int max_attempts = 4;
+  // The scroll asked for is kept until the pin is laid out as it rests
+  const int16_t wanted_scroll = list->scroll;
+  int16_t scroll = 0;
   for (int attempt = 0; attempt < max_attempts; attempt++) {
     prv_list_get_pins(layer, pins);
-    list->max_scroll = timeline_list_max_scroll(pins[selected].height, page_height);
-    list->scroll = PBL_CLAMP(list->scroll, 0, list->max_scroll);
-    timeline_list_arrange(&geometry, pins, num_pins, selected, list->scroll, allowed, tops, shown);
-#if PBL_ROUND
-    list->notch_angle =
-        PBL_CLAMP(timeline_list_arc_row_angle(&list->arc, LIST_ARC_ICON_DISTANCE,
-                                              tops[selected] + pins[selected].anchor_y),
-                  -max_angle, max_angle);
-    bool icon_out = false;
-    for (int i = 0; i < num_pins; i++) {
-      if (shown[i] && PBL_ABS(list->notch_angle + (i - selected) * step) > max_angle) {
-        allowed[i] = false;
-        icon_out = true;
-      }
-    }
-    if (icon_out) {
-      continue;
-    }
-#endif
+    const int16_t first_top =
+        timeline_list_selected_top(&geometry, pins, num_pins, selected, &list->whole_screen);
+    // Rect pages start where the pin does, and only one taller than the screen needs them
+    const int16_t paged_height = PBL_IF_RECT_ELSE(0, first_top) + pins[selected].height;
+    list->max_scroll = list->whole_screen ? timeline_list_max_scroll(paged_height, page_height) : 0;
+    scroll = PBL_CLAMP(wanted_scroll, 0, list->max_scroll);
+    timeline_list_arrange(&geometry, pins, num_pins, selected, scroll, tops, shown);
     if (attempt == max_attempts - 1) {
       // The pins rest as they are laid out now
       break;
@@ -1035,11 +1059,12 @@ static void prv_list_layout(TimelineLayer *layer) {
     for (int i = 0; i < num_pins; i++) {
       const int screen_index = prv_list_screen_index(layer, num_pins, i);
       TimelineListPinView *pin = list->pins[i];
-      const bool paged = (i == list->selected) && (list->max_scroll > 0);
+      const bool paged = (i == list->selected) && list->whole_screen &&
+                         PBL_IF_RECT_ELSE(list->max_scroll > 0, true);
       pin->shown = shown[screen_index];
-      // A pin taller than the screen is laid out as it shows from its top, page after page
-      pin->flow_origin = GPoint(prv_list_full_frame(layer, 0, 0).origin.x,
-                                paged ? geometry.page_top : tops[screen_index]);
+      // A pin taking the whole screen is laid out as it shows on its first page, page after page
+      pin->flow_origin =
+          GPoint(prv_list_full_frame(layer, 0, 0).origin.x, paged ? first_top : tops[screen_index]);
       pin->flow_page_height = paged ? page_height : 0;
 #if PBL_RECT
       // Only pages change how rect pins are laid out
@@ -1056,29 +1081,26 @@ static void prv_list_layout(TimelineLayer *layer) {
     }
   }
 
+  list->scroll = scroll;
   for (int i = 0; i < num_pins; i++) {
     const int screen_index = prv_list_screen_index(layer, num_pins, i);
     TimelineListPinView *pin = list->pins[i];
     pin->frame = prv_list_full_frame(layer, tops[screen_index], prv_list_pin_height(pin));
-#if PBL_ROUND
-    // An icon rides the arc a step from the next one toward the notch, or further toward its
-    // pin's title if the pins are further apart
-    pin->icon_angle = list->notch_angle + (screen_index - selected) * step;
-    const int32_t title_angle =
-        PBL_CLAMP(timeline_list_arc_row_angle(&list->arc, LIST_ARC_ICON_DISTANCE,
-                                              pin->frame.origin.y + pin->anchor_y),
-                  -max_angle, max_angle);
-    if (pin->shown && screen_index != selected) {
-      pin->icon_angle = (screen_index < selected) ? PBL_MIN(pin->icon_angle, title_angle)
-                                                  : PBL_MAX(pin->icon_angle, title_angle);
-    }
-    if (!pin->shown && PBL_ABS(pin->icon_angle) <= max_angle + step / 2) {
-      // The icon of a pin pushed off screen turns out of view with it
-      const int32_t out = max_angle + step / 2;
-      pin->icon_angle = (screen_index < selected) ? -out : out;
-    }
-#endif
   }
+#if PBL_ROUND
+  // Each icon rests on the arc by its pin's title, the selected pin's at the notch
+  const TimelineListPinView *selected_pin = list->pins[list->selected];
+  const GRect *selected_frame = &selected_pin->frame;
+  const int32_t selected_angle =
+      prv_list_rest_icon_angle(layer, selected_pin, selected_frame, true, selected_frame, 0);
+  for (int i = 0; i < num_pins; i++) {
+    TimelineListPinView *pin = list->pins[i];
+    pin->icon_angle = (i == list->selected)
+                          ? selected_angle
+                          : prv_list_rest_icon_angle(layer, pin, &pin->frame, false, selected_frame,
+                                                     selected_angle);
+  }
+#endif
 }
 
 //! Stacks the frames of a timeline-ordered run of pins against the pins whose frames are known
@@ -1280,7 +1302,6 @@ static void prv_list_start_from_current(TimelineLayer *layer) {
   TimelineList *list = &layer->list;
   prv_list_destroy_leaving(layer);
   list->crosses_day = false;
-  list->notch_from_angle = list->notch_current_angle;
   for (int i = 0; i < list->num_pins; i++) {
     TimelineListPinView *pin = list->pins[i];
     pin->from = ((Layer *)pin->layout)->frame;
@@ -1289,31 +1310,12 @@ static void prv_list_start_from_current(TimelineLayer *layer) {
   }
 }
 
-//! Icons turn on the arc as far as the selected pin's icon does: those coming in turn in from
-//! beyond the pins they come next to, those leaving turn out the same way
-static void prv_list_turn_icons(TimelineLayer *layer, TimelineListPinView **old, int num_old) {
-  TimelineList *list = &layer->list;
-  int32_t turn = 0;
-  for (int i = 0; i < num_old; i++) {
-    if (old[i] == list->pins[list->selected]) {
-      turn = old[i]->icon_angle - old[i]->icon_from_angle;
-    }
-  }
-  for (int i = 0; i < list->num_pins; i++) {
-    bool kept = false;
-    for (int j = 0; j < num_old; j++) {
-      kept |= (old[j] == list->pins[i]);
-    }
-    if (!kept) {
-      list->pins[i]->icon_from_angle = list->pins[i]->icon_angle - turn;
-    }
-  }
-  for (int i = 0; i < list->num_leaving; i++) {
-    list->leaving[i]->icon_angle = list->leaving[i]->icon_from_angle + turn;
-  }
+//! Icons of pins coming in turn in from out of view on their side, and those of pins leaving turn
+//! out of view on theirs
+static void prv_list_icons_in_and_out(TimelineLayer *layer, TimelineListPinView **old,
+                                      int num_old) {
 #if PBL_ROUND
-  // They turn in and out from beyond the display
-  const int32_t out = prv_list_max_angle(list) + prv_list_icon_step() / 2;
+  TimelineList *list = &layer->list;
   for (int i = 0; i < list->num_pins; i++) {
     TimelineListPinView *pin = list->pins[i];
     bool kept = false;
@@ -1321,16 +1323,14 @@ static void prv_list_turn_icons(TimelineLayer *layer, TimelineListPinView **old,
       kept |= (old[j] == pin);
     }
     if (!kept) {
-      pin->icon_from_angle = (pin->icon_angle < list->notch_angle)
-                                 ? PBL_MIN(pin->icon_from_angle, -out)
-                                 : PBL_MAX(pin->icon_from_angle, out);
+      const int16_t row = pin->from.origin.y + pin->anchor_y;
+      pin->icon_from_angle = prv_list_hidden_angle(list, prv_list_side(layer, row));
     }
   }
   for (int i = 0; i < list->num_leaving; i++) {
     TimelineListPinView *pin = list->leaving[i];
-    pin->icon_angle = (pin->icon_from_angle < list->notch_from_angle)
-                          ? PBL_MIN(pin->icon_angle, -out)
-                          : PBL_MAX(pin->icon_angle, out);
+    const int16_t row = pin->frame.origin.y + pin->anchor_y;
+    pin->icon_angle = prv_list_hidden_angle(list, prv_list_side(layer, row));
   }
 #endif
 }
@@ -1355,10 +1355,6 @@ static void prv_list_move(TimelineLayer *layer) {
       TimelineListPinView *pin = list->pins[i];
       pin->frame = pin->from;
       pin->frame.origin.y += shift;
-#if PBL_ROUND
-      pin->icon_angle =
-          pin->icon_from_angle - layer->move_delta * TIMELINE_LIST_MAX_PINS * prv_list_icon_step();
-#endif
       list->leaving[list->num_leaving++] = pin;
     }
     list->num_pins = 0;
@@ -1366,6 +1362,7 @@ static void prv_list_move(TimelineLayer *layer) {
     list->ends_timeline = false;
     list->day_end = nullptr;
     list->timeline_end = nullptr;
+    prv_list_icons_in_and_out(layer, nullptr, 0);
     return;
   }
 
@@ -1394,7 +1391,7 @@ static void prv_list_move(TimelineLayer *layer) {
     }
   }
   prv_list_place_offscreen(layer, old, num_old);
-  prv_list_turn_icons(layer, old, num_old);
+  prv_list_icons_in_and_out(layer, old, num_old);
   prv_list_follow_with_indicators(layer);
 }
 
@@ -1419,7 +1416,6 @@ static void prv_list_reset(TimelineLayer *layer) {
   prv_list_layout(layer);
   // Pins slide in from the way of the last move, as after the day separator
   const int16_t slide = layer->move_delta * layer->layer.bounds.size.h / 2;
-  list->notch_current_angle = list->notch_from_angle = list->notch_angle;
   for (int i = 0; i < list->num_pins; i++) {
     TimelineListPinView *pin = list->pins[i];
     prv_list_set_frame(layer, pin, &pin->frame);
@@ -1427,7 +1423,13 @@ static void prv_list_reset(TimelineLayer *layer) {
     pin->from = pin->frame;
     pin->from.origin.y += slide;
     pin->from_selected = (i == list->selected);
-    pin->icon_from_angle = pin->icon_angle;
+#if PBL_ROUND
+    // Icons turn in from out of view, the selected one's from the way the pins come
+    const int side = (i == list->selected)
+                         ? ((slide < 0) ? -1 : 1)
+                         : prv_list_side(layer, pin->frame.origin.y + pin->anchor_y);
+    pin->icon_from_angle = prv_list_hidden_angle(list, side);
+#endif
   }
   list->selection_changed = true;
   list->day_end = nullptr;
@@ -1443,6 +1445,17 @@ static void prv_list_each_pin(TimelineLayer *layer,
   for (int i = 0; i < list->num_pins + list->num_leaving; i++) {
     callback(layer, (i < list->num_pins) ? list->pins[i] : list->leaving[i - list->num_pins]);
   }
+}
+
+//! Where a pin is part way through the up/down animation: each of its edges moves from where it
+//! was to where it rests, keeping the width its text is laid out in
+static GRect prv_list_frame_at(const TimelineListPinView *pin, AnimationProgress progress,
+                               InterpolateInt64Function interpolate) {
+  GRect frame = pin->from;
+  frame.origin.y = interpolate(progress, pin->from.origin.y, pin->frame.origin.y);
+  frame.size.h = interpolate(progress, grect_get_max_y(&pin->from), grect_get_max_y(&pin->frame)) -
+                 frame.origin.y;
+  return frame;
 }
 
 //! Moves the pins, each from where it was to where it rests. Pins next to each other at both ends
@@ -1470,13 +1483,9 @@ static void prv_list_frames_update(Animation *animation, AnimationProgress progr
       pin->from.size.w = pin->frame.size.w;
       pin->from_selected = false;
     }
-    GRect frame = pin->from;
-    frame.origin.y = interpolate(progress, pin->from.origin.y, pin->frame.origin.y);
-    frame.size.h =
-        interpolate(progress, grect_get_max_y(&pin->from), grect_get_max_y(&pin->frame)) -
-        frame.origin.y;
+    GRect frame = prv_list_frame_at(pin, progress, interpolate);
 #if PBL_ROUND
-    // Pins' text follows the arc, their icons turn on it
+    // Pins' text follows the arc, their icons turn on it from one spoke to the next
     prv_list_follow_arc(pin, &frame);
     pin->icon_current_angle = interpolate(progress, pin->icon_from_angle, pin->icon_angle);
     GRect icon_frame;
@@ -1485,10 +1494,6 @@ static void prv_list_frames_update(Animation *animation, AnimationProgress progr
 #endif
     layer_set_frame((Layer *)pin->layout, &frame);
   }
-#if PBL_ROUND
-  list->notch_current_angle = interpolate(progress, list->notch_from_angle, list->notch_angle);
-  layer_mark_dirty((Layer *)layer);
-#endif
   prv_list_place_indicators(layer);
 }
 
@@ -1575,7 +1580,6 @@ static void prv_list_up_down_stopped(TimelineLayer *layer) {
   }
   prv_list_each_pin(layer, prv_list_finish_pin_move);
   prv_list_destroy_leaving(layer);
-  list->notch_current_angle = list->notch_angle;
   list->selection_changed = false;
   prv_list_follow_with_indicators(layer);
   prv_list_place_indicators(layer);
@@ -1775,47 +1779,28 @@ static void prv_draw_round_flip(GContext *ctx, const GRect *layer_bounds, const 
 #endif
 
 #if PBL_ROUND
-//! Fills the compact list's sidebar: the arc's circle, its edge where the sidebar's is. Wider than
-//! the display, as it starts the intro, it fills it.
-static GPoint prv_draw_list_arc(GContext *ctx, const GRect *layer_bounds, int16_t sidebar_width,
-                                bool on_right) {
-  const int16_t edge_x = on_right ? (layer_bounds->size.w - sidebar_width) : (sidebar_width - 1);
-  const GPoint center = {
-    .x = edge_x + (on_right ? LIST_ARC_RADIUS : -LIST_ARC_RADIUS),
-    .y = layer_bounds->size.h / 2,
+//! Fills the compact list's sidebar: the arc's circle, its edge where the sidebar's is, with its
+//! notch in the middle, one span per row. Wider than the display, as it starts the intro, it fills
+//! it, notch and all.
+static void prv_draw_list_arc(GContext *ctx, const GRect *layer_bounds, int16_t sidebar_width,
+                              bool on_right, bool notched) {
+  const TimelineListSidebar sidebar = {
+    .height = layer_bounds->size.h,
+    .center_inset = sidebar_width - LIST_ARC_RADIUS - 1,
+    .radius = LIST_ARC_RADIUS,
+    .notch_width = notched ? prv_get_style()->sidebar_arrow_size.w : 0,
+    .notch_height = prv_get_style()->sidebar_arrow_size.h,
   };
-  if (sidebar_width >= layer_bounds->size.w) {
-    graphics_fill_rect(ctx, layer_bounds);
-  } else {
-    graphics_fill_circle(ctx, center, LIST_ARC_RADIUS);
+  for (int16_t y = 0; y < layer_bounds->size.h; y++) {
+    const int16_t depth = (sidebar_width >= layer_bounds->size.w)
+                              ? layer_bounds->size.w
+                              : timeline_list_sidebar_depth(&sidebar, y);
+    if (depth <= 0) {
+      continue;
+    }
+    const int16_t x = on_right ? (layer_bounds->size.w - depth) : 0;
+    graphics_fill_rect(ctx, &GRect(x, y, depth, 1));
   }
-  return center;
-}
-
-//! Cuts the arc's notch into its edge, turned about its center by an angle, down being positive,
-//! so it points at the selected pin
-static void prv_draw_list_arc_notch(GContext *ctx, GPoint center, GSize size, int32_t angle,
-                                    bool on_right) {
-  // Unit vector from the center out through the notch, and along the edge
-  const int32_t out_x = (on_right ? -cos_lookup(angle) : cos_lookup(angle));
-  const int32_t out_y = sin_lookup(angle);
-  const int32_t base = LIST_ARC_RADIUS + 1;
-  const int32_t tip = base - size.w;
-  const int32_t half = size.h / 2;
-  GPath notch = {
-    .num_points = 3,
-    .points = (GPoint[]){
-      {center.x + (base * out_x + half * out_y) / TRIG_MAX_RATIO,
-       center.y + (base * out_y - half * out_x) / TRIG_MAX_RATIO},
-      {center.x + (tip * out_x) / TRIG_MAX_RATIO, center.y + (tip * out_y) / TRIG_MAX_RATIO},
-      {center.x + (base * out_x - half * out_y) / TRIG_MAX_RATIO,
-       center.y + (base * out_y + half * out_x) / TRIG_MAX_RATIO},
-    },
-  };
-  graphics_context_set_antialiased(ctx, true);
-  graphics_context_set_fill_color(ctx, system_theme_get_bg_color());
-  gpath_draw_filled(ctx, &notch);
-  graphics_context_set_antialiased(ctx, false);
 }
 #endif
 
@@ -1853,13 +1838,8 @@ static void prv_update_proc(struct Layer *layer, GContext *ctx) {
   // the intro or exit and then return early so we don't draw the arrow notch
 #if PBL_ROUND
   if (timeline_layer->compact) {
-    const GPoint center =
-        prv_draw_list_arc(ctx, bounds, sidebar_width, timeline_layer_sidebar_is_on_right());
-    if (!timeline_layer->animating_intro_or_exit) {
-      prv_draw_list_arc_notch(ctx, center, prv_get_style()->sidebar_arrow_size,
-                              timeline_layer->list.notch_current_angle,
-                              timeline_layer_sidebar_is_on_right());
-    }
+    prv_draw_list_arc(ctx, bounds, sidebar_width, timeline_layer_sidebar_is_on_right(),
+                      !timeline_layer->animating_intro_or_exit);
     return;
   } else if (timeline_layer->animating_intro_or_exit) {
     prv_draw_round_flip(ctx, bounds, bounds->size.w - sidebar_width,

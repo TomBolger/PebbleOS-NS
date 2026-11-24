@@ -397,6 +397,32 @@ int16_t timeline_layout_get_title_center_y(TimelineLayout *layout) {
   return time_node->cached_size.h + title->node.offset.y + title_center;
 }
 
+//! Width of text as it would be on one line as wide as the display, wherever it is laid out
+static int16_t prv_natural_width(const GTextNode *node) {
+  if (node->type == GTextNodeType_Horizontal) {
+    const GTextNodeContainer *container = (const GTextNodeContainer *)node;
+    int16_t width = 0;
+    for (size_t i = 0; i < container->num_nodes; i++) {
+      width += prv_natural_width(container->nodes[i]) + container->nodes[i]->margin.w;
+    }
+    return width;
+  }
+  if (node->type != GTextNodeType_Text && node->type != GTextNodeType_TextDynamic) {
+    return node->cached_size.w - node->margin.w;
+  }
+  const GTextNodeText *text = (const GTextNodeText *)node;
+  const GRect box = {.size = {PBL_DISPLAY_WIDTH, fonts_get_font_height(text->font)}};
+  return graphics_text_layout_get_max_used_size(graphics_context_get_current_context(), text->text,
+                                                text->font, box, GTextOverflowModeTrailingEllipsis,
+                                                GTextAlignmentLeft, nullptr)
+      .w;
+}
+
+int16_t timeline_layout_get_head_width(TimelineLayout *layout) {
+  GTextNodeContainer *container = (GTextNodeContainer *)layout->view_node;
+  return PBL_MAX(prv_natural_width(container->nodes[0]), prv_natural_width(container->nodes[1]));
+}
+
 static void prv_flow_time(TimelineLayout *layout);
 
 void timeline_layout_init_view(TimelineLayout *layout, LayoutLayerMode mode) {
@@ -827,7 +853,10 @@ static void prv_render_view(TimelineLayout *layout, GContext *ctx, bool render, 
   if (layout->flow_perimeter || layout->flow_page_height) {
     // Lay the text out where the pin rests, not where it is drawn while it moves
     if (layout->flow_page_height) {
-      flow_page = (GRect){layout->flow_origin, {PBL_DISPLAY_WIDTH, layout->flow_page_height}};
+      // Rect pages start where the pin does; round pages are the screen's, the pin resting on its
+      // first one wherever its time puts it
+      const GPoint page_origin = PBL_IF_RECT_ELSE(layout->flow_origin, GPointZero);
+      flow_page = (GRect){page_origin, {PBL_DISPLAY_WIDTH, layout->flow_page_height}};
     }
     config.page_frame = &flow_page;
     config.origin_on_screen = &layout->flow_origin;

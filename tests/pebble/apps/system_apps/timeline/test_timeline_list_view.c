@@ -62,6 +62,8 @@ typedef struct ListViewConfig {
   TimelineItemConfig *pins[6];
   bool past;
   bool day_separator;
+  //! Whether the day separator then hides, the pins of its day coming in
+  bool after_day_separator;
   //! Number of pins to scroll past before rendering
   int num_scrolls;
   //! Progress of the last scroll when rendering, or 0 to let it end
@@ -312,6 +314,14 @@ static void prv_create_list_view_and_render(ListViewConfig *config) {
     fake_animation_complete(timeline_layer_create_day_sep_show(&timeline_layer));
     fake_animation_complete(timeline_layer.day_separator.kino_layer.player.animation);
     timeline_layer_set_layouts_hidden(&timeline_layer, true);
+    if (config->after_day_separator) {
+      // As the timeline does once the separator has shown for a while
+      fake_animation_complete(timeline_layer_create_day_sep_hide(&timeline_layer));
+      timeline_layer_reset(&timeline_layer);
+      fake_animation_complete(timeline_layer_create_up_down_animation(
+          &timeline_layer, TIMELINE_UP_DOWN_ANIMATION_DURATION_MS / 2,
+          timeline_animation_interpolate_moook_second_half));
+    }
   }
 
   window_set_on_screen(&window, true, true);
@@ -319,16 +329,17 @@ static void prv_create_list_view_and_render(ListViewConfig *config) {
 #if PBL_ROUND
   // Scrolling the fixed slots brings the next pin's title near the middle, and pins only rest on
   // the middle once they stop
-  // A compact pin taller than the screen shows from its top, its title above the notch's reach
-  if (!config->day_separator && !config->scroll_progress && !config->num_page_scrolls &&
+  // A compact pin taking the whole screen shows from its top, its title beyond the notch's reach
+  const bool day_separator_shown = config->day_separator && !config->after_day_separator;
+  if (!day_separator_shown && !config->scroll_progress && !config->num_page_scrolls &&
       !config->num_back_scrolls && (timeline_layer.compact || config->num_scrolls == 0) &&
-      timeline_layer.list.max_scroll == 0) {
+      !timeline_layer.list.whole_screen) {
     prv_assert_title_centered(&window, &timeline_layer);
   }
 #endif
   window_render(&window, fake_graphics_context_get_context());
 #if PBL_ROUND
-  if (!config->day_separator) {
+  if (!day_separator_shown) {
     prv_assert_text_clear_of_arc(&timeline_layer);
   }
 #endif
@@ -482,7 +493,7 @@ void test_timeline_list_view__content_sizes_no_subtitle(void) {
   screen_grid_check(&grid, TEST_PBI_FILE);
 }
 
-void prv_create_and_render_day_sep_tomorrow(bool past) {
+static void prv_create_and_render_day_sep(bool past, bool after) {
   prv_create_list_view_and_render(&(ListViewConfig){
     .pins =
         {&(TimelineItemConfig){
@@ -499,10 +510,29 @@ void prv_create_and_render_day_sep_tomorrow(bool past) {
            .title = "Design Review Meeting",
            .subtitle = "Batavia, Palo Alto",
            .icon = TIMELINE_RESOURCE_TIMELINE_CALENDAR,
-         }},
+         },
+         after ? &(TimelineItemConfig){
+                   .relative_timestamp =
+                       ((12 * PBL_SEC_PER_HOUR) + (30 * PBL_SEC_PER_MIN) + PBL_SEC_PER_DAY),
+                   .duration = PBL_MIN_PER_HOUR,
+                   .title = "Lunch",
+                   .icon = TIMELINE_RESOURCE_TIMELINE_CALENDAR,
+                 }
+               : nullptr},
     .past = past,
     .day_separator = true,
+    .after_day_separator = after,
   });
+}
+
+void prv_create_and_render_day_sep_tomorrow(bool past) {
+  prv_create_and_render_day_sep(past, false /* after */);
+}
+
+void test_timeline_list_view__after_day_sep_future(void) {
+  // The pins of the next day come in with the selected one on the anchor
+  prv_create_and_render_day_sep(false /* past */, true /* after */);
+  FAKE_GRAPHICS_CONTEXT_CHECK_DEST_BITMAP_FILE();
 }
 
 void test_timeline_list_view__day_sep_tomorrow_future(void) {

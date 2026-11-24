@@ -88,9 +88,10 @@ typedef struct {
   GPoint flow_origin;
   int16_t flow_page_height;
   TimelineListPinPerimeter perimeter;
-  //! Angle of the pin's icon on the round arc where it rests, where the up/down animation turns it
-  //! from, and where it is now, down being positive
+  //! Angle of the pin's icon on the round arc where it rests, down being positive: beside its
+  //! time, or out of view where its time is
   int32_t icon_angle;
+  //! Angle of the icon where the up/down animation starts, and where it is now
   int32_t icon_from_angle;
   int32_t icon_current_angle;
 } TimelineListPinView;
@@ -121,11 +122,8 @@ typedef struct {
   //! can be
   int16_t scroll;
   int16_t max_scroll;
-  //! Angle the round arc's notch rests at, pointing at the selected pin, where the up/down
-  //! animation turns it from, and where it is now, down being positive
-  int32_t notch_angle;
-  int32_t notch_from_angle;
-  int32_t notch_current_angle;
+  //! The selected pin does not fit between the margins, so it takes the whole screen
+  bool whole_screen;
   //! Interpolation of the running up/down animation
   InterpolateInt64Function interpolate;
 } TimelineList;
