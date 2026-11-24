@@ -107,6 +107,12 @@ typedef struct {
   ClickConfigProvider click_config_provider;
 } SwapLayerCallbacks;
 
+#ifdef CONFIG_TOUCH
+/** @cond INTERNAL_HIDDEN */
+#define SWAP_LAYER_TOUCH_SAMPLES 8
+/** @endcond */
+#endif
+
 /**
  * @brief Data structure of a SwapLayer.
  *
@@ -169,6 +175,14 @@ typedef struct SwapLayer {
    * makes the init/focus re-registration idempotent).
    */
   bool touch_registered;
+  /* Recent finger positions of the current pan, for the release velocity. */
+  struct {
+    int16_t y[SWAP_LAYER_TOUCH_SAMPLES];
+    uint32_t ms[SWAP_LAYER_TOUCH_SAMPLES];
+    uint8_t count;
+    /* The pan started in the bottom edge strip moving up: it jumps to the next layout. */
+    bool edge;
+  } touch;
   /** @endcond */
 #endif
 } SwapLayer;
@@ -302,14 +316,31 @@ SwapTouchLiftoffAction swap_layer_touch_liftoff_action(int16_t base_offset, int1
                                                        int16_t max_dy);
 
 /*
- * Test seam: the offset a Settle liftoff (or a cancelled pan) animates to. The raw target is
- * clamp(base_offset - delta_y, 0, max_dy); with page_h > 0 it is then quantized to the nearest
- * page boundary, never past the last whole page below max_dy (which may include the
- * next-notification peek). Cards are laid out in a fixed column on both shapes, so the swap
- * layer passes 0 and settles freely.
+ * Test seam: the offset a cancelled pan animates back to, clamp(base_offset - delta_y, 0,
+ * max_dy).
  */
-int16_t swap_layer_touch_settle_offset(int16_t base_offset, int16_t delta_y, int16_t max_dy,
-                                       int16_t page_h);
+int16_t swap_layer_touch_settle_offset(int16_t base_offset, int16_t delta_y, int16_t max_dy);
+
+/*
+ * Test seam: the finger velocity in px/s (positive is down) at release_ms, from the samples
+ * (oldest first) of the current pan: measured over the last 120 ms, zero if the finger has been
+ * still for more than 90 ms.
+ */
+int32_t swap_layer_touch_release_velocity(const int16_t *y, const uint32_t *ms, uint8_t count,
+                                          uint32_t release_ms);
+
+/*
+ * Test seam: where a flick at velocity (px/s, positive is finger down) coasts to from offset,
+ * clamped to [0, max_dy], and for how long.
+ */
+int16_t swap_layer_touch_fling_target(int16_t offset, int32_t velocity, int16_t max_dy,
+                                      uint32_t *duration_ms);
+
+/* Test seam: the offset shown while dragging to raw, resisting beyond [0, max_dy]. */
+int16_t swap_layer_touch_rubber_band(int16_t raw, int16_t max_dy);
+
+/* Test seam: whether a pan that started at start_y and moved total_dy is a bottom edge swipe. */
+bool swap_layer_touch_is_edge_swipe(int16_t start_y, int16_t total_dy, int16_t screen_h);
 
 /** @endcond */
 #endif // CONFIG_TOUCH
