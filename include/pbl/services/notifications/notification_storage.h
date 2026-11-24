@@ -146,6 +146,9 @@ uint16_t notification_storage_get_count(void);
  * Do not call other notification storage functions from @p iter_callback.
  *
  * @param item_cutoff Oldest timestamp for which strings are read.
+ * AttributeIdNotificationSection and AttributeIdStackId may also be listed; their uint8 and
+ * uint32 values are read instead (0 when absent).
+ *
  * @param attr_list String attributes to read; each cstring points to a buffer of @p buffer_size.
  * @param buffer_size Size of each string buffer in bytes, including the terminator.
  * @param iter_callback Called with @p data, the header and the item or NULL; return false to stop.
