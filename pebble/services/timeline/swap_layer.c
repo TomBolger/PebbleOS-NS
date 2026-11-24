@@ -25,32 +25,26 @@
 #include <kernel/pebble_tasks.h>
 #endif
 
-// Initial pixel scroll amount, paging_height (LAYOUT_HEIGHT) for circular display
-#define INITIAL_SCROLL_PX PBL_IF_RECT_ELSE(LAYOUT_BANNER_HEIGHT_RECT, LAYOUT_HEIGHT)
+// Initial pixel scroll amount: the banner, so the first press reaches the text
+#define INITIAL_SCROLL_PX LAYOUT_TOP_BANNER_HEIGHT
 
-// Max pixel scroll amount, paging height (LAYOUT_HEIGHT) for circular display
-#define SCROLL_PX PBL_IF_RECT_ELSE(48, LAYOUT_HEIGHT)
+// Max pixel scroll amount
+#define SCROLL_PX 48
 
 // Max pixel scroll for repeating scrolls (button is held)
 #define REPEATING_SCROLL_PX 24
 
-// Scroll animation speed
-// Same as the normal moook duration, but one frame shorter
-#define SCROLL_MS \
-  PBL_IF_RECT_ELSE(200, interpolate_moook_duration() - ANIMATION_TARGET_FRAME_INTERVAL_MS)
+// Scroll and swap animation speed, both eased out
+#define SCROLL_MS 200
+#define SWAP_MS   200
 
-// Swap animation speed
-// Adding ANIMATION_TARGET_FRAME_INTERVAL_MS doesn't actually add a frame, because plain moook
-// has a fixed number of frames. Adding it in just adds more time between the frames
-#define SWAP_MS PBL_IF_RECT_ELSE(200, 150)
-
-// Pixel peek amount for next layout
-#define PEEK_PX PBL_IF_RECT_ELSE(LAYOUT_BANNER_HEIGHT_RECT, 0)
+// Pixel peek amount for next layout: its banner on rectangular displays, the top of its banner
+// circle (a half dot) on round ones
+#define PEEK_PX PBL_IF_RECT_ELSE(LAYOUT_BANNER_HEIGHT_RECT, STATUS_BAR_LAYER_HEIGHT)
 
 // Get within FUDGE_PX to the end of the layout on a scroll, and will
 // scroll the rest of the way.
-// Uses 0 for circular display to support paging
-#define FUDGE_PX PBL_IF_RECT_ELSE(PEEK_PX, 0)
+#define FUDGE_PX PEEK_PX
 
 // Delay for the next scroll down to happen
 #define SCROLL_REPEAT_MS 200
@@ -224,20 +218,10 @@ static void prv_update_arrow(SwapLayer *swap_layer) {
     const GRect *cur_frame = &swap_layer->current->layer.frame;
     const GRect *layer_frame = &swap_layer->layer.frame;
     const bool viewing_entire_notif = (cur_frame->size.h == layer_frame->size.h);
-#if PBL_ROUND
-    const bool at_bottom = (cur_frame->origin.y < (-cur_frame->size.h + PBL_DISPLAY_HEIGHT));
-    const bool text_visible =
-        PBL_IN_RANGE(cur_frame->origin.y, TEXT_VISIBLE_LOWER_THRESHOLD(cur_frame->size.h),
-                     TEXT_VISIBLE_UPPER_THRESHOLD);
-    if (!viewing_entire_notif && !at_bottom && text_visible) {
-      hide_it = false;
-    }
-#else
     const bool at_top = (cur_frame->origin.y == 0);
     if (at_top && (!viewing_entire_notif || swap_layer->next)) {
       hide_it = false;
     }
-#endif
   }
 
   layer_set_hidden(&swap_layer->arrow_layer.layer, hide_it);
@@ -319,18 +303,13 @@ static Animation *prv_create_anim_frame_scroll(Layer *layer, uint32_t duration, 
                          },
                          layer);
   animation_set_duration(result, duration);
-#if PBL_ROUND
-  if (curve) {
-    switch (curve->swap_curve_kind) {
-      case ScrollAnimationCurveKind_Curve:
-        animation_set_curve(result, curve->curve);
-        break;
-      case ScrollAnimationCurveKind_Interpolator:
-        animation_set_custom_interpolation(result, curve->interpolator);
-        break;
-    }
+  if (!curve) {
+    animation_set_curve(result, AnimationCurveEaseOut);
+  } else if (curve->swap_curve_kind == ScrollAnimationCurveKind_Curve) {
+    animation_set_curve(result, curve->curve);
+  } else {
+    animation_set_custom_interpolation(result, curve->interpolator);
   }
-#endif
   return result;
 }
 
@@ -464,15 +443,12 @@ static void prv_scroll(SwapLayer *swap_layer, int16_t dy, AnimationCurve curve) 
   if (dy == 0) {
     return;
   }
-  ScrollAnimationCurve moook_scroll_curve = (ScrollAnimationCurve){
-    .swap_curve_kind = ScrollAnimationCurveKind_Interpolator,
-    .interpolator = interpolate_moook
+  ScrollAnimationCurve scroll_curve = (ScrollAnimationCurve){
+    .swap_curve_kind = ScrollAnimationCurveKind_Curve,
+    .curve = curve,
   };
-  Animation *current = prv_create_anim_frame_scroll((Layer *)swap_layer->current, SCROLL_MS, dy,
-                                                    &moook_scroll_curve);
-#if PBL_RECT
-  animation_set_curve(current, curve);
-#endif
+  Animation *current =
+      prv_create_anim_frame_scroll((Layer *)swap_layer->current, SCROLL_MS, dy, &scroll_curve);
   Animation *animation;
   if (swap_layer->next) {
     Animation *next =
@@ -539,12 +515,6 @@ static bool prv_attempt_swap(SwapLayer *swap_layer, ScrollDirection direction, b
       swap_layer);
   swap_layer->animation = animation;
   animation_schedule(animation);
-#if PBL_ROUND
-  // Skip the animation on round, because it looks bad
-  if (full_swap) {
-    animation_set_elapsed(animation, animation_get_duration(animation, true, true));
-  }
-#endif
   return true;
 }
 
@@ -556,11 +526,6 @@ static int16_t prv_get_max_scroll_dy(SwapLayer *swap_layer) {
   // we are peeking the next notification if we have a next.
   if (swap_layer->next != nullptr) {
     max_dy += PEEK_PX;
-  } else {
-#if PBL_ROUND
-    // The last notification has to be able to scroll past content to stay page aligned
-    max_dy = PBL_ROUNDUP(max_dy, LAYOUT_HEIGHT);
-#endif
   }
 
   max_dy = PBL_MAX(max_dy, 0);
@@ -581,10 +546,6 @@ static void prv_handle_swap_attempt(SwapLayer *swap_layer, ScrollDirection direc
 PBL_T_STATIC void prv_attempt_scroll(SwapLayer *swap_layer, ScrollDirection direction,
                                      bool is_repeating) {
   prv_finish_animation(swap_layer);
-
-#if PBL_ROUND
-  is_repeating = false;
-#endif
 
   int16_t offset = prv_get_current_notification_offset(swap_layer);
   int16_t max_dy = prv_get_max_scroll_dy(swap_layer);
@@ -935,11 +896,9 @@ static void prv_swap_touch_liftoff(SwapLayer *swap_layer, int16_t base_offset, i
       prv_handle_swap_attempt(swap_layer, ScrollDirectionDown, false /* is_repeating */);
       break;
     case SwapTouchLiftoff_Settle: {
-      // Round text flow is computed for page-aligned rest positions (the paging fold in
-      // prv_walk_lines_down), so a touch settle must land on a page boundary or the line chords
-      // no longer match where the content actually sits on the circle. Rect settles freely.
-      const int16_t target_offset = swap_layer_touch_settle_offset(
-          base_offset, delta_y, max_dy, PBL_IF_RECT_ELSE(0, LAYOUT_HEIGHT));
+      // Cards are laid out in a fixed column on both shapes, so they settle anywhere.
+      const int16_t target_offset =
+          swap_layer_touch_settle_offset(base_offset, delta_y, max_dy, 0 /* page_h */);
       const int16_t cur = prv_get_current_notification_offset(swap_layer);
       prv_scroll(swap_layer, cur - target_offset, AnimationCurveEaseOut);
       break;
@@ -1026,9 +985,7 @@ static void prv_swap_ops_pan_cancel(void *w) {
   }
   const int16_t cur = prv_get_current_notification_offset(swap_layer);
   const int16_t max_dy = prv_get_max_scroll_dy(swap_layer);
-  // Same page alignment as the liftoff settle: a cancelled pan must not rest off-grid on round.
-  const int16_t target =
-      swap_layer_touch_settle_offset(cur, 0, max_dy, PBL_IF_RECT_ELSE(0, LAYOUT_HEIGHT));
+  const int16_t target = swap_layer_touch_settle_offset(cur, 0, max_dy, 0 /* page_h */);
   prv_scroll(swap_layer, cur - target, AnimationCurveEaseOut);
 }
 
