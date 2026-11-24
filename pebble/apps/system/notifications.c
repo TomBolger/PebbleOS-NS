@@ -425,7 +425,7 @@ static int16_t prv_stack_arc_clearance(const Layer *cell_layer, GRect bounds) {
 
 // Round lists slide like rectangular ones and stop the first and last rows one row from the
 // middle instead of leaving half the screen empty: the space above is section 0's header, the
-// space below one extra, unselectable row.
+// space below content past the last row.
 #define ROUND_MIN_TOP_SPACE 12
 
 static int16_t prv_round_end_space(int16_t end_row_height) {
@@ -716,7 +716,20 @@ static void prv_update_highlight_pill(NotificationsData *data) {
 }
 
 static void prv_reload_rows(NotificationsData *data) {
+#if PBL_ROUND
+  ScrollLayer *scroll = menu_layer_get_scroll_layer(&data->menu_layer);
+  const GPoint offset = scroll_layer_get_content_offset(scroll);
+#endif
   menu_layer_reload_data(&data->menu_layer);
+#if PBL_ROUND
+  // Rows alone end at the last one, which clamped a list resting in the space below.
+  GSize size = scroll_layer_get_content_size(scroll);
+  size.h += prv_round_space_below(data);
+  scroll_layer_set_content_size(scroll, size);
+  if (scroll_layer_get_content_offset(scroll).y != offset.y) {
+    scroll_layer_set_content_offset(scroll, offset, false /* animated */);
+  }
+#endif
   prv_update_highlight_pill(data);
 }
 
@@ -895,17 +908,11 @@ static void prv_select_callback(MenuLayer *menu_layer, MenuIndex *cell_index, vo
 static uint16_t prv_get_num_rows_callback(MenuLayer *menu_layer, uint16_t section_index,
                                           void *context) {
   NotificationsData *data = context;
-  const uint16_t count = notification_shade_row_count(&data->shade);
-  return count + PBL_IF_ROUND_ELSE((count > 0) ? 1 : 0, 0);
+  return notification_shade_row_count(&data->shade);
 }
 
 static int16_t prv_get_cell_height(MenuLayer *menu_layer, MenuIndex *cell_index, void *context) {
   NotificationsData *data = context;
-#if PBL_ROUND
-  if (cell_index->row >= notification_shade_row_count(&data->shade)) {
-    return prv_round_space_below(data);
-  }
-#endif
   return prv_row_height_at(data, cell_index->row);
 }
 
@@ -916,15 +923,6 @@ static int16_t prv_get_header_height(MenuLayer *menu_layer, uint16_t section_ind
 
 static void prv_draw_header(GContext *ctx, const Layer *cell_layer, uint16_t section_index,
                             void *context) {
-}
-
-static void prv_selection_will_change(MenuLayer *menu_layer, MenuIndex *new_index,
-                                      MenuIndex old_index, void *context) {
-  NotificationsData *data = context;
-  const uint16_t count = notification_shade_row_count(&data->shade);
-  if ((count > 0) && (new_index->row >= count)) {
-    new_index->row = count - 1;
-  }
 }
 #endif
 
@@ -1088,7 +1086,6 @@ static void prv_window_load(Window *window) {
 #if PBL_ROUND
                              .get_header_height = prv_get_header_height,
                              .draw_header = prv_draw_header,
-                             .selection_will_change = prv_selection_will_change,
 #endif
                            });
 
@@ -1132,6 +1129,7 @@ static void prv_window_load(Window *window) {
   if (!row) {
     first = 0;
   }
+  prv_reload_rows(data);
   menu_layer_set_selected_index(menu_layer, MenuIndex(0, first), MenuRowAlignNone, false);
   prv_update_highlight_pill(data);
 }
