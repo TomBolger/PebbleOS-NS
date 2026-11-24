@@ -31,6 +31,7 @@
 #include <pbl/services/notifications/do_not_disturb.h>
 #include <pbl/services/notifications/notification_image.h>
 #include <pbl/services/notifications/notification_storage.h>
+#include <pbl/services/notifications/notification_style.h>
 #include <pbl/services/notifications/notification_types.h>
 #include <pbl/services/notifications/notifications.h>
 #include <pbl/services/time.h>
@@ -49,6 +50,8 @@
 #include <pbl/util/units.h>
 
 #include <applib/applib_malloc.auto.h>
+#include <applib/graphics/gdraw_command_frame.h>
+#include <applib/graphics/gdraw_command_sequence.h>
 #include <applib/ui/action_button.h>
 #include <applib/ui/action_menu_window.h>
 #include <applib/ui/app_window_stack.h>
@@ -998,6 +1001,107 @@ static ActionMenuLevel *prv_create_action_menu_for_item(TimelineItem *item,
   return root_level;
 }
 
+static void prv_note_interaction(NotificationWindowData *data) {
+  data->last_interaction_ms = pbl_uptime_ms();
+}
+
+//////////////////////
+// Dismiss "poof"
+
+#define POOF_FALLBACK_MS 500
+
+static void prv_poof_update_proc(Layer *layer, GContext *ctx) {
+  NotificationWindowData *data = &s_notification_window_data;
+  graphics_context_set_fill_color(ctx, notification_style_bg());
+  graphics_fill_rect(ctx, &layer->bounds);
+  if (!data->poof_sequence) {
+    return;
+  }
+  GDrawCommandFrame *frame =
+      gdraw_command_sequence_get_frame_by_elapsed(data->poof_sequence, data->poof_elapsed_ms);
+  if (frame) {
+    const GSize size = gdraw_command_sequence_get_bounds_size(data->poof_sequence);
+    const GPoint offset =
+        GPoint((layer->bounds.size.w - size.w) / 2, (layer->bounds.size.h - size.h) / 2);
+    gdraw_command_frame_draw(ctx, data->poof_sequence, frame, offset);
+  }
+}
+
+static uint32_t prv_poof_duration(NotificationWindowData *data) {
+  const uint32_t duration =
+      data->poof_sequence ? gdraw_command_sequence_get_total_duration(data->poof_sequence) : 0;
+  return duration ? duration : POOF_FALLBACK_MS;
+}
+
+static void prv_poof_cleanup(NotificationWindowData *data) {
+  if (data->poof_animation) {
+    Animation *animation = data->poof_animation;
+    data->poof_animation = nullptr;
+    animation_unschedule(animation);
+  }
+  layer_remove_from_parent(&data->poof_layer);
+  layer_deinit(&data->poof_layer);
+  gdraw_command_sequence_destroy(data->poof_sequence);
+  data->poof_sequence = nullptr;
+}
+
+static void prv_poof_update(Animation *animation, const AnimationProgress progress) {
+  NotificationWindowData *data = &s_notification_window_data;
+  data->poof_elapsed_ms =
+      (uint32_t)(((uint64_t)progress * prv_poof_duration(data)) / ANIMATION_NORMALIZED_MAX);
+  layer_mark_dirty(&data->poof_layer);
+}
+
+static void prv_poof_stopped(Animation *animation, bool finished, void *context) {
+  NotificationWindowData *data = context;
+  if (animation != data->poof_animation) {
+    return;
+  }
+  data->poof_animation = nullptr;
+  prv_poof_cleanup(data);
+}
+
+//! Plays the dismissed animation over the whole window instead of a result dialog. The card
+//! itself is removed as usual, underneath it.
+static bool prv_play_dismissed(void) {
+  NotificationWindowData *data = &s_notification_window_data;
+  if (!s_in_use || !data->action_menu || data->poof_sequence) {
+    return false;
+  }
+  TimelineResourceInfo timeline_res = {
+    .res_id = TIMELINE_RESOURCE_RESULT_DISMISSED,
+  };
+  AppResourceInfo res_info;
+  timeline_resources_get_id(&timeline_res, TimelineResourceSizeLarge, &res_info);
+  data->poof_sequence =
+      gdraw_command_sequence_create_with_resource_system(res_info.res_app_num, res_info.res_id);
+  data->poof_elapsed_ms = 0;
+  Layer *root = window_get_root_layer(&data->window);
+  layer_init(&data->poof_layer, &root->bounds);
+  layer_set_update_proc(&data->poof_layer, prv_poof_update_proc);
+  layer_add_child(root, &data->poof_layer);
+
+  static const AnimationImplementation s_implementation = {
+    .update = prv_poof_update,
+  };
+  Animation *animation = animation_create();
+  if (!animation) {
+    prv_poof_cleanup(data);
+    return false;
+  }
+  data->poof_animation = animation;
+  animation_set_implementation(animation, &s_implementation);
+  animation_set_duration(animation, prv_poof_duration(data));
+  animation_set_curve(animation, AnimationCurveLinear);
+  animation_set_handlers(animation,
+                         (AnimationHandlers){
+                           .stopped = prv_poof_stopped,
+                         },
+                         data);
+  animation_schedule(animation);
+  return true;
+}
+
 static void prv_action_menu_did_close(ActionMenu *action_menu, const ActionMenuItem *item,
                                       void *context) {
   NotificationWindowData *data = &s_notification_window_data;
@@ -1006,6 +1110,7 @@ static void prv_action_menu_did_close(ActionMenu *action_menu, const ActionMenuI
 
 static void prv_select_single_click_handler(ClickRecognizerRef recognizer, void *data) {
   NotificationWindowData *window_data = data;
+  prv_note_interaction(window_data);
 
   TimelineItem *item = prv_get_current_notification(window_data);
   if (!prv_should_provide_action_menu_for_item(window_data, item)) {
@@ -1031,6 +1136,7 @@ static void prv_select_single_click_handler(ClickRecognizerRef recognizer, void 
     return;
   }
 
+  timeline_actions_set_dismissed_handler(prv_play_dismissed);
   window_data->action_menu = timeline_actions_push_action_menu(
       &config, window_manager_get_window_stack(NOTIFICATION_PRIORITY));
   action_menu_set_content_size(window_data->action_menu,
@@ -1123,6 +1229,10 @@ static void prv_window_unload(Window *window) {
     return;
   }
 
+  prv_poof_cleanup(data);
+  prv_cleanup_timer(&data->deferred_focus_timer);
+  data->has_deferred_focus = false;
+  data->last_interaction_ms = 0;
   PBL_LOG_DBG("Notification vibe: window unload, pending=%d", data->pending_vibe);
   if (data->pending_vibe) {
     prv_log_notification_vibe("dropped on unload", &data->pending_vibe_id);
@@ -1234,6 +1344,7 @@ static void prv_update_colors_handler(SwapLayer *swap_layer, GColor bg_color,
 
 static void prv_interaction_handler(SwapLayer *swap_layer, void *context) {
   NotificationWindowData *data = context;
+  prv_note_interaction(data);
   prv_refresh_pop_timer(data);
 }
 
@@ -1563,6 +1674,8 @@ static void prv_do_notification_vibe(NotificationWindowData *data, Uuid *id) {
 
     patt.durations = vibeDurations->values;
     patt.num_segments = vibeDurations->num_values;
+    // A newer notification's pattern replaces whatever is still playing.
+    vibes_cancel();
     vibes_enqueue_custom_pattern(patt);
     did_vibrate = true;
   } else {
@@ -1571,6 +1684,7 @@ static void prv_do_notification_vibe(NotificationWindowData *data, Uuid *id) {
       VibeScoreId id = alerts_preferences_get_vibe_score_for_client(VibeClient_Notifications);
       PBL_LOG_DBG("Notification vibe: using score=%d (%s)", (int)id, vibe_score_info_get_name(id));
 
+      vibes_cancel();
       vibe_score_do_vibe(score);
       vibe_score_destroy(score);
       did_vibrate = true;
@@ -1593,6 +1707,57 @@ static bool prv_notification_is_phone_silent(Uuid *id) {
   const bool is_phone_silent = item.header.silent;
   timeline_item_free_allocated_buffer(&item);
   return is_phone_silent;
+}
+
+//! How long after the last button press or touch a new notification waits to be focused
+#define FOCUS_DEFER_MS 10000
+
+static uint32_t prv_focus_defer_remaining_ms(NotificationWindowData *data) {
+  if (data->action_menu) {
+    // Closing the menu counts as an interaction: the wait runs on from there.
+    return FOCUS_DEFER_MS;
+  }
+  if (!data->last_interaction_ms) {
+    return 0;
+  }
+  const uint64_t since = pbl_uptime_ms() - data->last_interaction_ms;
+  return (since < FOCUS_DEFER_MS) ? (uint32_t)(FOCUS_DEFER_MS - since) : 0;
+}
+
+static void prv_deferred_focus_cb(void *context) {
+  NotificationWindowData *data = context;
+  data->deferred_focus_timer = EVENTED_TIMER_INVALID_ID;
+  if (!data->has_deferred_focus) {
+    return;
+  }
+  const uint32_t wait_ms = prv_focus_defer_remaining_ms(data);
+  if (wait_ms) {
+    data->deferred_focus_timer =
+        evented_timer_register(wait_ms, false, prv_deferred_focus_cb, data);
+    return;
+  }
+  data->has_deferred_focus = false;
+  if (window_is_on_screen(&data->window) &&
+      notifications_presented_list_relative(&data->deferred_focus_id, 0)) {
+    notification_window_focus_notification(&data->deferred_focus_id,
+                                           !do_not_disturb_is_active() /* animated */);
+  }
+}
+
+//! Focuses the new notification now, or once the user has stopped interacting.
+static void prv_focus_new_notification(NotificationWindowData *data, Uuid *id) {
+  const uint32_t wait_ms = prv_focus_defer_remaining_ms(data);
+  if (!wait_ms) {
+    notification_window_focus_notification(id, !do_not_disturb_is_active() /* animated */);
+    return;
+  }
+  data->has_deferred_focus = true;
+  data->deferred_focus_id = *id;
+  prv_reload_swap_layer(data);
+  if (data->deferred_focus_timer == EVENTED_TIMER_INVALID_ID) {
+    data->deferred_focus_timer =
+        evented_timer_register(wait_ms, false, prv_deferred_focus_cb, data);
+  }
 }
 
 static void prv_handle_notification_added_common(Uuid *id, NotificationType type) {
@@ -1646,8 +1811,7 @@ static void prv_handle_notification_added_common(Uuid *id, NotificationType type
     // In DND mode notifications can get inserted into the middle of the list and we don't
     // want to change focus in this use case
     if (notifications_presented_list_current() != notifications_presented_list_first()) {
-      const bool should_animate = !do_not_disturb_is_active();
-      notification_window_focus_notification(id, should_animate);
+      prv_focus_new_notification(data, id);
     } else {
       // If we are inserting into the middle of this list, just reload the swap layer so the
       // number of notifications displayed is correct
