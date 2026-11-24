@@ -5,6 +5,7 @@
 
 #include "action_menu_hierarchy.h"
 #include "action_menu_layer.h"
+#include "action_menu_window.h"
 
 #include <applib/ui/crumbs_layer.h>
 
@@ -23,9 +24,28 @@ typedef struct {
   GEdgeInsets menu_insets;
 } ActionMenuViewModel;
 
+//! Draws and drives an action menu in place of its window (see action_menu_open_hosted).
+typedef struct ActionMenuHost {
+  //! The menu is closing. Remove its view, animated or not, then call
+  //! action_menu_hosted_did_close.
+  void (*close)(ActionMenu *action_menu, bool animated, void *context);
+} ActionMenuHost;
+
+//! State of a hosted menu, kept apart so a menu window stays the same size.
+typedef struct ActionMenuHosting {
+  const ActionMenuHost *host;
+  void *context;
+  WindowStack *window_stack;
+  bool closing;
+  bool performing;
+  bool closed_while_performing;
+} ActionMenuHosting;
+
 typedef struct {
   ActionMenu action_menu;
   ActionMenuConfig config;
+  //! Set for a hosted menu, which has no window of its own on a stack
+  struct ActionMenuHosting *hosting;
   ActionMenuLayer action_menu_layer;
   CrumbsLayer crumbs_layer;
   ActionMenuViewModel view_model;
@@ -73,3 +93,23 @@ struct ActionMenuLevel {
   ActionMenuLayerCallback selection_changed;
   ActionMenuItem items[];
 };
+
+//! Open an action menu whose view is provided by a host, e.g. a layer of another window, instead
+//! of its own window. It is driven through the same ActionMenu API: items are performed with
+//! action_menu_hosted_perform, freezing, closing and result windows work as for a menu window,
+//! with result windows pushed onto window_stack.
+ActionMenu *action_menu_open_hosted(WindowStack *window_stack, ActionMenuConfig *config,
+                                    const ActionMenuHost *host, void *host_context);
+
+//! Perform a leaf item of a hosted menu, as selecting it in a menu window would, then close the
+//! menu unless the action froze it.
+void action_menu_hosted_perform(ActionMenu *action_menu, const ActionMenuItem *item);
+
+//! The host has removed the view of a closing hosted menu: call did_close and free the menu.
+void action_menu_hosted_did_close(ActionMenu *action_menu);
+
+//! Whether the menu is hosted rather than a window.
+bool action_menu_is_hosted(ActionMenu *action_menu);
+
+//! The window stack the menu and its result windows go on.
+WindowStack *action_menu_get_window_stack(ActionMenu *action_menu);
