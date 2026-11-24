@@ -771,6 +771,10 @@ static inline void prv_menu_layer_draw_section_header(MenuLayer *menu_layer, Lay
   grect_clip((GRect *const)&ctx->draw_state.clip_box, rect_clipper);
 
   prv_prepare_row(ctx, menu_layer, cell_layer, false);
+#if PBL_ROUND
+  // The header bumps with the rows' content as the selection moves
+  ctx->draw_state.drawing_box.origin.y += menu_layer->animation.cell_content_origin_offset_y;
+#endif
 
   // Call the client, to ask to draw the section:
   menu_layer->callbacks.draw_header(ctx, cell_layer, cursor->index.section,
@@ -1434,8 +1438,11 @@ static void prv_round_end_spaces(MenuLayer *menu_layer, int16_t *top, int16_t *b
     return;
   }
   const int16_t frame_h = menu_layer->scroll_layer.layer.frame.size.h;
-  *top = menu_round_end_space(frame_h, prv_round_row_height(menu_layer, 0, 0),
-                              prv_round_row_height(menu_layer, 0, 1));
+  // A header over the first row stands in for as much of the space past the top
+  *top = menu_round_end_space(
+      frame_h,
+      prv_menu_layer_get_header_height(menu_layer, 0) + prv_round_row_height(menu_layer, 0, 0),
+      prv_round_row_height(menu_layer, 0, 1));
   const uint16_t last_section = sections - 1;
   const int32_t last = (int32_t)prv_menu_layer_get_num_rows(menu_layer, last_section) - 1;
   *bottom = menu_round_end_space(frame_h, prv_round_row_height(menu_layer, last_section, last),
