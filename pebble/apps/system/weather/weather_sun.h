@@ -16,6 +16,10 @@ int weather_sun_sunrise_minutes(int16_t lat_e2, int16_t lon_e2, int16_t utc_off_
 //! Local sunset in minutes from midnight [0,1440), or -1 if unknown.
 int weather_sun_sunset_minutes(int16_t lat_e2, int16_t lon_e2, int16_t utc_off_min);
 
+//! Time from sunrise to sunset in minutes [0,1440], or -1 if unknown: 0 in the polar night,
+//! 1440 under the midnight sun, when the sunrise and sunset above meet.
+int weather_sun_daylight_minutes(int16_t lat_e2, int16_t lon_e2, int16_t utc_off_min);
+
 //! Local start of the evening golden hour (the sun 6 degrees up) in minutes from midnight
 //! [0,1440), or -1 if unknown or the sun does not cross that elevation today.
 int weather_sun_golden_minutes(int16_t lat_e2, int16_t lon_e2, int16_t utc_off_min);
