@@ -35,6 +35,22 @@ static void prv_action_window_push(WindowStack *window_stack, ActionMenu *action
 }
 
 static void prv_action_window_pop(bool animated, ActionMenu *action_menu) {
+  ActionMenuData *data = window_get_user_data(&action_menu->window);
+  ActionMenuHosting *hosting = data->hosting;
+  if (hosting) {
+    if (hosting->closing) {
+      // Closed again without animation, e.g. as its window goes: the host ends what it plays
+      if (!animated && !hosting->closed_while_performing) {
+        hosting->host->close(action_menu, false /* animated */, hosting->context);
+      }
+      return;
+    }
+    hosting->closing = true;
+    prv_invoke_will_close(action_menu);
+    // Under a result window nobody sees it go
+    hosting->host->close(action_menu, animated && !data->result_window, hosting->context);
+    return;
+  }
   prv_invoke_will_close(action_menu);
   window_stack_remove(&action_menu->window, animated);
 }
@@ -304,14 +320,18 @@ void *action_menu_get_context(ActionMenu *action_menu) {
 
 void action_menu_freeze(ActionMenu *action_menu) {
   ActionMenuData *data = window_get_user_data(&action_menu->window);
-  window_set_click_config_provider(&action_menu->window, prv_dummy_click_config);
+  if (!data->hosting) {
+    window_set_click_config_provider(&action_menu->window, prv_dummy_click_config);
+  }
   data->frozen = true;
 }
 
 void action_menu_unfreeze(ActionMenu *action_menu) {
   ActionMenuData *data = window_get_user_data(&action_menu->window);
-  window_set_click_config_provider_with_context(&action_menu->window, prv_click_config_provider,
-                                                data);
+  if (!data->hosting) {
+    window_set_click_config_provider_with_context(&action_menu->window, prv_click_config_provider,
+                                                  data);
+  }
   data->frozen = false;
 }
 
@@ -336,7 +356,12 @@ void action_menu_set_result_window(ActionMenu *action_menu, Window *result_windo
 
   // insert new result window
   if (result_window) {
-    prv_action_window_insert_below(action_menu, result_window);
+    if (data->hosting) {
+      // A hosted menu has no window to slide away from over it
+      window_stack_push(data->hosting->window_stack, result_window, true /* animated */);
+    } else {
+      prv_action_window_insert_below(action_menu, result_window);
+    }
   }
 
   data->result_window = result_window;
@@ -349,7 +374,7 @@ void action_menu_set_content_size(ActionMenu *action_menu, PreferredContentSize 
 
   ActionMenuData *data = window_get_user_data(&action_menu->window);
   data->content_size = size;
-  if (window_is_loaded(&action_menu->window)) {
+  if (!data->hosting && window_is_loaded(&action_menu->window)) {
     action_menu_layer_set_content_size(&data->action_menu_layer, size);
     prv_update_items(data);
   }
@@ -392,6 +417,68 @@ ActionMenu *action_menu_open(WindowStack *window_stack, ActionMenuConfig *config
   prv_action_window_push(window_stack, &data->action_menu, true /* animated */);
 
   return &data->action_menu;
+}
+
+ActionMenu *action_menu_open_hosted(WindowStack *window_stack, ActionMenuConfig *config,
+                                    const ActionMenuHost *host, void *host_context) {
+  ActionMenuData *data = applib_type_zalloc(ActionMenuData);
+  ActionMenuHosting *hosting = applib_zalloc(sizeof(ActionMenuHosting));
+  if (!data || !hosting) {
+    applib_free(data);
+    applib_free(hosting);
+    return nullptr;
+  }
+  *hosting = (ActionMenuHosting){
+    .host = host,
+    .context = host_context,
+    .window_stack = window_stack,
+  };
+  data->config = *config;
+  data->content_size = NumPreferredContentSizes;
+  data->hosting = hosting;
+  // Never pushed: the window only carries the menu's data for the ActionMenu API
+  window_set_user_data(&data->action_menu.window, data);
+  return &data->action_menu;
+}
+
+void action_menu_hosted_perform(ActionMenu *action_menu, const ActionMenuItem *item) {
+  ActionMenuData *data = window_get_user_data(&action_menu->window);
+  ActionMenuHosting *hosting = data->hosting;
+  if (data->frozen || hosting->closing || !item->is_leaf || !item->perform_action) {
+    return;
+  }
+  // The host may finish closing from within the action: free the menu only once it returns
+  hosting->performing = true;
+  item->perform_action(action_menu, item, data->config.context);
+  data->performed_item = item;
+  if (!data->frozen && !hosting->closed_while_performing) {
+    prv_action_window_pop(true /* animated */, action_menu);
+  }
+  hosting->performing = false;
+  if (hosting->closed_while_performing) {
+    action_menu_hosted_did_close(action_menu);
+  }
+}
+
+void action_menu_hosted_did_close(ActionMenu *action_menu) {
+  ActionMenuData *data = window_get_user_data(&action_menu->window);
+  if (data->hosting->performing) {
+    data->hosting->closed_while_performing = true;
+    return;
+  }
+  prv_invoke_did_close(action_menu);
+  applib_free(data->hosting);
+  applib_free(data);
+}
+
+bool action_menu_is_hosted(ActionMenu *action_menu) {
+  ActionMenuData *data = window_get_user_data(&action_menu->window);
+  return data->hosting != nullptr;
+}
+
+WindowStack *action_menu_get_window_stack(ActionMenu *action_menu) {
+  ActionMenuData *data = window_get_user_data(&action_menu->window);
+  return data->hosting ? data->hosting->window_stack : action_menu->window.parent_window_stack;
 }
 
 ActionMenu *app_action_menu_open(ActionMenuConfig *config) {

@@ -74,10 +74,10 @@
         "_comment": "Only for 3.x apps"
     }, {
         "name": "ActionMenuData",
-        "size_3x_padding": 86,
+        "size_3x_padding": 82,
         "size_3x": 958,
         "dependencies": ["Window", "MenuLayer", "Layer", "Layer"],
-        "_comment": "Only for 3.x apps. size_3x includes +16 for the embedded MenuLayer's two grown TouchNavWidgetNodes and +4 for the ActionMenuLayer glyph grid flag."
+        "_comment": "Only for 3.x apps. size_3x includes +16 for the embedded MenuLayer's two grown TouchNavWidgetNodes and +4 for the ActionMenuLayer glyph grid flag. The hosting pointer takes 4 bytes of its padding."
     }, {
         "name": "AnimationLegacy2",
         "size_2x": 40,
