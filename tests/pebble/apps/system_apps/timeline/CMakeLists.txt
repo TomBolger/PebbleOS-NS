@@ -128,3 +128,9 @@ pbl_clar_test(test_timeline_list_layout
   SOURCES
     pebble/apps/system/timeline/list_layout.c
 )
+
+pbl_clar_test(test_timeline_sidebar_curve
+  SOURCES
+    pebble/apps/system/timeline/list_layout.c
+    pebble/apps/system/timeline/sidebar_curve.c
+)
