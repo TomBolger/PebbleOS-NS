@@ -5,6 +5,7 @@
 
 #include "pebble_compat.h"
 #include "weather_math.h"
+#include "weather_moon.h"
 #include "weather_types.h"
 
 #include <time.h>
@@ -91,6 +92,9 @@ typedef struct {
   WeatherLocationForecast days[MAX_DAYS];
   size_t num_days;
   int day_index;                         // which day this clock represents (0 = today)
+  bool sun_known;                        // sunrise/sunset below are set
+  int16_t sunrise_min;                   // watch-local minutes from midnight
+  int16_t sunset_min;
   uint8_t hourly_types[24];              // WeatherType per hour 0-23
   bool hourly_valid;                     // true once hourly data received
   GBitmap *type_bitmaps[NUM_TYPE_SLOTS]; // one loaded bitmap per unique WeatherType
@@ -532,6 +536,41 @@ static bool prv_reading_is_current(void) {
 static int prv_current_temp(void) {
   return prv_reading_is_current() ? s_cf->days[0].current_temp_now
                                   : s_cf->hourly_temps[prv_cur_hour()];
+}
+
+// True if the hour at this position starts after sunset or before sunrise.
+static bool prv_is_night_for_pos(int pos_1_to_12) {
+  if (!s_cf || !s_cf->sun_known) {
+    return false;
+  }
+  const int minute = (prv_abs_hour_for_pos(pos_1_to_12) % 24) * 60;
+  if (s_cf->sunrise_min <= s_cf->sunset_min) {
+    return (minute >= s_cf->sunset_min) || (minute < s_cf->sunrise_min);
+  }
+  // Sunset after midnight (far east of the timezone's meridian, or high latitudes)
+  return (minute >= s_cf->sunset_min) && (minute < s_cf->sunrise_min);
+}
+
+// The moon's phase at the hour on this position.
+static float prv_moon_elongation_for_pos(int pos_1_to_12) {
+  const time_t now = time(nullptr);
+  const struct pbl_tm *lt = localtime(&now);
+  const time_t midnight = now - (lt->tm_hour * 3600 + lt->tm_min * 60 + lt->tm_sec);
+  const time_t at =
+      midnight + (time_t)s_cf->day_index * 86400 + (time_t)prv_abs_hour_for_pos(pos_1_to_12) * 3600;
+  return weather_moon_elongation(at);
+}
+
+void clock_face_set_sun_times(int sunrise_min, int sunset_min) {
+  if (!s_cf) {
+    return;
+  }
+  s_cf->sun_known = (sunrise_min >= 0) && (sunset_min >= 0);
+  s_cf->sunrise_min = (int16_t)sunrise_min;
+  s_cf->sunset_min = (int16_t)sunset_min;
+  if (s_cf->canvas) {
+    layer_mark_dirty(s_cf->canvas);
+  }
 }
 
 // Map a clock-face hour position (1-12) to the WeatherType for that hour.
@@ -1669,6 +1708,7 @@ static void prv_canvas_draw(Layer *layer, GContext *ctx) {
   int icon_xs[12];
   int icon_ys[12];
   GBitmap *icon_bmps[12];
+  bool night_moon[12] = {}; // clear night: the moon instead of the sun
 
   for (int pos = 1; pos <= 12; pos++) {
     int32_t angle = (int32_t)TRIG_MAX_ANGLE * pos / 12 + angle_offset;
@@ -1692,6 +1732,7 @@ static void prv_canvas_draw(Layer *layer, GContext *ctx) {
 
     icon_xs[pos - 1] = ix;
     icon_ys[pos - 1] = iy;
+    night_moon[pos - 1] = (wt == WeatherType_Sun) && prv_is_night_for_pos(pos);
     icon_bmps[pos - 1] =
         s_cf->type_bitmaps[idx] ? s_cf->type_bitmaps[idx] : s_cf->type_bitmaps[WeatherType_Generic];
 
@@ -1733,6 +1774,10 @@ static void prv_canvas_draw(Layer *layer, GContext *ctx) {
         graphics_context_set_stroke_color(ctx, pal.bubble_stroke);
         graphics_context_set_stroke_width(ctx, 1);
         graphics_draw_circle(ctx, GPoint(ix, iy), rr);
+      } else if ((wt == WeatherType_Sun) && prv_is_night_for_pos(pos)) {
+        // A clear night: a night sky for the sun's disc
+        graphics_context_set_fill_color(ctx, PBL_IF_COLOR_ELSE(GColorOxfordBlue, GColorBlack));
+        graphics_fill_circle(ctx, GPoint(ix, iy), rr);
       } else {
         const GColor disc = weather_type_disc_color(wt);
         if (!gcolor_equal(disc, GColorClear)) {
@@ -1741,7 +1786,12 @@ static void prv_canvas_draw(Layer *layer, GContext *ctx) {
         }
       }
 
-      if (show_icon) {
+      if (show_icon && (wt == WeatherType_Sun) && prv_is_night_for_pos(pos)) {
+        // The moon as it is at that hour, in place of the sun
+        weather_moon_draw(ctx, GPoint(ix, iy), CLOCK_ICON_SIZE / 2 - 1,
+                          prv_moon_elongation_for_pos(pos),
+                          PBL_IF_COLOR_ELSE(GColorOxfordBlue, GColorBlack));
+      } else if (show_icon) {
         GBitmap *bmp = icon_bmps[pos - 1];
         if (bmp) {
           weather_icon_draw(ctx, bmp,
@@ -1772,7 +1822,8 @@ static void prv_canvas_draw(Layer *layer, GContext *ctx) {
     if (circle_r < 1)
       continue; // fully shrunk — skip background circle
 
-    const GColor disc = weather_type_disc_color(wt);
+    const GColor disc = night_moon[pos - 1] ? PBL_IF_COLOR_ELSE(GColorOxfordBlue, GColorBlack)
+                                            : weather_type_disc_color(wt);
     if (gcolor_equal(disc, GColorClear))
       continue;
     graphics_context_set_compositing_mode(ctx, GCompOpAssign);
@@ -1783,6 +1834,12 @@ static void prv_canvas_draw(Layer *layer, GContext *ctx) {
   // Draw icon bitmaps — doing this in a separate pass minimizes framebuffer captures
   if (!reveal_engaged && (anim_done || p > ANIMATION_NORMALIZED_MAX / 2)) {
     for (int i = 0; i < 12; i++) {
+      if (night_moon[i]) {
+        weather_moon_draw(ctx, GPoint(icon_xs[i], icon_ys[i]), CLOCK_ICON_SIZE / 2 - 1,
+                          prv_moon_elongation_for_pos(i + 1),
+                          PBL_IF_COLOR_ELSE(GColorOxfordBlue, GColorBlack));
+        continue;
+      }
       if (!icon_bmps[i])
         continue;
       int bx = icon_xs[i] - CLOCK_ICON_SIZE / 2;
