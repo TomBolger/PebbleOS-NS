@@ -143,6 +143,9 @@ uint16_t notification_storage_get_count(void);
  * header and that list. Older notifications get a NULL item. Corrupt and deleted entries are
  * skipped. Callback arguments are only valid during the callback.
  *
+ * AttributeIdNotificationSection and AttributeIdStackId may also be listed; their uint8 and
+ * uint32 values are read instead (0 when absent).
+ *
  * Do not call other notification storage functions from @p iter_callback.
  *
  * @param item_cutoff Oldest timestamp for which strings are read.
