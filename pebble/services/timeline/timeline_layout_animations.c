@@ -169,10 +169,7 @@ void timeline_layout_transition_card_to_pin(TimelineLayout *card_timeline_layout
   layer_set_hidden((Layer *)&pin_timeline_layout->icon_layer, true);
 }
 
-static void prv_up_down_stopped(Animation *animation, bool finished, void *context) {
-  TimelineLayout *layout = context;
-  timeline_animation_layer_stopped_cut_to_end(animation, finished, context);
-
+void timeline_layout_finish_icon_up_down(TimelineLayout *layout) {
   // move the icon layer to where it transformed to
   KinoReel *prev_reel = kino_layer_get_reel(&layout->icon_layer);
   if (prev_reel) {
@@ -198,36 +195,49 @@ static void prv_up_down_stopped(Animation *animation, bool finished, void *conte
   }
 }
 
+static void prv_up_down_stopped(Animation *animation, bool finished, void *context) {
+  TimelineLayout *layout = context;
+  timeline_animation_layer_stopped_cut_to_end(animation, finished, context);
+  timeline_layout_finish_icon_up_down(layout);
+}
+
+void timeline_layout_animate_icon_up_down(TimelineLayout *layout, const GRect *icon_from,
+                                          const GRect *icon_to, uint32_t duration,
+                                          InterpolateInt64Function interpolate) {
+  KinoReel *from_reel = kino_reel_create_with_resource_system(layout->icon_res_info.res_app_num,
+                                                              layout->icon_res_info.res_id);
+  if (!from_reel) {
+    return;
+  }
+  GPoint target = (GPoint){
+    .x = icon_from->size.w / 2,                      // pull from the middle
+    .y = (icon_to->origin.y > icon_from->origin.y) ? // if going up, pull from the top
+             icon_from->size.h
+                                                   : 0, // else pull from the bottom
+  };
+
+  const bool take_ownership = true;
+  KinoReel *new_reel = kino_reel_scale_segmented_create(from_reel, take_ownership, *icon_from);
+  kino_reel_transform_set_to_frame(new_reel, *icon_to);
+  kino_reel_transform_set_layer_frame(new_reel, layout->icon_layer.layer.frame);
+  kino_reel_transform_set_transform_duration(new_reel, duration);
+  kino_reel_scale_segmented_set_delay_by_distance(new_reel, target);
+
+  const Fixed_S32_16 POINT_DURATION = Fixed_S32_16(5 * FIXED_S32_16_ONE.raw_value / 6);
+  kino_reel_scale_segmented_set_point_duration(new_reel, POINT_DURATION);
+  kino_reel_scale_segmented_set_interpolate(new_reel, interpolate);
+
+  prv_change_reel(layout, new_reel);
+
+  // Unclip for the scaling animation
+  layer_set_clips(&layout->icon_layer.layer, false);
+}
+
 Animation *timeline_layout_create_up_down_animation(TimelineLayout *layout, const GRect *from,
                                                     const GRect *to, const GRect *icon_from,
                                                     const GRect *icon_to, uint32_t duration,
                                                     InterpolateInt64Function interpolate) {
-  KinoReel *from_reel = kino_reel_create_with_resource_system(layout->icon_res_info.res_app_num,
-                                                              layout->icon_res_info.res_id);
-  if (from_reel) {
-    GPoint target = (GPoint){
-      .x = icon_from->size.w / 2,                      // pull from the middle
-      .y = (icon_to->origin.y > icon_from->origin.y) ? // if going up, pull from the top
-               icon_from->size.h
-                                                     : 0, // else pull from the bottom
-    };
-
-    const bool take_ownership = true;
-    KinoReel *new_reel = kino_reel_scale_segmented_create(from_reel, take_ownership, *icon_from);
-    kino_reel_transform_set_to_frame(new_reel, *icon_to);
-    kino_reel_transform_set_layer_frame(new_reel, layout->icon_layer.layer.frame);
-    kino_reel_transform_set_transform_duration(new_reel, duration);
-    kino_reel_scale_segmented_set_delay_by_distance(new_reel, target);
-
-    const Fixed_S32_16 POINT_DURATION = Fixed_S32_16(5 * FIXED_S32_16_ONE.raw_value / 6);
-    kino_reel_scale_segmented_set_point_duration(new_reel, POINT_DURATION);
-    kino_reel_scale_segmented_set_interpolate(new_reel, interpolate);
-
-    prv_change_reel(layout, new_reel);
-
-    // Unclip for the scaling animation
-    layer_set_clips(&layout->icon_layer.layer, false);
-  }
+  timeline_layout_animate_icon_up_down(layout, icon_from, icon_to, duration, interpolate);
 
   PropertyAnimation *property_animation =
       property_animation_create_layer_frame((Layer *)layout, (GRect *)from, (GRect *)to);

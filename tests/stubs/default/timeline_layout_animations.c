@@ -17,3 +17,11 @@ Animation *PBL_WEAK timeline_layout_create_up_down_animation(
     const GRect *icon_to, uint32_t duration, InterpolateInt64Function interpolate) {
   return nullptr;
 }
+
+void PBL_WEAK timeline_layout_animate_icon_up_down(TimelineLayout *layout, const GRect *icon_from,
+                                                   const GRect *icon_to, uint32_t duration,
+                                                   InterpolateInt64Function interpolate) {
+}
+
+void PBL_WEAK timeline_layout_finish_icon_up_down(TimelineLayout *layout) {
+}
