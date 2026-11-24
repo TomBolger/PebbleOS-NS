@@ -530,15 +530,24 @@ static int16_t prv_notif_status_bar_height(void) {
              : STATUS_BAR_LAYER_HEIGHT;
 }
 
+void notification_layout_get_banner_circle(int16_t origin_y, GPoint *center, int16_t *radius) {
+  // The y-position of a layout frame when its banner is peeking
+  const int32_t banner_peek_static_y = PBL_DISPLAY_HEIGHT - prv_notif_status_bar_height();
+  const int32_t banner_movement_raw_offset =
+      PBL_CLAMP(banner_peek_static_y - origin_y, 0, banner_peek_static_y);
+  *radius = (int16_t)prv_interpolate_linear(BOTTOM_BANNER_CIRCLE_RADIUS, BANNER_CIRCLE_RADIUS, 0,
+                                            banner_peek_static_y, banner_movement_raw_offset);
+  // We use PBL_DISPLAY_WIDTH instead of the layer's frame or bounds because the notification
+  // layout's frame is not the same size as the display
+  *center = GPoint(PBL_DISPLAY_WIDTH / 2, (int16_t)prv_interpolate_linear(
+                                              0, LAYOUT_TOP_BANNER_ORIGIN_Y, 0,
+                                              banner_peek_static_y, banner_movement_raw_offset));
+}
+
 static void prv_draw_banner_round(NotificationLayout *notification_layout, GContext *ctx,
                                   const GRect *const notification_layout_frame,
                                   LayoutColors colors) {
-  // We use PBL_DISPLAY_HEIGHT and PBL_DISPLAY_WIDTH instead of the layer's frame or bounds because
-  // the notification layout's frame is not the same size as the display
-  const int32_t half_screen_width = PBL_DISPLAY_WIDTH / 2;
   const int16_t status_bar_height = prv_notif_status_bar_height();
-  // The y-position of a layout frame when its banner is peeking
-  const int32_t banner_peek_static_y = PBL_DISPLAY_HEIGHT - status_bar_height;
   graphics_context_set_fill_color(ctx, colors.bg_color);
   const int32_t saved_clip_box_size_h = ctx->draw_state.clip_box.size.h;
   const int32_t saved_clip_box_origin_y = ctx->draw_state.clip_box.origin.y;
@@ -547,17 +556,10 @@ static void prv_draw_banner_round(NotificationLayout *notification_layout, GCont
   ctx->draw_state.clip_box.size.h = PBL_DISPLAY_HEIGHT;
   grect_clip(&ctx->draw_state.clip_box, &DISP_FRAME);
 
-  const int32_t banner_movement_raw_offset = PBL_CLAMP(
-      banner_peek_static_y - notification_layout_frame->origin.y, 0, banner_peek_static_y);
-  const int32_t banner_radius =
-      prv_interpolate_linear(BOTTOM_BANNER_CIRCLE_RADIUS, BANNER_CIRCLE_RADIUS, 0,
-                             banner_peek_static_y, banner_movement_raw_offset);
-  const int32_t banner_diameter = banner_radius * 2;
-  const int32_t banner_center_y = prv_interpolate_linear(
-      0, LAYOUT_TOP_BANNER_ORIGIN_Y, 0, banner_peek_static_y, banner_movement_raw_offset);
-  const GRect banner_frame =
-      GRect(half_screen_width - banner_radius, banner_center_y - banner_radius, banner_diameter,
-            banner_diameter);
+  GPoint center;
+  int16_t radius;
+  notification_layout_get_banner_circle(notification_layout_frame->origin.y, &center, &radius);
+  const GRect banner_frame = GRect(center.x - radius, center.y - radius, radius * 2, radius * 2);
   graphics_fill_oval(ctx, banner_frame, GOvalScaleModeFitCircle);
   ctx->draw_state.clip_box.origin.y = saved_clip_box_origin_y;
   ctx->draw_state.clip_box.size.h = saved_clip_box_size_h;
