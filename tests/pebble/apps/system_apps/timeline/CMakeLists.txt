@@ -121,3 +121,8 @@ pbl_clar_test(test_timeline_no_events
   OVERRIDES dummy_board
   TEST_IMAGES
 )
+
+pbl_clar_test(test_timeline_list_layout
+  SOURCES
+    pebble/apps/system/timeline/list_layout.c
+)
