@@ -12,43 +12,118 @@ ANDROID_DATA_SOURCE = uuid.UUID("ed429c16-f674-4220-95da-454f303f15e2")
 
 # AttributeId
 TITLE, BODY, SENDER, APP_NAME = 1, 3, 12, 30
+NOTIFICATION_SECTION, STACK_ID = 54, 55
+
+# NotificationSection: section in bits 0-1, category in bits 2-4
+SECTIONS = {
+    "alerting": 0,
+    "conversation": 1,
+    "silent": 2,
+    "suggested": 2 | 1 << 2,
+    "promotions": 2 | 2 << 2,
+    "news": 2 | 3 << 2,
+    "social": 2 | 4 << 2,
+}
 TYPE_NOTIFICATION = 1
 LAYOUT_NOTIFICATION = 4
 FLAG_VISIBLE = 1 << 0
 ACTION_DISMISS = 0x04
 
-# A day of messages: repeated senders and "Conversation: Sender" titles
-# exercise the grouped history; the first one is from yesterday.
+# A day of messages, laid out as the phone's shade lists them: repeated
+# senders and "Conversation: Sender" titles exercise the grouped history, and
+# each app's notifications form one phone stack.
 MESSAGES = [
     {
         "app": "WhatsApp",
         "sender": "Anna",
         "body": "Are we still on for lunch?",
         "age": 26 * 60,
+        "section": "conversation",
+        "stack": "whatsapp",
     },
-    {"app": "WhatsApp", "sender": "Bob", "body": "Sent the slides", "age": 3 * 60},
-    {"app": "WhatsApp", "sender": "Anna", "body": "Running 10 min late", "age": 40},
-    {"app": "Telegram", "title": "PG | Elite: Aloha", "body": "Hi team", "age": 30},
-    {"app": "WhatsApp", "sender": "Bob", "body": "Check the build please", "age": 20},
+    {
+        "app": "WhatsApp",
+        "sender": "Bob",
+        "body": "Sent the slides",
+        "age": 3 * 60,
+        "section": "conversation",
+        "stack": "whatsapp",
+    },
+    {
+        "app": "WhatsApp",
+        "sender": "Anna",
+        "body": "Running 10 min late",
+        "age": 40,
+        "section": "conversation",
+        "stack": "whatsapp",
+    },
+    {
+        "app": "Telegram",
+        "title": "PG | Elite: Aloha",
+        "body": "Hi team",
+        "age": 30,
+        "section": "conversation",
+        "stack": "telegram",
+    },
+    {
+        "app": "Shop",
+        "title": "Weekend sale",
+        "body": "20% off everything until Sunday",
+        "age": 25,
+        "section": "promotions",
+    },
+    {
+        "app": "WhatsApp",
+        "sender": "Bob",
+        "body": "Check the build please",
+        "age": 20,
+        "section": "conversation",
+        "stack": "whatsapp",
+    },
     {
         "app": "Android System",
         "title": "Battery low",
         "body": "15% remaining",
         "age": 10,
+        "section": "alerting",
+    },
+    {
+        "app": "News",
+        "title": "Morning briefing",
+        "body": "Five stories to start your day",
+        "age": 8,
+        "section": "news",
     },
     {
         "app": "Telegram",
         "title": "PG | Elite: Yevhen",
         "body": "Standup moved",
         "age": 5,
+        "section": "conversation",
+        "stack": "telegram",
     },
-    {"app": "WhatsApp", "sender": "Anna", "body": "Ok see you there", "age": 1},
+    {
+        "app": "WhatsApp",
+        "sender": "Anna",
+        "body": "Ok see you there",
+        "age": 1,
+        "section": "conversation",
+        "stack": "whatsapp",
+    },
 ]
 
 
 def _attribute(attr_id, text):
     data = text.encode()
     return struct.pack("<BH", attr_id, len(data)) + data
+
+
+def _stack_id(key):
+    """The phone's stack id: Java's String.hashCode(), never 0."""
+    h = 0
+    for c in key:
+        h = (31 * h + ord(c)) & 0xFFFFFFFF
+    return h or 1
 
 
 def notification(notification_id, timestamp, message):
@@ -62,6 +137,12 @@ def notification(notification_id, timestamp, message):
     ]
     if sender:
         attributes.insert(0, _attribute(SENDER, sender))
+    if message.get("section"):
+        attributes.append(
+            struct.pack("<BHB", NOTIFICATION_SECTION, 1, SECTIONS[message["section"]])
+        )
+    if message.get("stack"):
+        attributes.append(struct.pack("<BHI", STACK_ID, 4, _stack_id(message["stack"])))
     dismiss = struct.pack("<BBB", 0, ACTION_DISMISS, 1) + _attribute(TITLE, "Dismiss")
     payload = b"".join(attributes) + dismiss
     header = struct.pack(
@@ -106,6 +187,14 @@ class Notifications(Feed):
             help="How long ago it arrived (default: now)",
         )
         parser.add_argument(
+            "--section",
+            choices=sorted(SECTIONS),
+            help="Where the phone's shade lists it",
+        )
+        parser.add_argument(
+            "--stack", metavar="KEY", help="Phone stack it belongs to, e.g. the app"
+        )
+        parser.add_argument(
             "--clear", action="store_true", help="Remove every notification instead"
         )
 
@@ -125,6 +214,8 @@ class Notifications(Feed):
                     "title": args.title,
                     "body": args.body,
                     "age": args.age,
+                    "section": args.section,
+                    "stack": args.stack,
                 }
             ]
         else:
