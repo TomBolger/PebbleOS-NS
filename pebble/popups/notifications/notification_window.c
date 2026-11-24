@@ -1166,6 +1166,7 @@ static NotificationRoundActionsBanner prv_round_actions_banner(NotificationWindo
     .icon = ((NotificationLayout *)layout)->icon_res_info,
     .bottom = layout_top + LAYOUT_TOP_BANNER_ORIGIN_Y + BANNER_CIRCLE_RADIUS,
     .icon_center_y = layout_top + CARD_ICON_UPPER_PADDING + NOTIFICATION_TINY_RESOURCE_HEIGHT / 2,
+    .card = swap_layer_get_layer(&data->swap_layer),
   };
 }
 
