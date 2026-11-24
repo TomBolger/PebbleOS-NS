@@ -718,6 +718,24 @@ void test_weather_app_layout__golden_hour_comes_before_the_sunset(void) {
   cl_assert_equal_i(weather_sun_golden_minutes(INT16_MIN, INT16_MIN, 0), -1);
 }
 
+void test_weather_app_layout__daylight_tells_the_midnight_sun_from_the_polar_night(void) {
+  fake_rtc_init(0, 1781956800); // 2026-06-20 12:00 UTC
+  // London: sunrise to sunset
+  const int sunrise = weather_sun_sunrise_minutes(5150, -12, 60);
+  const int sunset = weather_sun_sunset_minutes(5150, -12, 60);
+  const int daylight = weather_sun_daylight_minutes(5150, -12, 60);
+  cl_assert(daylight > 16 * 60 && daylight < 17 * 60);
+  cl_assert(PBL_ABS(sunset - sunrise - daylight) <= 1);
+  // Longyearbyen under the midnight sun, then in the polar night: the sunrise and sunset meet
+  // either way, the day length tells which
+  cl_assert_equal_i(weather_sun_daylight_minutes(7822, 1565, 120), 24 * 60);
+  fake_rtc_init(0, 1797854400); // 2026-12-21 12:00 UTC
+  cl_assert_equal_i(weather_sun_daylight_minutes(7822, 1565, 60), 0);
+  cl_assert_equal_i(weather_sun_sunrise_minutes(7822, 1565, 60),
+                    weather_sun_sunset_minutes(7822, 1565, 60));
+  cl_assert_equal_i(weather_sun_daylight_minutes(INT16_MIN, INT16_MIN, 0), -1);
+}
+
 void test_weather_app_layout__copy_text_cuts_on_character_boundary(void) {
   char buf[8];
   weather_copy_text(buf, sizeof(buf), "Oslo");
