@@ -517,6 +517,11 @@ typedef struct MenuLayer {
   bool round_pill_highlight : 1;
 
   //! @internal
+  //! Round only: leave the highlight pill out, drawing the selected row in the normal colours,
+  //! without changing the layout, see menu_layer_set_round_pill_hidden().
+  bool round_pill_hidden : 1;
+
+  //! @internal
   //! Round only: extra room between the bezel and the left end of the highlight pill, see
   //! menu_layer_set_round_pill_left_margin(). Carved from \ref padding.
   uint8_t round_pill_left_margin;
