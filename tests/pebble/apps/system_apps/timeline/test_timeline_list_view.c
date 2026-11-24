@@ -62,12 +62,14 @@ typedef struct ListViewConfig {
   TimelineItemConfig *pins[6];
   bool past;
   bool day_separator;
+  //! Whether the day separator then hides, the pins of its day coming in
+  bool after_day_separator;
   //! Number of pins to scroll past before rendering
   int num_scrolls;
   //! Progress of the last scroll when rendering, or 0 to let it end
   AnimationProgress scroll_progress;
-  //! Number of pages to scroll through the selected pin's text after the scrolls
-  int num_page_scrolls;
+  //! Number of pins to scroll back past after the scrolls
+  int num_back_scrolls;
 } ListViewConfig;
 
 static void prv_add_timeline_item(const TimelineItemConfig *config, bool past, uint8_t pin_index) {
@@ -158,7 +160,9 @@ static void prv_assert_title_centered(Window *window, TimelineLayer *timeline_la
   const int16_t text_width = PBL_DISPLAY_WIDTH - timeline_layer_get_ideal_sidebar_width() - 15;
   const int16_t left = s_action_bar_on_right ? 0 : (PBL_DISPLAY_WIDTH - text_width);
   const int16_t right = left + text_width;
-  for (int16_t y = PBL_DISPLAY_HEIGHT / 4; y < 3 * PBL_DISPLAY_HEIGHT / 4; y++) {
+  const int16_t first_row = timeline_layer->compact ? 0 : PBL_DISPLAY_HEIGHT / 4;
+  const int16_t end_row = timeline_layer->compact ? PBL_DISPLAY_HEIGHT : 3 * PBL_DISPLAY_HEIGHT / 4;
+  for (int16_t y = first_row; y < end_row; y++) {
     const GBitmapDataRowInfo row = gbitmap_get_data_row_info(bitmap, y);
     for (int16_t x = PBL_MAX(row.min_x, left); x < PBL_MIN(row.max_x + 1, right); x++) {
       if (row.data[x] == GColorBlackARGB8) {
@@ -168,7 +172,14 @@ static void prv_assert_title_centered(Window *window, TimelineLayer *timeline_la
     }
   }
   cl_assert(top <= bottom);
-  cl_assert(PBL_ABS(top + bottom - PBL_DISPLAY_HEIGHT) <= 4);
+  // The compact list's notch, and the selected pin's icon, point at the title wherever it rests
+  int16_t center_y = PBL_DISPLAY_HEIGHT / 2;
+  if (timeline_layer->compact) {
+    GRect icon_frame;
+    timeline_layer_get_current_icon_frame(timeline_layer, &icon_frame);
+    center_y = icon_frame.origin.y + icon_frame.size.h / 2;
+  }
+  cl_assert(PBL_ABS(top + bottom - 2 * center_y) <= 4);
   for (size_t i = 0; i < num_other_text; i++) {
     other_text[i]->color = colors[i];
   }
@@ -237,9 +248,12 @@ static void prv_create_list_view_and_render(ListViewConfig *config) {
   timeline_layer_reset(&timeline_layer);
 
 #if PBL_ROUND
-  GRect icon_frame;
-  timeline_layer_get_icon_frame(&timeline_layer, TIMELINE_LAYER_FIRST_VISIBLE_LAYOUT, &icon_frame);
-  cl_assert_equal_i(icon_frame.origin.y + icon_frame.size.h / 2, PBL_DISPLAY_HEIGHT / 2);
+  if (!timeline_layer.compact) {
+    GRect icon_frame;
+    timeline_layer_get_icon_frame(&timeline_layer, TIMELINE_LAYER_FIRST_VISIBLE_LAYOUT,
+                                  &icon_frame);
+    cl_assert_equal_i(icon_frame.origin.y + icon_frame.size.h / 2, PBL_DISPLAY_HEIGHT / 2);
+  }
 #endif
 
   Animation *running_scroll = nullptr;
@@ -264,8 +278,14 @@ static void prv_create_list_view_and_render(ListViewConfig *config) {
     fake_animation_complete(animation);
   }
 
-  for (int i = 0; i < config->num_page_scrolls; i++) {
-    cl_assert(timeline_layer_scroll_selected(&timeline_layer, true /* down */));
+  for (int i = 0; i < config->num_back_scrolls; i++) {
+    int new_idx;
+    bool has_new;
+    cl_assert(timeline_model_iter_prev(&new_idx, &has_new));
+    if (has_new) {
+      timeline_layer_set_prev_item(&timeline_layer, new_idx);
+    }
+    timeline_layer_move_data(&timeline_layer, -1);
     fake_animation_complete(timeline_layer_create_up_down_animation(
         &timeline_layer, TIMELINE_UP_DOWN_ANIMATION_DURATION_MS,
         timeline_animation_interpolate_moook_soft));
@@ -284,21 +304,31 @@ static void prv_create_list_view_and_render(ListViewConfig *config) {
     fake_animation_complete(timeline_layer_create_day_sep_show(&timeline_layer));
     fake_animation_complete(timeline_layer.day_separator.kino_layer.player.animation);
     timeline_layer_set_layouts_hidden(&timeline_layer, true);
+    if (config->after_day_separator) {
+      // As the timeline does once the separator has shown for a while
+      fake_animation_complete(timeline_layer_create_day_sep_hide(&timeline_layer));
+      timeline_layer_reset(&timeline_layer);
+      fake_animation_complete(timeline_layer_create_up_down_animation(
+          &timeline_layer, TIMELINE_UP_DOWN_ANIMATION_DURATION_MS / 2,
+          timeline_animation_interpolate_moook_second_half));
+    }
   }
 
   window_set_on_screen(&window, true, true);
 
 #if PBL_ROUND
   // Scrolling the fixed slots brings the next pin's title near the middle, and pins only rest on
-  // the middle once they stop
-  if (!config->day_separator && !config->scroll_progress && !config->num_page_scrolls &&
+  // the middle once they stop. The compact list rests every pin's title at the notch, however it
+  // got there.
+  const bool day_separator_shown = config->day_separator && !config->after_day_separator;
+  if (!day_separator_shown && !config->scroll_progress &&
       (timeline_layer.compact || config->num_scrolls == 0)) {
     prv_assert_title_centered(&window, &timeline_layer);
   }
 #endif
   window_render(&window, fake_graphics_context_get_context());
 #if PBL_ROUND
-  if (!config->day_separator) {
+  if (!day_separator_shown) {
     prv_assert_text_clear_of_arc(&timeline_layer);
   }
 #endif
@@ -452,7 +482,7 @@ void test_timeline_list_view__content_sizes_no_subtitle(void) {
   screen_grid_check(&grid, TEST_PBI_FILE);
 }
 
-void prv_create_and_render_day_sep_tomorrow(bool past) {
+static void prv_create_and_render_day_sep(bool past, bool after) {
   prv_create_list_view_and_render(&(ListViewConfig){
     .pins =
         {&(TimelineItemConfig){
@@ -469,10 +499,29 @@ void prv_create_and_render_day_sep_tomorrow(bool past) {
            .title = "Design Review Meeting",
            .subtitle = "Batavia, Palo Alto",
            .icon = TIMELINE_RESOURCE_TIMELINE_CALENDAR,
-         }},
+         },
+         after ? &(TimelineItemConfig){
+                   .relative_timestamp =
+                       ((12 * PBL_SEC_PER_HOUR) + (30 * PBL_SEC_PER_MIN) + PBL_SEC_PER_DAY),
+                   .duration = PBL_MIN_PER_HOUR,
+                   .title = "Lunch",
+                   .icon = TIMELINE_RESOURCE_TIMELINE_CALENDAR,
+                 }
+               : nullptr},
     .past = past,
     .day_separator = true,
+    .after_day_separator = after,
   });
+}
+
+void prv_create_and_render_day_sep_tomorrow(bool past) {
+  prv_create_and_render_day_sep(past, false /* after */);
+}
+
+void test_timeline_list_view__after_day_sep_future(void) {
+  // The pins of the next day come in with the selected one on the anchor
+  prv_create_and_render_day_sep(false /* past */, true /* after */);
+  FAKE_GRAPHICS_CONTEXT_CHECK_DEST_BITMAP_FILE();
 }
 
 void test_timeline_list_view__day_sep_tomorrow_future(void) {
@@ -698,8 +747,7 @@ static void prv_render_compact(TimelineItemConfig *pins, bool past, int num_scro
   prv_render_compact_config(pins, &config);
 }
 
-static void prv_check_compact_pages(TimelineItemConfig *pins, int num_scrolls, int num_page_scrolls,
-                                    const char *pbi_file) {
+static void prv_check_compact(TimelineItemConfig *pins, int num_scrolls, const char *pbi_file) {
   ScreenGrid grid;
   screen_grid_init(&grid, 2);
   for (PreferredContentSize size = grid.first_size; size <= grid.last_size; size++) {
@@ -708,18 +756,12 @@ static void prv_check_compact_pages(TimelineItemConfig *pins, int num_scrolls, i
       ListViewConfig config = {
         .past = past,
         .num_scrolls = num_scrolls,
-        // The larger text sizes keep the fixed slots, which do not scroll through a pin
-        .num_page_scrolls = (size <= PreferredContentSizeDefault) ? num_page_scrolls : 0,
       };
       prv_render_compact_config(pins, &config);
       screen_grid_add(&grid, fake_graphics_context_get_context(), size, past);
     }
   }
   screen_grid_check(&grid, pbi_file);
-}
-
-static void prv_check_compact(TimelineItemConfig *pins, int num_scrolls, const char *pbi_file) {
-  prv_check_compact_pages(pins, num_scrolls, 0 /* num_page_scrolls */, pbi_file);
 }
 
 void test_timeline_list_view__content_sizes_compact_one_liners(void) {
@@ -742,18 +784,9 @@ void test_timeline_list_view__content_sizes_compact_description(void) {
   pins[2].title = "Trip planning";
   pins[2].subtitle = "Agency office";
   pins[2].body = s_long_body;
-  // The selected pin shows the first page of its description above the next pin
+  // The selected pin shows its description as far as the circle reaches, cut off past it; its card
+  // shows all of it
   prv_check_compact(pins, 2 /* num_scrolls */, TEST_PBI_FILE);
-}
-
-void test_timeline_list_view__content_sizes_compact_description_next_page(void) {
-  TimelineItemConfig pins[PBL_ARRAY_SIZE(s_one_liners)];
-  memcpy(pins, s_one_liners, sizeof(pins));
-  pins[2].title = "Trip planning";
-  pins[2].subtitle = "Agency office";
-  pins[2].body = s_long_body;
-  // Scrolling shows the next page of the description in its place, the other pins stay
-  prv_check_compact_pages(pins, 2 /* num_scrolls */, 1 /* num_page_scrolls */, TEST_PBI_FILE);
 }
 
 void test_timeline_list_view__content_sizes_compact_first(void) {
@@ -769,8 +802,32 @@ void test_timeline_list_view__compact_mid_scroll(void) {
   pins[1].subtitle = "Room 2B";
   pins[2].title = "Dentist";
   pins[2].subtitle = "Dr. Vidal, Carrer de Mallorca 123, Barcelona";
-  // Halfway from the lecture to the dentist, the lecture folds over its room and the dentist
-  // grows over its address, both laid out as they rest, while the pins stay stacked
+  // Halfway from the lecture to the dentist, both slide with all their text as laid out when
+  // selected, while the pins stay stacked
   prv_render_compact(pins, false /* past */, 2 /* num_scrolls */, ANIMATION_NORMALIZED_MAX / 2);
   FAKE_GRAPHICS_CONTEXT_CHECK_DEST_BITMAP_FILE();
+}
+
+void test_timeline_list_view__content_sizes_compact_description_from_after(void) {
+  TimelineItemConfig pins[PBL_ARRAY_SIZE(s_one_liners)];
+  memcpy(pins, s_one_liners, sizeof(pins));
+  pins[2].title = "Trip planning";
+  pins[2].subtitle = "Agency office";
+  pins[2].body = s_long_body;
+  // Coming back to a long pin from the pin after it shows it as it was, cut off at the same place
+  ScreenGrid grid;
+  screen_grid_init(&grid, 2);
+  for (PreferredContentSize size = grid.first_size; size <= grid.last_size; size++) {
+    system_theme_set_content_size(size);
+    for (int past = 0; past < 2; past++) {
+      ListViewConfig config = {
+        .past = past,
+        .num_scrolls = 4,
+        .num_back_scrolls = 2,
+      };
+      prv_render_compact_config(pins, &config);
+      screen_grid_add(&grid, fake_graphics_context_get_context(), size, past);
+    }
+  }
+  screen_grid_check(&grid, TEST_PBI_FILE);
 }
