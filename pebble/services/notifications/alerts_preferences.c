@@ -115,6 +115,16 @@ static bool s_notification_respect_phone_silence = false;
 #define PREF_KEY_NOTIF_DISMISSAL_SYNC "notifDismissalSync"
 static bool s_notification_dismissal_sync = false;
 
+#define PREF_KEY_NOTIF_GROUP_BY_APP "notifGroupByApp"
+static bool s_notification_group_by_app = true;
+
+#define PREF_KEY_NOTIF_SECTIONS "notifSections"
+static bool s_notification_sections = true;
+
+#define PREF_KEY_NOTIF_COLLAPSED_SECTIONS "notifCollapsedSections"
+// Silent (bit 2) starts closed, as on the phone.
+static uint8_t s_notification_collapsed_sections = 1 << 2;
+
 #define PREF_KEY_NOTIF_GROUPING_RANGE "notifGroupingRange"
 static NotificationGroupingRange s_notification_grouping_range = NotificationGroupingRange_Never;
 
@@ -483,6 +493,9 @@ void alerts_preferences_init(void) {
   RESTORE_PREF(PREF_KEY_NOTIF_BACKLIGHT, s_notification_backlight);
   RESTORE_PREF(PREF_KEY_NOTIF_RESPECT_PHONE_SILENCE, s_notification_respect_phone_silence);
   RESTORE_PREF(PREF_KEY_NOTIF_DISMISSAL_SYNC, s_notification_dismissal_sync);
+  RESTORE_PREF(PREF_KEY_NOTIF_GROUP_BY_APP, s_notification_group_by_app);
+  RESTORE_PREF(PREF_KEY_NOTIF_SECTIONS, s_notification_sections);
+  RESTORE_PREF(PREF_KEY_NOTIF_COLLAPSED_SECTIONS, s_notification_collapsed_sections);
   RESTORE_PREF(PREF_KEY_NOTIF_GROUPING_RANGE, s_notification_grouping_range);
   RESTORE_PREF(PREF_KEY_NOTIF_STATUS_BAR_STYLE, s_notification_status_bar_style);
   RESTORE_PREF(PREF_KEY_NOTIF_TEXT_SIZE, s_notification_content_size);
@@ -597,6 +610,36 @@ bool alerts_preferences_get_notification_dismissal_sync(void) {
 void alerts_preferences_set_notification_dismissal_sync(bool enable) {
   s_notification_dismissal_sync = enable;
   SET_PREF(PREF_KEY_NOTIF_DISMISSAL_SYNC, s_notification_dismissal_sync);
+}
+
+bool alerts_preferences_get_notification_group_by_app(void) {
+  return s_notification_group_by_app;
+}
+
+void alerts_preferences_set_notification_group_by_app(bool enable) {
+  s_notification_group_by_app = enable;
+  SET_PREF(PREF_KEY_NOTIF_GROUP_BY_APP, s_notification_group_by_app);
+}
+
+bool alerts_preferences_get_notification_sections(void) {
+  return s_notification_sections;
+}
+
+void alerts_preferences_set_notification_sections(bool enable) {
+  s_notification_sections = enable;
+  SET_PREF(PREF_KEY_NOTIF_SECTIONS, s_notification_sections);
+}
+
+uint8_t alerts_preferences_get_notification_collapsed_sections(void) {
+  return s_notification_collapsed_sections;
+}
+
+void alerts_preferences_set_notification_collapsed_sections(uint8_t sections) {
+  if (sections == s_notification_collapsed_sections) {
+    return;
+  }
+  s_notification_collapsed_sections = sections;
+  SET_PREF(PREF_KEY_NOTIF_COLLAPSED_SECTIONS, s_notification_collapsed_sections);
 }
 
 NotificationGroupingRange alerts_preferences_get_notification_grouping_range(void) {
@@ -1002,6 +1045,9 @@ void alerts_preferences_handle_blob_db_event(PebbleBlobDBEvent *event) {
   RELOAD_IF_MATCH(PREF_KEY_NOTIF_BACKLIGHT, s_notification_backlight);
   RELOAD_IF_MATCH(PREF_KEY_NOTIF_RESPECT_PHONE_SILENCE, s_notification_respect_phone_silence);
   RELOAD_IF_MATCH(PREF_KEY_NOTIF_DISMISSAL_SYNC, s_notification_dismissal_sync);
+  RELOAD_IF_MATCH(PREF_KEY_NOTIF_GROUP_BY_APP, s_notification_group_by_app);
+  RELOAD_IF_MATCH(PREF_KEY_NOTIF_SECTIONS, s_notification_sections);
+  RELOAD_IF_MATCH(PREF_KEY_NOTIF_COLLAPSED_SECTIONS, s_notification_collapsed_sections);
   RELOAD_IF_MATCH(PREF_KEY_NOTIF_GROUPING_RANGE, s_notification_grouping_range);
   RELOAD_IF_MATCH(PREF_KEY_NOTIF_STATUS_BAR_STYLE, s_notification_status_bar_style);
   RELOAD_IF_MATCH(PREF_KEY_NOTIF_TEXT_SIZE, s_notification_content_size);
