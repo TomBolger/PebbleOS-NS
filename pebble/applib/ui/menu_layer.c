@@ -609,17 +609,10 @@ static bool prv_round_shape(const MenuLayer *menu_layer, GPoint content_origin,
 //! Fills \a shape, on screen, in the drawing box
 static void prv_fill_round_shape(GContext *ctx, const MenuLayer *menu_layer,
                                  const MenuRoundShape *shape) {
-  const GPoint origin = ctx->draw_state.drawing_box.origin;
+  GRect box = shape->box;
+  box.origin = gpoint_sub(box.origin, ctx->draw_state.drawing_box.origin);
   graphics_context_set_fill_color(ctx, menu_layer->highlight_colors[MenuLayerColorBackground]);
-  if (shape->circle_radius > 0) {
-    graphics_fill_circle(ctx, gpoint_sub(shape->circle_center, origin),
-                         (uint16_t)shape->circle_radius);
-  }
-  if (!grect_is_empty(&shape->box)) {
-    GRect box = shape->box;
-    box.origin = gpoint_sub(box.origin, origin);
-    graphics_fill_round_rect(ctx, &box, (uint16_t)shape->radius, GCornersAll);
-  }
+  graphics_fill_round_rect(ctx, &box, (uint16_t)shape->radius, GCornersAll);
 }
 
 //! Rows the highlight covers, in content coordinates: during a morph, both ends of it
@@ -700,8 +693,7 @@ static void prv_menu_layer_draw_row_round(MenuLayer *menu_layer, Layer *cell_lay
     if (!has_shape) {
       return;
     }
-    GRect shape_clip = menu_round_shape_bounds(&shape);
-    grect_clip((GRect *)&ctx->draw_state.clip_box, &shape_clip);
+    grect_clip((GRect *)&ctx->draw_state.clip_box, &shape.box);
     if (grect_is_empty(&ctx->draw_state.clip_box)) {
       return;
     }
