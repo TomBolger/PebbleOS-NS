@@ -1368,8 +1368,7 @@ static void prv_init_notification_window(bool is_modal, bool allow_dismiss_all) 
   const int16_t status_bar_height = status_layer->layer.frame.size.h;
 
   // prepare the swap layer frame using notification_layout values including the status bar
-  const GRect swap_frame =
-      GRect(0, status_bar_height, window_frame->size.w, LAYOUT_HEIGHT + LAYOUT_ARROW_HEIGHT);
+  const GRect swap_frame = GRect(0, status_bar_height, window_frame->size.w, LAYOUT_HEIGHT);
 
   SwapLayer *swap_layer = &data->swap_layer;
   swap_layer_init(swap_layer, &swap_frame);
