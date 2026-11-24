@@ -46,6 +46,10 @@
 /** @brief Vertical origin of the round top banner circle. */
 #define LAYOUT_TOP_BANNER_ORIGIN_Y \
   (LAYOUT_TOP_BANNER_HEIGHT_ROUND - (BANNER_CIRCLE_RADIUS + STATUS_BAR_LAYER_HEIGHT) - 1)
+/** @brief Radius of the round bubble hinting at the next notification, see @ref SwapLayer. */
+#define LAYOUT_NEXT_BUBBLE_RADIUS 20
+/** @brief Space between the round next bubble and the bottom of the screen. */
+#define LAYOUT_NEXT_BUBBLE_MARGIN 8
 
 /** @brief Largest layout origin y at which its text is considered visible. */
 #define TEXT_VISIBLE_UPPER_THRESHOLD (STATUS_BAR_LAYER_HEIGHT - INTERPOLATE_MOOOK_BOUNCE_BACK - 1)

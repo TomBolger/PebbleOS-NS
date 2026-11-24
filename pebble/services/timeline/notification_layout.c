@@ -39,7 +39,9 @@
 //! Space between the banner and the header
 #define CARD_HEADER_GAP   7
 // All paddings relate to padding above the object unless othersize noted
-#define CARD_BOTTOM_PADDING         18
+// Round cards end clear of the bubble hinting at the next card.
+#define CARD_BOTTOM_PADDING \
+  PBL_IF_RECT_ELSE(18, 2 * LAYOUT_NEXT_BUBBLE_RADIUS + LAYOUT_NEXT_BUBBLE_MARGIN + 4)
 #define BOTTOM_BANNER_CIRCLE_RADIUS 8
 
 static void prv_card_render(NotificationLayout *layout, GContext *ctx, bool render);
@@ -595,6 +597,10 @@ static void prv_draw_banner_round(NotificationLayout *notification_layout, GCont
                                   const GRect *const notification_layout_frame,
                                   LayoutColors colors) {
   const int16_t status_bar_height = prv_notif_status_bar_height();
+  if (notification_layout_frame->origin.y >= PBL_DISPLAY_HEIGHT - status_bar_height) {
+    // Still below the screen: no dot peeking in, the swap layer's next bubble stands for it.
+    return;
+  }
   graphics_context_set_fill_color(ctx, colors.bg_color);
   const int32_t saved_clip_box_size_h = ctx->draw_state.clip_box.size.h;
   const int32_t saved_clip_box_origin_y = ctx->draw_state.clip_box.origin.y;
