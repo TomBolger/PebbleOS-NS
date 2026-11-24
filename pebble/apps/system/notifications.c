@@ -375,13 +375,29 @@ static int32_t prv_isqrt(int32_t value) {
 }
 
 //! Distance from the left edge to the rim for a row at this height on screen, at its end nearer
-//! the rim.
+//! the rim. Past the screen's edge the path goes on to the right, so a row leaving the screen
+//! travels along it until it is gone instead of sliding off straight.
 static int16_t prv_rim_for_screen_row(int16_t screen_top, int16_t height) {
   const int32_t radius = PBL_DISPLAY_WIDTH / 2;
   int32_t dy = screen_top + height / 2 - PBL_DISPLAY_HEIGHT / 2;
   dy += (dy > 0) ? height / 2 : -height / 2;
-  const int32_t span_sq = radius * radius - dy * dy;
-  return radius - ((span_sq > 0) ? prv_isqrt(span_sq) : 0);
+  const int32_t past = ((dy > 0) ? dy : -dy) - radius;
+  if (past >= 0) {
+    return radius + (past * 2 * radius) / ((height > 0) ? height : 1);
+  }
+  return radius - prv_isqrt(radius * radius - dy * dy);
+}
+
+//! A round row is laid out with its inset from the rim, at most this much: nearer the ends the
+//! laid-out row moves on along the rim as a whole instead of narrowing further.
+#define ROUND_MAX_INSET 60
+
+static int16_t prv_round_inset(int16_t rim) {
+  return (rim < 12) ? 12 : ((rim > ROUND_MAX_INSET) ? ROUND_MAX_INSET : rim);
+}
+
+static int16_t prv_round_shift(int16_t rim) {
+  return (rim > ROUND_MAX_INSET) ? (rim - ROUND_MAX_INSET) : 0;
 }
 
 //! Rows slide along the rim as the list scrolls, so a header always starts at least one step
@@ -389,8 +405,8 @@ static int16_t prv_rim_for_screen_row(int16_t screen_top, int16_t height) {
 static int16_t prv_round_header_left(const NotificationsData *data, int16_t index,
                                      int16_t screen_top) {
   const NotificationShadeRow *row = notification_shade_row(&data->shade, index);
-  int16_t left = prv_rim_for_screen_row(screen_top, prv_row_height_at(data, index)) + 4;
-  left = (left < 12) ? 12 : ((left > 60) ? 60 : left);
+  const int16_t rim = prv_rim_for_screen_row(screen_top, prv_row_height_at(data, index)) + 4;
+  const int16_t left = prv_round_inset(rim) + prv_round_shift(rim);
   const int16_t depth = prv_header_depth(row);
   if (depth == 0) {
     return left;
@@ -499,14 +515,17 @@ static void prv_draw_header_row(GContext *ctx, const Layer *cell_layer, GRect bo
 #if PBL_ROUND
   const int16_t left = prv_round_header_left(
       data, row_index, layer_convert_point_to_screen(cell_layer, bounds.origin).y);
+  // Moving on along the rim keeps the caption's width.
+  const int16_t width = bounds.size.w - PBL_MIN(left, ROUND_MAX_INSET) - 20;
 #else
   const int16_t left = 8 + prv_header_depth(row) * HEADER_INDENT_STEP;
+  const int16_t width = bounds.size.w - left - 20;
 #endif
   const int16_t font_height = notification_style_scaled_points(14);
   const int16_t text_top = bounds.origin.y + (bounds.size.h - font_height - 4) / 2;
   prv_draw_caret(ctx, GPoint(left + 4, bounds.origin.y + bounds.size.h / 2), row->expanded);
   graphics_draw_text(ctx, text, notification_style_scaled_font(14, true),
-                     GRect(left + 14, text_top, bounds.size.w - left - 20, font_height + 4),
+                     GRect(left + 14, text_top, width, font_height + 4),
                      GTextOverflowModeTrailingEllipsis, GTextAlignmentLeft, nullptr);
 }
 
@@ -579,12 +598,11 @@ static void prv_draw_item_row(GContext *ctx, const Layer *cell_layer, GRect boun
   }
 
 #if PBL_ROUND
-  // Keep the icon and text clear of the rim: rows away from the centre start further in.
-  int16_t inset = 12;
-  const int16_t edge = prv_round_rim_at_row(cell_layer, bounds) + 4;
-  if (edge > inset) {
-    inset = (edge > 60) ? 60 : edge;
-  }
+  // Keep the icon and text clear of the rim: rows away from the centre start further in, and
+  // near the ends move on along the rim.
+  const int16_t rim = prv_round_rim_at_row(cell_layer, bounds) + 4;
+  int16_t inset = prv_round_inset(rim);
+  bounds.origin.x += prv_round_shift(rim);
   if (row->in_stack) {
     inset += 7;
     const int16_t clear = prv_stack_arc_clearance(cell_layer, bounds);
