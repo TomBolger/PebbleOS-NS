@@ -265,3 +265,7 @@ void fake_animation_complete(Animation *animation) {
   animation_set_elapsed(animation, duration);
   animation_unschedule(animation);
 }
+
+void fake_animation_update(Animation *animation, AnimationProgress progress) {
+  prv_each((AnimationPrivate *)animation, prv_call_update, progress);
+}
