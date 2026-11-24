@@ -807,3 +807,28 @@ void test_attribute__weather_pin_kind_deserializes(void) {
   cl_assert_equal_i(result.num_attributes, 2);
   cl_assert_equal_i(attribute_get_uint8(&result, AttributeIdWeatherPinKind, 0), 2);
 }
+
+void test_attribute__notification_section_and_stack_deserialize(void) {
+  static const uint8_t serialized[] = {
+    0x36, // AttributeIdNotificationSection
+    0x01, 0x00, (2 << 2) | 2,
+    0x37, // AttributeIdStackId
+    0x04, 0x00, 0x78,         0x56, 0x34, 0x12,
+  };
+  const uint8_t num_attributes = 2;
+  const uint8_t *end = serialized + sizeof(serialized);
+  bool has_attribute[NumAttributeIds] = {};
+  cl_assert_equal_b(attribute_check_serialized_list(serialized, end, num_attributes, has_attribute),
+                    true);
+  cl_assert_equal_b(has_attribute[AttributeIdNotificationSection], true);
+  cl_assert_equal_b(has_attribute[AttributeIdStackId], true);
+
+  Attribute attribute_buffer[num_attributes];
+  char data_buffer[16];
+  AttributeList result;
+  cl_assert_equal_b(prv_deserialize(serialized, sizeof(serialized), num_attributes,
+                                    attribute_buffer, data_buffer, sizeof(data_buffer), &result),
+                    true);
+  cl_assert_equal_i(attribute_get_uint8(&result, AttributeIdNotificationSection, 0), (2 << 2) | 2);
+  cl_assert_equal_i(attribute_get_uint32(&result, AttributeIdStackId, 0), 0x12345678);
+}
