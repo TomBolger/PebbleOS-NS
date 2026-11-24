@@ -4,12 +4,14 @@
 #include "menu_layer.h"
 
 #include "app_glance_service.h"
+#include "app_glance_structured.h"
 #include "menu_layer_private.h"
 
 #include <pbl/kernel/assert.h>
 #include <pbl/kernel/compiler.h>
 #include <pbl/util/testing.h>
 
+#include <applib/fonts/fonts.h>
 #include <applib/graphics/gtypes.h>
 #include <applib/ui/app_window_stack.h>
 #include <applib/ui/content_indicator.h>
@@ -29,6 +31,30 @@ const LauncherMenuLayerStyle *launcher_menu_layer_get_style(void) {
 }
 
 #if PBL_ROUND
+//! The header's icon box, as big as any glance icon, sits this far below the top of the screen,
+//! clear of the bezel
+#define ROUND_HEADER_ICON_TOP    8
+#define ROUND_HEADER_ICON_HEIGHT (LAUNCHER_APP_GLANCE_STRUCTURED_ICON_LEGACY_MAX_SIZE.h)
+//! Space between the header's text and the bottom of its bubble
+#define ROUND_HEADER_BUBBLE_MARGIN 6
+
+LauncherRoundHeaderLayout launcher_menu_layer_round_header_layout(int16_t title_h,
+                                                                  int16_t subtitle_h) {
+  const int16_t title_top = ROUND_HEADER_ICON_TOP + ROUND_HEADER_ICON_HEIGHT;
+  return (LauncherRoundHeaderLayout){
+    .title_top = title_top,
+    .subtitle_top = title_top + title_h,
+    .bubble_depth = title_top + title_h + subtitle_h + ROUND_HEADER_BUBBLE_MARGIN,
+  };
+}
+
+LauncherRoundHeaderLayout launcher_menu_layer_round_header_layout_for_style(
+    const LauncherMenuLayerStyle *style) {
+  return launcher_menu_layer_round_header_layout(
+      fonts_get_font_height(fonts_get_system_font(style->title_font_key)),
+      fonts_get_font_height(fonts_get_system_font(style->subtitle_font_key)));
+}
+
 //! Every row is as tall as a focused row, whatever is selected, so rows keep their place while the
 //! selection moves between them; only scrolling moves them.
 static int16_t prv_round_row_height(const LauncherMenuLayerStyle *style) {
@@ -224,7 +250,9 @@ void launcher_menu_layer_init(LauncherMenuLayer *launcher_menu_layer,
   MenuLayer *menu_layer = &launcher_menu_layer->menu_layer;
   menu_layer_init(menu_layer, &menu_layer_frame);
 #if PBL_ROUND
-  menu_layer_set_round_top_bubble(menu_layer, true);
+  const LauncherRoundHeaderLayout header = launcher_menu_layer_round_header_layout_for_style(
+      &system_theme_get_style_for_size(launcher_menu_layer->content_size)->launcher);
+  menu_layer_set_round_header_bubble(menu_layer, (uint8_t)header.bubble_depth);
 #endif
   menu_layer_pad_bottom_enable(menu_layer, false);
   menu_layer_set_callbacks(menu_layer, launcher_menu_layer,

@@ -17,7 +17,7 @@
 //! Gap between the highlight pill and the top and bottom of its row
 #define MENU_ROUND_PILL_INSET_Y 3
 //! Radius of the bubble that highlights a menu's header row
-#define MENU_ROUND_BUBBLE_RADIUS 150
+#define MENU_ROUND_BUBBLE_RADIUS 200
 //! A morph's progress when it reaches the pill, from the bubble at 0
 #define MENU_ROUND_MORPH_PILL 1000
 //! A morph's progress when the pill starts spreading out from the bottom of the circle
@@ -46,6 +46,9 @@ bool menu_round_pill(GSize display, GRect bounds, GRect frame, int16_t rest_h, i
 //! The bubble highlighting a header row: a circle hanging from above the \a display, centred
 //! across it, whose bottom is at \a bottom (screen coordinates).
 MenuRoundShape menu_round_bubble(GSize display, int16_t bottom);
+
+//! Half the width of the bubble whose bottom is at \a bottom, \a y down the screen (0 below it)
+int16_t menu_round_bubble_half_width(int16_t bottom, int16_t y);
 
 //! The shape \a progress of the way from \a bubble to \a pill (0 to MENU_ROUND_MORPH_PILL, past
 //! either end to overshoot): the bubble drops towards the pill as a circle, shrinking to the
