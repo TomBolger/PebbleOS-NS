@@ -88,6 +88,13 @@ typedef enum {
   TimelineScrollDirectionDown,
 } TimelineScrollDirection;
 
+/**
+ * @brief Space above the content of a pin in the compact timeline list.
+ *
+ * It separates the pin from the one above, and holds the glyphs that rise above their line box.
+ */
+#define TIMELINE_LAYOUT_COMPACT_PADDING_TOP 8
+
 /** @brief Timing information of the pin rendered by a TimelineLayout. */
 typedef struct {
   /** App owning the pin. */
@@ -106,6 +113,8 @@ typedef struct {
   TimelineScrollDirection scroll_direction;
   /** The pin is all day, or spans the whole current day. */
   bool all_day;
+  /** The pin is in the compact timeline list, where it is as tall as its content. */
+  bool compact;
   /**
    * Number of concurrent events besides the first: 0 for a single event, 1 for two overlapping
    * events. Only valid for Timeline Peek.
