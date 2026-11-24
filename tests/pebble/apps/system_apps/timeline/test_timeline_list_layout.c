@@ -3,6 +3,9 @@
 
 #include "clar.h"
 
+#include <pbl/util/math.h>
+#include <pbl/util/trig.h>
+
 #include <apps/system/timeline/list_layout.h>
 
 #define HEIGHT 228
@@ -111,4 +114,101 @@ void test_timeline_list_layout__round_edge_inset(void) {
   cl_assert_equal_i(timeline_list_round_edge_inset(130, -200), 130);
   // 3-4-5 triangle: 50 rows up, the edge is 120 from the middle
   cl_assert_equal_i(timeline_list_round_edge_inset(130, -50), 10);
+}
+
+//! A round display 260 wide with a circle of radius 140 reaching 60 into it from the right, as
+//! the notification banner hangs off the top
+static const TimelineListArc s_arc = {
+  .display_radius = 130,
+  .text_inset = 8,
+  .min_inset = 13,
+  .center_inset = -81,
+  .radius = 140,
+  .gap = 13,
+};
+
+//! Width of text that starts at the minimum inset and ends the gap away from the circle's middle
+#define WIDEST_TEXT (260 - 13 - 60 - 13)
+
+void test_timeline_list_layout__arc_depth(void) {
+  // Deepest on rows spanning the middle, or touching it
+  cl_assert_equal_i(timeline_list_arc_depth(&s_arc, 100, 160), 60);
+  cl_assert_equal_i(timeline_list_arc_depth(&s_arc, 130, 130), 60);
+  cl_assert_equal_i(timeline_list_arc_depth(&s_arc, 0, 130), 60);
+  // Shallower away from the middle, alike above and below: 60 rows away, the circle is
+  // sqrt(140^2 - 60^2) = 126 wide
+  cl_assert_equal_i(timeline_list_arc_depth(&s_arc, 10, 70), 46);
+  cl_assert_equal_i(timeline_list_arc_depth(&s_arc, 190, 250), 46);
+  // Rows the circle misses are not reached
+  cl_assert(timeline_list_arc_depth(&s_arc, -40, -20) <= 0);
+  cl_assert(timeline_list_arc_depth(&s_arc, 300, 320) <= 0);
+}
+
+void test_timeline_list_layout__arc_edge_inset(void) {
+  // Where the display is widest, text keeps the minimum inset
+  cl_assert_equal_i(timeline_list_arc_edge_inset(&s_arc, 110, 140), 13);
+  // Away from the middle, it starts inside the display where the rows are narrowest: 90 rows up,
+  // the display inset by 8 is sqrt(122^2 - 90^2) = 82 wide, so its edge is 8 + 122 - 82 in
+  cl_assert_equal_i(timeline_list_arc_edge_inset(&s_arc, 40, 60), 48);
+  cl_assert_equal_i(timeline_list_arc_edge_inset(&s_arc, 200, 220), 48);
+  // Off the display it goes to the middle, as the edge does
+  cl_assert_equal_i(timeline_list_arc_edge_inset(&s_arc, -40, -20), 130);
+}
+
+void test_timeline_list_layout__arc_text_width(void) {
+  // Beside the circle's middle, text ends the gap before it
+  cl_assert_equal_i(timeline_list_arc_text_width(&s_arc, 110, 140, 100, 150), WIDEST_TEXT);
+  // Above the circle, it goes on to the display's edge on the other side: 110 rows up, the
+  // display inset by 8 is sqrt(122^2 - 110^2) = 52 wide, so its edges are 8 + 122 - 52 in
+  cl_assert_equal_i(timeline_list_arc_text_width(&s_arc, 20, 40, 10, 40), 260 - 2 * 78);
+  // Text reaching down beside the circle's middle ends before it, wherever its head is
+  cl_assert_equal_i(timeline_list_arc_text_width(&s_arc, 40, 60, 40, 200), 260 - 48 - 73);
+}
+
+void test_timeline_list_layout__arc_text_inset(void) {
+  // Text rests at the edge inset across its head
+  cl_assert_equal_i(timeline_list_arc_text_inset(&s_arc, 110, 140, 100, 150, WIDEST_TEXT), 13);
+  const int16_t width = timeline_list_arc_text_width(&s_arc, 40, 60, 40, 70);
+  cl_assert_equal_i(timeline_list_arc_text_inset(&s_arc, 40, 60, 40, 70, width), 48);
+  // Text laid out in the middle keeps where it starts while any of it is beside the circle's
+  // middle, even with its head up where the display is narrower
+  cl_assert_equal_i(timeline_list_arc_text_inset(&s_arc, 40, 60, 40, 150, WIDEST_TEXT), 13);
+  // Moving away, it follows the display's edge as far as the circle allows
+  const int16_t inset = timeline_list_arc_text_inset(&s_arc, 40, 60, 40, 80, WIDEST_TEXT);
+  cl_assert(inset > 13);
+  cl_assert(inset < 48);
+  // Wherever it is, it never comes closer to the circle than the gap
+  for (int16_t top = -60; top <= 260; top += 5) {
+    for (int16_t w = 40; w <= WIDEST_TEXT + 20; w += 20) {
+      const int16_t bottom = top + 60;
+      const int16_t start = timeline_list_arc_text_inset(&s_arc, top, top + 20, top, bottom, w);
+      cl_assert(start + w + s_arc.gap + timeline_list_arc_depth(&s_arc, top, bottom) <= 260);
+    }
+  }
+}
+
+void test_timeline_list_layout__arc_angle(void) {
+  // A quarter of a circle of radius 100 is 157 long
+  cl_assert(PBL_ABS(timeline_list_arc_angle(100, 157) - TRIG_MAX_ANGLE / 4) < 20);
+  cl_assert_equal_i(timeline_list_arc_angle(100, 0), 0);
+  cl_assert(timeline_list_arc_angle(100, -50) == -timeline_list_arc_angle(100, 50));
+}
+
+void test_timeline_list_layout__arc_icon(void) {
+  int16_t y;
+  // On the circle's middle row, the icon is its distance in from the circle's center
+  cl_assert_equal_i(timeline_list_arc_icon_inset(&s_arc, 119, 0, &y), 38);
+  cl_assert_equal_i(y, 130);
+  // It turns about the center, down for a positive angle, alike both ways
+  int16_t y_up;
+  const int16_t up = timeline_list_arc_icon_inset(&s_arc, 119, -TRIG_MAX_ANGLE / 12, &y_up);
+  const int16_t down = timeline_list_arc_icon_inset(&s_arc, 119, TRIG_MAX_ANGLE / 12, &y);
+  cl_assert_equal_i(up, down);
+  cl_assert_equal_i(y - 130, 130 - y_up);
+  // 30 degrees: half the distance down, cos 30 of it in
+  cl_assert(PBL_ABS(y - (130 + 119 / 2)) <= 1);
+  cl_assert(PBL_ABS(up - (-81 + 103)) <= 1);
+  // A quarter turn puts it the distance below the center, behind the side of the display
+  cl_assert_equal_i(timeline_list_arc_icon_inset(&s_arc, 119, TRIG_MAX_ANGLE / 4, &y), -81);
+  cl_assert_equal_i(y, 130 + 119);
 }
