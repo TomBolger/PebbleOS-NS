@@ -1593,17 +1593,23 @@ static int16_t prv_round_neighbour_height(MenuLayer *menu_layer, MenuIndex index
 #endif
 
 //! Content offset at which \a span rests on a center-focused menu: centred. On round, a list
-//! stops at its ends instead, though never with the selection more than a row from the middle,
-//! where the screen is still wide: the first and last rows stop with their neighbour in the
-//! middle, and a list that fits is centred as a whole when it is short enough.
+//! stops at its ends instead, and a list that fits is centred as a whole. With the highlight pill
+//! the selection is still never more than a row from the middle, where the screen is wide: the
+//! first and last rows stop with their neighbour in the middle.
 static int16_t prv_center_focus_rest_offset_y(MenuLayer *menu_layer, const MenuCellSpan *span) {
   const int16_t frame_h = menu_layer->scroll_layer.layer.frame.size.h;
   const int16_t y = (int16_t)((frame_h / 2) - span->y - (span->h / 2));
 #if PBL_ROUND
-  const int16_t content_h = scroll_layer_get_content_size(&menu_layer->scroll_layer).h;
+  // The content size was measured before the selection grew, which can lengthen the list
+  const int16_t content_h = PBL_MAX(scroll_layer_get_content_size(&menu_layer->scroll_layer).h,
+                                    (int16_t)(span->y + span->h));
   const int16_t at_ends = (content_h <= frame_h)
                               ? (int16_t)((frame_h - content_h) / 2)
                               : PBL_CLAMP(y, (int16_t)(frame_h - content_h), (int16_t)0);
+  if (!prv_draws_round_pill(menu_layer)) {
+    // Only the pill needs the wide part of the screen
+    return at_ends;
+  }
   const int16_t below = prv_round_neighbour_height(menu_layer, span->index, 1);
   const int16_t above = prv_round_neighbour_height(menu_layer, span->index, -1);
   // A header bubble stays at the top
