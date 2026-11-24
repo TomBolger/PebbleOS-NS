@@ -607,7 +607,9 @@ static void prv_up_down_click_handler(ClickRecognizerRef recognizer, void *conte
 
   int new_idx;
   bool has_new;
-  if (next) {
+  if (timeline_layer_scroll_selected(&data->timeline_layer, (button == BUTTON_ID_DOWN))) {
+    // The selected pin continues off screen, so it is read through before moving on
+  } else if (next) {
     if (!timeline_model_iter_next(&new_idx, &has_new)) {
       prv_set_state(data, TimelineAppStateStationary);
       goto done;
