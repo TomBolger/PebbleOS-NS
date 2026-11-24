@@ -40,10 +40,12 @@ int16_t menu_round_end_space(int16_t frame_h, int16_t end_h, int16_t next_h);
 //! How many rows of a round list with the pill fit in its frame
 #define MENU_ROUND_VISIBLE_ROWS 5
 
-//! The height of a row of a round list with the pill, \a focused_h tall when selected, in a frame
-//! \a frame_h tall: every row is as tall whatever is selected, so that MENU_ROUND_VISIBLE_ROWS of
-//! them fit, or less if the row is shorter when selected.
-int16_t menu_round_row_height(int16_t frame_h, int16_t focused_h);
+//! The height of a row of a round list with the pill, \a focused_h tall when selected and
+//! \a unfocused_h tall otherwise, in a frame \a frame_h tall: every row is as tall whatever is
+//! selected: as tall as MENU_ROUND_VISIBLE_ROWS rows fit, or less if it is shorter selected. A
+//! card, taller than that even unselected, or a page, taller than half the frame selected, keeps
+//! the height it has selected.
+int16_t menu_round_row_height(int16_t frame_h, int16_t focused_h, int16_t unfocused_h);
 
 //! Where a round centre-focused list rests, as the content offset, with the row at \a span_y,
 //! \a span_h tall, selected: centred, but stopping \a top_space above the content's top and

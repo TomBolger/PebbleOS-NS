@@ -97,10 +97,15 @@ void test_menu_layer_round__end_space(void) {
 
 //! Rows keep one height whatever is selected, as many fitting as on a stock round menu
 void test_menu_layer_round__row_height_fits_five_rows(void) {
-  cl_assert_equal_i(menu_round_row_height(260, 68), 52);
-  cl_assert(MENU_ROUND_VISIBLE_ROWS * menu_round_row_height(244, 84) <= 244);
+  cl_assert_equal_i(menu_round_row_height(260, 68, 32), 52);
+  cl_assert(MENU_ROUND_VISIBLE_ROWS * menu_round_row_height(244, 84, 24) <= 244);
   // A row shorter than that keeps its height
-  cl_assert_equal_i(menu_round_row_height(260, 40), 40);
+  cl_assert_equal_i(menu_round_row_height(260, 40, 30), 40);
+  // A card, taller than that even unselected, keeps its height selected
+  cl_assert_equal_i(menu_round_row_height(260, 120, 100), 120);
+  cl_assert_equal_i(menu_round_row_height(260, 120, 120), 120);
+  // So does a page, taller than half the frame selected
+  cl_assert_equal_i(menu_round_row_height(260, 260, 0), 260);
 }
 
 void test_menu_layer_round__rest_offset_centres_the_middle(void) {
