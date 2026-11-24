@@ -191,6 +191,17 @@ typedef enum {
   AttributeIdImageAspectRatio = 52,
   /** (uint8) WeatherPinKind of a weather pin. */
   AttributeIdWeatherPinKind = 53,
+  /**
+   * (uint8) Where the phone's notification shade lists the notification. Bits 0-1 are the
+   * NotificationSection, bits 2-4 the NotificationCategory. Absent means
+   * NotificationSectionAlerting with no category.
+   */
+  AttributeIdNotificationSection = 54,
+  /**
+   * (uint32) Notifications the phone stacks together share the same non-zero value. Absent or 0
+   * means the notification is not part of a phone stack.
+   */
+  AttributeIdStackId = 55,
   /** Number of attribute ids. */
   NumAttributeIds,
 } AttributeId;
