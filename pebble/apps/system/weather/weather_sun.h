@@ -10,6 +10,9 @@
 // times, so they are computed from lat/lon (degrees * 100, INT16_MIN unknown).
 // utc_off_min is the location's UTC offset (INT16_MIN: use the watch's own).
 
+//! Local sunrise in minutes from midnight [0,1440), or -1 if unknown.
+int weather_sun_sunrise_minutes(int16_t lat_e2, int16_t lon_e2, int16_t utc_off_min);
+
 //! Local sunset in minutes from midnight [0,1440), or -1 if unknown.
 int weather_sun_sunset_minutes(int16_t lat_e2, int16_t lon_e2, int16_t utc_off_min);
 
