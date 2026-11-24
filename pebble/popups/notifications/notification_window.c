@@ -66,6 +66,7 @@
 #include <applib/ui/window_manager.h>
 #include <applib/ui/window_private.h>
 #include <applib/ui/window_stack.h>
+#include <apps/system/notifications_shade.h>
 #include <apps/system/timeline/peek_layer.h>
 #include <kernel/event_loop.h>
 #include <kernel/ui/modals/modal_manager.h>
@@ -219,6 +220,20 @@ static int prv_reminders_on_top_comparator(void *a, void *b) {
   } else {
     return -1;
   }
+}
+
+//! Puts the rest of the notifications, as the notifications app lists them, after those already
+//! presented, so a popup pages on into them.
+static void prv_add_listed_notifications(void) {
+  NotificationShade shade;
+  notification_shade_init_with_prefs(&shade);
+  notification_shade_load_storage(&shade);
+  const uint16_t count = notification_shade_count(&shade);
+  for (uint16_t i = 0; i < count; i++) {
+    Uuid id = notification_shade_item(&shade, i)->id;
+    notifications_presented_list_append(&id, NotificationMobile);
+  }
+  notification_shade_deinit(&shade);
 }
 
 static void prv_notification_window_add_notification(Uuid *id, NotificationType type) {
@@ -1916,6 +1931,7 @@ static void prv_handle_notification_added_common(Uuid *id, NotificationType type
   prv_notification_window_add_notification(id, type);
 
   if (is_new) {
+    prv_add_listed_notifications();
     data->first_notif_loaded = false;
     prv_show_peek_for_notification(data, id, true /* is_first_notification */);
     if (swap_layer_get_current_layout(&data->swap_layer)) {
