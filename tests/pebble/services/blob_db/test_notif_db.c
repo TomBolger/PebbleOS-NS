@@ -175,3 +175,31 @@ void test_notif_db__redelivery_after_dismissal_without_sync(void) {
   cl_assert_equal_i(fake_kernel_services_notifications_ancs_notifications_count(), 1);
   cl_assert_equal_i(fake_kernel_services_notifications_acted_upon_count(), 0);
 }
+
+void test_notif_db__redelivery_unchanged(void) {
+  SerializedTimelineItemHeader hdr = {
+    .common = {
+      .ancs_uid = 1,
+      .layout = 0,
+      .flags = 0,
+      .timestamp = 0,
+    },
+  };
+  uuid_generate(&hdr.common.id);
+  cl_assert_equal_i(notif_db_insert((uint8_t *)&hdr, UUID_SIZE, (uint8_t *)&hdr, sizeof(hdr)), 0);
+  cl_assert_equal_i(notif_db_insert((uint8_t *)&hdr, UUID_SIZE, (uint8_t *)&hdr, sizeof(hdr)), 0);
+  cl_assert_equal_i(fake_kernel_services_notifications_ancs_notifications_count(), 1);
+  cl_assert_equal_i(fake_kernel_services_notifications_acted_upon_count(), 0);
+
+  // Status bits the watch set are kept when the phone sends the notification again.
+  hdr.common.status = TimelineItemStatusRead;
+  cl_assert_equal_i(notif_db_insert((uint8_t *)&hdr, UUID_SIZE, (uint8_t *)&hdr, sizeof(hdr)), 0);
+  cl_assert_equal_i(fake_kernel_services_notifications_acted_upon_count(), 1);
+  hdr.common.status = 0;
+  cl_assert_equal_i(notif_db_insert((uint8_t *)&hdr, UUID_SIZE, (uint8_t *)&hdr, sizeof(hdr)), 0);
+  cl_assert_equal_i(fake_kernel_services_notifications_acted_upon_count(), 1);
+
+  uint8_t status;
+  cl_assert(notification_storage_get_status(&hdr.common.id, &status));
+  cl_assert_equal_i(status, TimelineItemStatusRead);
+}
