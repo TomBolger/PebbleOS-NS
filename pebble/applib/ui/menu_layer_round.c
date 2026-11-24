@@ -95,3 +95,19 @@ GRect menu_round_shape_bounds(const MenuRoundShape *shape) {
   return GRect(left, top, right - left, bottom - top);
 }
 
+int16_t menu_round_end_space(int16_t frame_h, int16_t end_h, int16_t next_h) {
+  return PBL_MAX((int16_t)((frame_h / 2) - end_h - (next_h / 2)), 0);
+}
+
+int16_t menu_round_rest_offset(int16_t frame_h, int16_t content_h, int16_t span_y, int16_t span_h,
+                               int16_t top_space, int16_t bottom_space) {
+  // The content may have been measured before the selected row took its height
+  content_h = PBL_MAX(content_h, (int16_t)(span_y + span_h));
+  const int16_t highest = top_space;
+  const int16_t lowest = (int16_t)(frame_h - content_h - bottom_space);
+  if (lowest >= highest) {
+    return (int16_t)((lowest + highest) / 2);
+  }
+  const int16_t centred = (int16_t)((frame_h / 2) - span_y - (span_h / 2));
+  return PBL_CLAMP(centred, lowest, highest);
+}

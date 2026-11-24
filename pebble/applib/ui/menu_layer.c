@@ -1513,44 +1513,47 @@ static void prv_menu_layer_update_selection_highlight(MenuLayer *menu_layer, boo
 }
 
 #if PBL_ROUND
-//! Height of the row \a delta rows from \a index in its section, or 0 if there is none
-static int16_t prv_round_neighbour_height(MenuLayer *menu_layer, MenuIndex index, int delta) {
-  const int32_t row = (int32_t)index.row + delta;
-  if ((row < 0) || (row >= prv_menu_layer_get_num_rows(menu_layer, index.section))) {
+//! Height of the row \a row of \a section, or 0 if there is none
+static int16_t prv_round_row_height(MenuLayer *menu_layer, uint16_t section, int32_t row) {
+  if ((row < 0) || (row >= prv_menu_layer_get_num_rows(menu_layer, section))) {
     return 0;
   }
-  MenuIndex neighbour = MenuIndex(index.section, (uint16_t)row);
-  return prv_menu_layer_get_cell_height(menu_layer, &neighbour, true);
+  MenuIndex index = MenuIndex(section, (uint16_t)row);
+  return prv_menu_layer_get_cell_height(menu_layer, &index, true);
+}
+
+//! Round menus with the pill rest past their ends far enough that the first and last rows stop
+//! with their neighbour in the middle, keeping the pill where the screen is wide. Others stop at
+//! their ends.
+static void prv_round_end_spaces(MenuLayer *menu_layer, int16_t *top, int16_t *bottom) {
+  *top = 0;
+  *bottom = 0;
+  const uint16_t sections = prv_menu_layer_get_num_sections(menu_layer);
+  if (!prv_draws_round_pill(menu_layer) || (sections == 0)) {
+    return;
+  }
+  const int16_t frame_h = menu_layer->scroll_layer.layer.frame.size.h;
+  *top = menu_round_end_space(frame_h, prv_round_row_height(menu_layer, 0, 0),
+                              prv_round_row_height(menu_layer, 0, 1));
+  const uint16_t last_section = sections - 1;
+  const int32_t last = (int32_t)prv_menu_layer_get_num_rows(menu_layer, last_section) - 1;
+  *bottom = menu_round_end_space(frame_h, prv_round_row_height(menu_layer, last_section, last),
+                                 prv_round_row_height(menu_layer, last_section, last - 1));
 }
 #endif
 
-//! Content offset at which \a span rests on a center-focused menu: centred. On round, a list
-//! stops at its ends instead, and a list that fits is centred as a whole. With the highlight pill
-//! the selection is still never more than a row from the middle, where the screen is wide: the
-//! first and last rows stop with their neighbour in the middle.
+//! Content offset at which \a span rests on a center-focused menu: centred, but on round, the
+//! list stops at its ends, see prv_round_end_spaces().
 static int16_t prv_center_focus_rest_offset_y(MenuLayer *menu_layer, const MenuCellSpan *span) {
   const int16_t frame_h = menu_layer->scroll_layer.layer.frame.size.h;
-  const int16_t y = (int16_t)((frame_h / 2) - span->y - (span->h / 2));
 #if PBL_ROUND
-  // The content size was measured before the selection grew, which can lengthen the list
-  const int16_t content_h = PBL_MAX(scroll_layer_get_content_size(&menu_layer->scroll_layer).h,
-                                    (int16_t)(span->y + span->h));
-  const int16_t at_ends = (content_h <= frame_h)
-                              ? (int16_t)((frame_h - content_h) / 2)
-                              : PBL_CLAMP(y, (int16_t)(frame_h - content_h), (int16_t)0);
-  if (!prv_draws_round_pill(menu_layer)) {
-    // Only the pill needs the wide part of the screen
-    return at_ends;
-  }
-  const int16_t below = prv_round_neighbour_height(menu_layer, span->index, 1);
-  const int16_t above = prv_round_neighbour_height(menu_layer, span->index, -1);
-  // A header bubble stays at the top
-  const int16_t lowest =
-      menu_layer->round_top_bubble ? INT16_MIN : (int16_t)(y - ((below + span->h) / 2));
-  const int16_t highest = (int16_t)(y + ((above + span->h) / 2));
-  return PBL_CLAMP(at_ends, lowest, highest);
+  int16_t top_space;
+  int16_t bottom_space;
+  prv_round_end_spaces(menu_layer, &top_space, &bottom_space);
+  return menu_round_rest_offset(frame_h, scroll_layer_get_content_size(&menu_layer->scroll_layer).h,
+                                span->y, span->h, top_space, bottom_space);
 #else
-  return y;
+  return (int16_t)((frame_h / 2) - span->y - (span->h / 2));
 #endif
 }
 
