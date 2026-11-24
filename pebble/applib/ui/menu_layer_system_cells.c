@@ -2,9 +2,11 @@
 /* SPDX-License-Identifier: Apache-2.0 */
 
 #include "menu_layer.h"
+#include "menu_layer_private.h"
 
 #include <pbl/util/math.h>
 
+#include <applib/graphics/graphics.h>
 #include <applib/ui/kino/kino_reel.h>
 #include <applib/ui/kino/kino_reel_gbitmap_private.h>
 #include <applib/ui/menu_text_scroll.h>
@@ -284,6 +286,26 @@ static PBL_ALWAYS_INLINE void prv_grect_inset(GRect *rect, GEdgeInsets *insets) 
   }
 }
 
+int16_t menu_cell_round_chord_inset(const GContext *ctx, GRect frame) {
+  // Measured at the frame's corner nearest the bezel; the drawing box origin is in screen
+  // coordinates.
+  const int32_t radius = PBL_MIN(PBL_DISPLAY_WIDTH, PBL_DISPLAY_HEIGHT) / 2;
+  const int32_t center_y =
+      ctx->draw_state.drawing_box.origin.y + frame.origin.y + (frame.size.h / 2);
+  const int32_t dy = PBL_ABS(center_y - (PBL_DISPLAY_HEIGHT / 2)) + (frame.size.h / 2);
+  if (dy >= radius) {
+    return (int16_t)radius;
+  }
+  return (int16_t)(radius - integer_sqrt(((int64_t)radius * radius) - ((int64_t)dy * dy)));
+}
+
+GRect menu_cell_round_follow_bezel(const GContext *ctx, GRect frame) {
+  const int16_t max_x = (int16_t)(PBL_DISPLAY_WIDTH - menu_cell_round_chord_inset(ctx, frame) -
+                                  MENU_CELL_ROUND_BEZEL_MARGIN);
+  frame.origin.x = (int16_t)(max_x - frame.size.w - ctx->draw_state.drawing_box.origin.x);
+  return frame;
+}
+
 static PBL_ALWAYS_INLINE bool prv_should_render_subtitle_round(const MenuCellLayerConfig *config,
                                                                bool is_selected) {
   // If the cell isn't selected and there's no value text, then no subtitle text should be shown
@@ -511,9 +533,20 @@ static PBL_ALWAYS_INLINE void prv_menu_cell_basic_draw_custom_two_columns_round(
     right_element_size = icon_size;
   }
 
+  // An icon sits against the bezel; the left column ends where it starts, and keeps clear of the
+  // bezel on its left too
+  int16_t bezel_shift_x = 0;
+  int16_t left_inset = 0;
+  if (!config->value && config->icon) {
+    GRect icon_frame = (GRect){.size = icon_size};
+    grect_align(&icon_frame, cell_layer_bounds, GAlignRight, false);
+    bezel_shift_x = icon_frame.origin.x - menu_cell_round_follow_bezel(ctx, icon_frame).origin.x;
+    left_inset = menu_cell_round_chord_inset(ctx, icon_frame);
+  }
+
   // We reuse this rect to save stack space; here it is the rect of the left column content
   GRect rect = *cell_layer_bounds;
-  prv_grect_inset(&rect, &GEdgeInsets(0, right_element_size.w, 0, 0));
+  prv_grect_inset(&rect, &GEdgeInsets(0, right_element_size.w + bezel_shift_x, 0, left_inset));
   // We overwrite rect to store the rect of the title text frame drawn in the one-column function
   rect = prv_menu_cell_basic_draw_custom_one_column_round(ctx, &rect, config, GTextAlignmentLeft,
                                                           GAlignLeft, is_selected);
@@ -534,6 +567,7 @@ static PBL_ALWAYS_INLINE void prv_menu_cell_basic_draw_custom_two_columns_round(
     // Only draw the icon if it fits within the cell after aligning it center right
     grect_clip(&rect, cell_layer_bounds);
     grect_align(&rect, cell_layer_bounds, GAlignRight, true);
+    rect.origin.x -= bezel_shift_x;
     if (gsize_equal(&rect.size, &icon_size)) {
       // round has never worked with legacy2 apps
       static const bool is_legacy2 = false;
