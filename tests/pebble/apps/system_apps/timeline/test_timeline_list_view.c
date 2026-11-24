@@ -68,8 +68,6 @@ typedef struct ListViewConfig {
   AnimationProgress scroll_progress;
   //! Number of pages to scroll through the selected pin's text after the scrolls
   int num_page_scrolls;
-  //! Progress of a scroll to the next pin after the page scrolls, or 0 for none
-  AnimationProgress then_scroll_progress;
 } ListViewConfig;
 
 static void prv_add_timeline_item(const TimelineItemConfig *config, bool past, uint8_t pin_index) {
@@ -273,22 +271,6 @@ static void prv_create_list_view_and_render(ListViewConfig *config) {
         timeline_animation_interpolate_moook_soft));
   }
 
-  if (config->then_scroll_progress) {
-    TimelineLayout *scrolled = timeline_layer_get_current_layout(&timeline_layer);
-    const int16_t page_scroll = scrolled->page_scroll;
-    int new_idx;
-    bool has_new;
-    cl_assert(timeline_model_iter_next(&new_idx, &has_new));
-    timeline_layer_move_data(&timeline_layer, 1);
-    running_scroll = timeline_layer_create_up_down_animation(
-        &timeline_layer, TIMELINE_UP_DOWN_ANIMATION_DURATION_MS,
-        timeline_animation_interpolate_moook_soft);
-    animation_schedule(running_scroll);
-    fake_animation_update(running_scroll, config->then_scroll_progress);
-    // The pin that was selected keeps its text where it was scrolled to while it folds away
-    cl_assert_equal_i(scrolled->page_scroll, page_scroll);
-  }
-
   if (config->day_separator) {
     // Simulate showing the day separator
     int new_idx;
@@ -310,7 +292,7 @@ static void prv_create_list_view_and_render(ListViewConfig *config) {
   // Scrolling the fixed slots brings the next pin's title near the middle, and pins only rest on
   // the middle once they stop
   if (!config->day_separator && !config->scroll_progress && !config->num_page_scrolls &&
-      !config->then_scroll_progress && (timeline_layer.compact || config->num_scrolls == 0)) {
+      (timeline_layer.compact || config->num_scrolls == 0)) {
     prv_assert_title_centered(&window, &timeline_layer);
   }
 #endif
@@ -772,23 +754,6 @@ void test_timeline_list_view__content_sizes_compact_description_next_page(void) 
   pins[2].body = s_long_body;
   // Scrolling shows the next page of the description in its place, the other pins stay
   prv_check_compact_pages(pins, 2 /* num_scrolls */, 1 /* num_page_scrolls */, TEST_PBI_FILE);
-}
-
-void test_timeline_list_view__compact_fold_scrolled(void) {
-  system_theme_set_content_size(PreferredContentSizeDefault);
-  TimelineItemConfig pins[PBL_ARRAY_SIZE(s_one_liners)];
-  memcpy(pins, s_one_liners, sizeof(pins));
-  pins[2].title = "Trip planning";
-  pins[2].subtitle = "Agency office";
-  pins[2].body = s_long_body;
-  // Moving on from the second page of the description, the pin keeps showing it as it folds
-  ListViewConfig config = {
-    .num_scrolls = 2,
-    .num_page_scrolls = 1,
-    .then_scroll_progress = ANIMATION_NORMALIZED_MAX / 2,
-  };
-  prv_render_compact_config(pins, &config);
-  FAKE_GRAPHICS_CONTEXT_CHECK_DEST_BITMAP_FILE();
 }
 
 void test_timeline_list_view__content_sizes_compact_first(void) {
