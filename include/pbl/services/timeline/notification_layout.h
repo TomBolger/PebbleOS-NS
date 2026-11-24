@@ -46,10 +46,16 @@
 /** @brief Vertical origin of the round top banner circle. */
 #define LAYOUT_TOP_BANNER_ORIGIN_Y \
   (LAYOUT_TOP_BANNER_HEIGHT_ROUND - (BANNER_CIRCLE_RADIUS + STATUS_BAR_LAYER_HEIGHT) - 1)
-/** @brief Radius of the round bubble hinting at the next notification, see @ref SwapLayer. */
-#define LAYOUT_NEXT_BUBBLE_RADIUS 20
-/** @brief Space between the round next bubble and the bottom of the screen. */
-#define LAYOUT_NEXT_BUBBLE_MARGIN 8
+/**
+ * @brief How far the round peek of the next card reaches above the bottom of the screen: the cap
+ * of the banner circle, a mirror of the banner at the top. See
+ * notification_layout_get_banner_round().
+ */
+#define LAYOUT_PEEK_HEIGHT_ROUND 38
+/** @brief Radius of the ball the round peek turns into as its card starts to swap in. */
+#define LAYOUT_PEEK_BALL_RADIUS_ROUND 20
+/** @brief Space between that ball and the bottom of the screen. */
+#define LAYOUT_PEEK_BALL_MARGIN_ROUND 4
 
 /**
  * @brief Fonts and spacing of a notification card, per content size.
@@ -208,16 +214,39 @@ bool notification_layout_get_image_size(const LayoutLayer *layout, GSize *size_o
 
 #if PBL_ROUND
 /**
- * @brief Get where a card draws its round banner circle.
+ * @brief Get a round card's banner circle, which follows the card's way into place.
  *
- * The circle grows from a dot at the top of the card while the card rises from the bottom of the
- * screen to its resting place.
+ * Just below the screen the circle is the peek, its cap reaching @ref LAYOUT_PEEK_HEIGHT_ROUND
+ * above the bottom of the screen. As the card starts to rise it contracts into a ball near the
+ * bottom of the screen, which flies up with the card and grows into the banner hanging from the
+ * top of the screen once the card rests, as stock round cards grow theirs from a dot.
  *
- * @param origin_y The card's vertical origin in its swap layer.
- * @param[out] center Center of the circle, relative to the card.
+ * @param card_top_y Top of the card, in the coordinates the circle is wanted in.
+ * @param below_rest How far the card is below its resting place, @ref LAYOUT_HEIGHT or more just
+ *                   below the screen.
+ * @param[out] center Center of the circle, in the same coordinates.
  * @param[out] radius Radius of the circle.
  */
-void notification_layout_get_banner_circle(int16_t origin_y, GPoint *center, int16_t *radius);
+void notification_layout_get_banner_round(int16_t card_top_y, int16_t below_rest, GPoint *center,
+                                          int16_t *radius);
+
+/**
+ * @brief Fill a card's round banner circle with the fill color, within the clip box.
+ *
+ * @param ctx Graphics context.
+ * @param card_top_y Top of the card, in drawing coordinates.
+ * @param below_rest How far the card is below its resting place.
+ */
+void notification_layout_fill_banner_round(GContext *ctx, int16_t card_top_y, int16_t below_rest);
+
+/**
+ * @brief Where a card's icon is in its round banner circle: in the peek, then in the middle of
+ * the ball, then where it rests in the banner.
+ *
+ * @param below_rest How far the card is below its resting place.
+ * @return Top of the icon box, relative to the top of the card.
+ */
+int16_t notification_layout_get_banner_icon_top_round(int16_t below_rest);
 #endif
 
 /**

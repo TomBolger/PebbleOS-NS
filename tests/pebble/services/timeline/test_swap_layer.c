@@ -137,9 +137,10 @@ GSize kino_reel_get_size(KinoReel *reel) {
 }
 void kino_reel_draw(KinoReel *reel, GContext *ctx, GPoint offset) {
 }
-void notification_layout_get_banner_circle(int16_t origin_y, GPoint *center, int16_t *radius) {
-  *center = GPoint(0, 0);
-  *radius = 0;
+void notification_layout_fill_banner_round(GContext *ctx, int16_t card_top_y, int16_t below_rest) {
+}
+int16_t notification_layout_get_banner_icon_top_round(int16_t below_rest) {
+  return 0;
 }
 #endif
 
@@ -160,6 +161,7 @@ static int16_t s_heights[MAX_LAYOUTS];
 static int s_count;
 static int s_index;
 static LayoutLayer s_layouts[MAX_LAYOUTS];
+static int s_color_shift;
 
 static LayoutLayer *prv_get_layout(SwapLayer *swap_layer, int8_t rel_position, void *context) {
   const int index = s_index + rel_position;
@@ -181,9 +183,14 @@ static void prv_layout_did_appear(SwapLayer *swap_layer, LayoutLayer *layout, in
   s_index += rel_change;
 }
 
-static bool prv_get_next_bubble(SwapLayer *swap_layer, LayoutLayer *layout,
-                                SwapLayerNextBubble *bubble, void *context) {
-  *bubble = (SwapLayerNextBubble){.color = GColorRed};
+// Each layout's banner has its own color, so the tests can tell them apart.
+static GColor prv_banner_color(LayoutLayer *layout) {
+  return (GColor){.argb = (uint8_t)(0xC0 + (layout - s_layouts) + s_color_shift)};
+}
+
+static bool prv_get_banner_look(SwapLayer *swap_layer, LayoutLayer *layout,
+                                SwapLayerBannerLook *look, void *context) {
+  *look = (SwapLayerBannerLook){.color = prv_banner_color(layout)};
   return true;
 }
 
@@ -198,7 +205,7 @@ static void prv_load(int count, const int16_t *heights) {
                            (SwapLayerCallbacks){
                              .get_layout_handler = prv_get_layout,
                              .layout_did_appear_handler = prv_layout_did_appear,
-                             .get_next_bubble_handler = prv_get_next_bubble,
+                             .get_banner_look_handler = prv_get_banner_look,
                            });
 }
 
@@ -211,12 +218,6 @@ static void prv_press(ScrollDirection direction) {
   fake_animation_complete(s_swap_layer.animation);
 }
 
-#if PBL_ROUND
-static bool prv_bubble_shown(void) {
-  return s_swap_layer.next_bubble.shown && !layer_get_hidden(&s_swap_layer.next_bubble.layer);
-}
-#endif
-
 // Tests
 ///////////////////////////////////////////////////////////
 
@@ -224,6 +225,7 @@ void test_swap_layer__initialize(void) {
   s_num_frame_animations = 0;
   s_count = 0;
   s_index = 0;
+  s_color_shift = 0;
 }
 
 void test_swap_layer__cleanup(void) {
@@ -247,29 +249,6 @@ void test_swap_layer__max_scroll(void) {
   cl_assert_equal_i(swap_layer_max_scroll_dy(200, 240, true), 0);
 }
 
-void test_swap_layer__next_bubble_visible(void) {
-  // Only at the end of the layout (or past it, pulled by a finger), with a next layout.
-  cl_assert_equal_b(swap_layer_next_bubble_visible(160, 160, true), PBL_IF_ROUND_ELSE(true, false));
-  cl_assert_equal_b(swap_layer_next_bubble_visible(170, 160, true), PBL_IF_ROUND_ELSE(true, false));
-  cl_assert_equal_b(swap_layer_next_bubble_visible(159, 160, true), false);
-  cl_assert_equal_b(swap_layer_next_bubble_visible(160, 160, false), false);
-  // A layout that fits the screen is at its end right away.
-  cl_assert_equal_b(swap_layer_next_bubble_visible(0, 0, true), PBL_IF_ROUND_ELSE(true, false));
-  cl_assert_equal_b(swap_layer_next_bubble_visible(0, 0, false), false);
-}
-
-void test_swap_layer__next_bubble_handoff(void) {
-  // Just below the swap layer: still the bubble.
-  cl_assert_equal_i(swap_layer_next_bubble_handoff(FRAME_H, FRAME_H), 0);
-  cl_assert_equal_i(swap_layer_next_bubble_handoff(FRAME_H + 30, FRAME_H), 0);
-  // A quarter of the way in: half turned into the banner.
-  cl_assert_equal_i(swap_layer_next_bubble_handoff(FRAME_H - FRAME_H / 4, FRAME_H), 500);
-  // Halfway and beyond: the banner.
-  cl_assert_equal_i(swap_layer_next_bubble_handoff(FRAME_H / 2, FRAME_H), 1000);
-  cl_assert_equal_i(swap_layer_next_bubble_handoff(0, FRAME_H), 1000);
-  cl_assert_equal_i(swap_layer_next_bubble_handoff(-20, FRAME_H), 1000);
-}
-
 void test_swap_layer__scrolls_to_the_end_then_swaps(void) {
   prv_load(2, (int16_t[]){500, 300});
   const int16_t end = 500 - FRAME_H + PBL_IF_RECT_ELSE(LAYOUT_BANNER_HEIGHT_RECT, 0);
@@ -286,48 +265,51 @@ void test_swap_layer__scrolls_to_the_end_then_swaps(void) {
   cl_assert_equal_i(prv_offset(), 0);
 }
 
-// Round only: the next bubble.
+// Round only: the banners.
 
-void test_swap_layer__next_bubble_at_the_end(void) {
-#if PBL_ROUND
-  prv_load(2, (int16_t[]){500, 300});
-  cl_assert(!prv_bubble_shown());
-  // Not yet at the end.
-  prv_press(ScrollDirectionDown);
-  cl_assert(prv_offset() > 0);
-  cl_assert(!prv_bubble_shown());
-  while (prv_offset() < 500 - FRAME_H) {
-    prv_press(ScrollDirectionDown);
-  }
-  // At the end it rises in.
-  cl_assert(prv_bubble_shown());
-  cl_assert(animation_is_scheduled(s_swap_layer.next_bubble.animation));
-  fake_animation_complete(s_swap_layer.next_bubble.animation);
-  cl_assert_equal_i(s_swap_layer.next_bubble.progress, 1000);
-  // Scrolling back up hides it.
-  prv_press(ScrollDirectionUp);
-  cl_assert(!prv_bubble_shown());
-#endif
-}
-
-void test_swap_layer__next_bubble_hands_off_on_swap(void) {
+void test_swap_layer__banners_follow_the_layouts(void) {
 #if PBL_ROUND
   prv_load(3, (int16_t[]){FRAME_H, 500, 300});
-  // A layout that fits the screen shows the bubble at once.
-  cl_assert(prv_bubble_shown());
-  // Swapping down carries it into the incoming banner...
+  cl_assert(s_swap_layer.banners.current.valid);
+  cl_assert(s_swap_layer.banners.next.valid);
+  cl_assert(gcolor_equal(s_swap_layer.banners.next.look.color, prv_banner_color(&s_layouts[1])));
+  // Nothing rises at first: the window brings the layouts in.
+  cl_assert(!animation_is_scheduled(s_swap_layer.banners.rise));
+  // Swapping down brings the layout after along under the incoming one, so its peek rises with it.
   prv_attempt_scroll(&s_swap_layer, ScrollDirectionDown);
-  cl_assert(s_swap_layer.next_bubble.handoff);
-  cl_assert(prv_bubble_shown());
-  // ...and it is gone once that has landed, until the end of the new layout.
+  cl_assert(s_swap_layer.next);
+  cl_assert_equal_i(
+      s_swap_layer.next->layer.frame.origin.y,
+      s_swap_layer.current->layer.frame.origin.y + s_swap_layer.current->layer.frame.size.h);
+  cl_assert(gcolor_equal(s_swap_layer.banners.current.look.color, prv_banner_color(&s_layouts[1])));
   fake_animation_complete(s_swap_layer.animation);
   cl_assert_equal_i(s_index, 1);
-  cl_assert(!s_swap_layer.next_bubble.handoff);
-  cl_assert(!prv_bubble_shown());
+  cl_assert(gcolor_equal(s_swap_layer.banners.next.look.color, prv_banner_color(&s_layouts[2])));
+  cl_assert(!animation_is_scheduled(s_swap_layer.banners.rise));
+  // And back up: the outgoing layout's banner becomes the peek again, without rising.
+  prv_press(ScrollDirectionUp);
+  cl_assert_equal_i(s_index, 0);
+  cl_assert(gcolor_equal(s_swap_layer.banners.next.look.color, prv_banner_color(&s_layouts[1])));
+  cl_assert(!animation_is_scheduled(s_swap_layer.banners.rise));
 #endif
 }
 
-void test_swap_layer__no_next_bubble_on_the_last_layout(void) {
+void test_swap_layer__new_peek_rises_in(void) {
+#if PBL_ROUND
+  prv_load(2, (int16_t[]){FRAME_H, FRAME_H});
+  // The same layouts again: nothing to rise.
+  swap_layer_reload_data(&s_swap_layer);
+  cl_assert(!animation_is_scheduled(s_swap_layer.banners.rise));
+  // A different next layout rises in.
+  s_color_shift = 1;
+  swap_layer_reload_data(&s_swap_layer);
+  cl_assert(animation_is_scheduled(s_swap_layer.banners.rise));
+  fake_animation_complete(s_swap_layer.banners.rise);
+  cl_assert_equal_i(s_swap_layer.banners.rise_progress, 1000);
+#endif
+}
+
+void test_swap_layer__no_peek_on_the_last_layout(void) {
 #if PBL_ROUND
   prv_load(2, (int16_t[]){500, FRAME_H});
   while (prv_offset() < 500 - FRAME_H) {
@@ -335,22 +317,7 @@ void test_swap_layer__no_next_bubble_on_the_last_layout(void) {
   }
   prv_press(ScrollDirectionDown);
   cl_assert_equal_i(s_index, 1);
-  cl_assert(!prv_bubble_shown());
-  // Pressing on at the end of the last layout doesn't bring one either.
-  prv_press(ScrollDirectionDown);
-  cl_assert(!prv_bubble_shown());
-#endif
-}
-
-void test_swap_layer__next_bubble_after_swap_up(void) {
-#if PBL_ROUND
-  prv_load(2, (int16_t[]){FRAME_H, FRAME_H});
-  prv_press(ScrollDirectionDown);
-  cl_assert_equal_i(s_index, 1);
-  cl_assert(!prv_bubble_shown());
-  // Back up: the first layout lands at its end, so the bubble is back.
-  prv_press(ScrollDirectionUp);
-  cl_assert_equal_i(s_index, 0);
-  cl_assert(prv_bubble_shown());
+  cl_assert(!s_swap_layer.next);
+  cl_assert(!s_swap_layer.banners.next.valid);
 #endif
 }

@@ -582,10 +582,10 @@ cleanup:
 }
 
 #if PBL_ROUND
-static bool prv_get_next_bubble_handler(SwapLayer *swap_layer, LayoutLayer *layout,
-                                        SwapLayerNextBubble *bubble, void *context) {
-  bubble->color = layout_get_notification_colors(layout)->bg_color;
-  bubble->icon = ((NotificationLayout *)layout)->icon_res_info;
+static bool prv_get_banner_look_handler(SwapLayer *swap_layer, LayoutLayer *layout,
+                                        SwapLayerBannerLook *look, void *context) {
+  look->color = layout_get_notification_colors(layout)->bg_color;
+  look->icon = ((NotificationLayout *)layout)->icon_res_info;
   return true;
 }
 #endif
@@ -1607,7 +1607,7 @@ static void prv_init_notification_window(bool is_modal, bool allow_dismiss_all) 
                              .interaction_handler = prv_interaction_handler,
                              .click_config_provider = prv_click_config_provider,
 #if PBL_ROUND
-                             .get_next_bubble_handler = prv_get_next_bubble_handler,
+                             .get_banner_look_handler = prv_get_banner_look_handler,
 #endif
                            });
   swap_layer_set_click_config_onto_window(swap_layer, window);

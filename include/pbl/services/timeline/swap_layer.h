@@ -19,10 +19,12 @@
  * destroys in @ref SwapLayerCallbacks::layout_removed_handler. Up and down scroll the current
  * layout and swap to the neighbor once its end is reached.
  *
- * At the end of a layout, rectangular displays show the top of the next layout below it. Round
- * displays instead show a small bubble at the bottom of the screen, in the next layout's color and
- * with its icon (see @ref SwapLayerCallbacks::get_next_bubble_handler), which grows into the next
- * layout's banner as it swaps in.
+ * At the end of a layout, rectangular displays show the top of the next layout below it. On round
+ * displays the next layout peeks in at the bottom of the screen as the cap of its banner circle
+ * (see notification_layout_get_banner_round()), which turns into a ball and flies up into its
+ * banner as it swaps in.
+ * The swap layer draws a banner, in the look the client gives (see
+ * @ref SwapLayerCallbacks::get_banner_look_handler), while its layout is below its resting place.
  * @{
  */
 
@@ -83,25 +85,25 @@ typedef void (*SwapLayerLayoutWillAppearHandler)(struct SwapLayer *swap_layer, L
 typedef void (*SwapLayerUpdateColorsHandler)(struct SwapLayer *swap_layer, GColor bg_color,
                                              bool status_bar_filled, void *context);
 
-/** @brief The look of the bubble hinting at the next layout on round displays. */
+/** @brief The look of a layout's banner on round displays. */
 typedef struct {
   /** Fill color. */
   GColor color;
   /** Tiny icon drawn in it. */
   AppResourceInfo icon;
-} SwapLayerNextBubble;
+} SwapLayerBannerLook;
 
 /**
- * @brief Get the look of the bubble hinting at a layout.
+ * @brief Get the look of a layout's banner.
  *
  * @param swap_layer Swap layer.
- * @param layout The next layout.
- * @param[out] bubble Look of its bubble.
+ * @param layout The layout.
+ * @param[out] look Look of its banner.
  * @param context Callback context.
- * @return false for no bubble.
+ * @return false for no banner.
  */
-typedef bool (*SwapLayerGetNextBubbleHandler)(struct SwapLayer *swap_layer, LayoutLayer *layout,
-                                              SwapLayerNextBubble *bubble, void *context);
+typedef bool (*SwapLayerGetBannerLookHandler)(struct SwapLayer *swap_layer, LayoutLayer *layout,
+                                              SwapLayerBannerLook *look, void *context);
 
 /**
  * @brief Called on every user interaction, e.g. to restart an inactivity timer.
@@ -131,8 +133,8 @@ typedef struct {
   SwapLayerInteractionHandler interaction_handler;
   /** Adds click handlers on top of the swap layer's own, may be NULL. */
   ClickConfigProvider click_config_provider;
-  /** Supplies the look of the round next bubble; NULL for none. */
-  SwapLayerGetNextBubbleHandler get_next_bubble_handler;
+  /** Supplies the look of round banners; NULL for none. */
+  SwapLayerGetBannerLookHandler get_banner_look_handler;
 } SwapLayerCallbacks;
 
 #ifdef CONFIG_TOUCH
@@ -179,18 +181,20 @@ typedef struct SwapLayer {
   int16_t scroll_from;
   int16_t scroll_target;
 #if PBL_ROUND
-  /* The bubble hinting at the next layout: rises in at the end of the current one and grows into
-   * the next one's banner on a swap down. */
+  /* The banners of the current and next layouts, drawn over the layouts while those are below
+   * their resting place: a layout below the screen draws nothing, yet its banner peeks above it. */
   struct {
     Layer layer;
-    struct KinoReel *icon;
-    GColor color;
-    Animation *animation;
+    struct SwapLayerBanner {
+      struct KinoReel *icon;
+      SwapLayerBannerLook look;
+      bool valid;
+    } current, next;
+    /* The next layout's banner rising in, when it arrives without anything moving. */
+    Animation *rise;
     /* Rise, in thousandths, linear in time; eased when drawn. */
-    int32_t progress;
-    bool shown;
-    bool handoff;
-  } next_bubble;
+    int32_t rise_progress;
+  } banners;
 #endif
   /** @endcond */
   /** A swap is in progress. */
@@ -397,18 +401,6 @@ bool swap_layer_touch_is_edge_swipe(int16_t start_y, int16_t total_dy, int16_t s
  * displays this includes the peek of the next layout, if any.
  */
 int16_t swap_layer_max_scroll_dy(int16_t layout_h, int16_t frame_h, bool has_next);
-
-/*
- * Test seam: whether the round next bubble shows with the layout scrolled to offset of max_dy:
- * only at its end, and only if there is a next layout. Never on rectangular displays.
- */
-bool swap_layer_next_bubble_visible(int16_t offset, int16_t max_dy, bool has_next);
-
-/*
- * Test seam: how far the round next bubble has turned into the incoming layout's banner, in
- * thousandths, with the incoming layout at origin_y in a frame_h tall swap layer.
- */
-int32_t swap_layer_next_bubble_handoff(int16_t origin_y, int16_t frame_h);
 
 /*
  * Test seam: the hold swap's progress curve at t (both 0..ANIMATION_NORMALIZED_MAX): a cubic that

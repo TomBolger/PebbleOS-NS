@@ -39,10 +39,8 @@
 //! Space between the banner and the header
 #define CARD_HEADER_GAP 7
 // All paddings relate to padding above the object unless othersize noted
-// Round cards end clear of the bubble hinting at the next card.
-#define CARD_BOTTOM_PADDING \
-  PBL_IF_RECT_ELSE(18, 2 * LAYOUT_NEXT_BUBBLE_RADIUS + LAYOUT_NEXT_BUBBLE_MARGIN + 4)
-#define BOTTOM_BANNER_CIRCLE_RADIUS 8
+// Round cards end clear of the next card's banner peeking at the bottom.
+#define CARD_BOTTOM_PADDING PBL_IF_RECT_ELSE(18, LAYOUT_PEEK_HEIGHT_ROUND + 8)
 
 static void prv_card_render(NotificationLayout *layout, GContext *ctx, bool render);
 static const LayoutColors *prv_layout_get_colors(const LayoutLayer *layout);
@@ -507,21 +505,15 @@ static void PBL_NOINLINE prv_init_view(NotificationLayout *layout) {
 static void prv_hide_or_show_banner_icon(KinoLayer *icon_layer,
                                          const GRect *notification_layout_frame) {
   const int32_t frame_too_high_for_icon_threshold = -2;
-  const int32_t top_banner_not_visible_threshold = 18;
+  // Below its resting place the swap layer draws the icon, on its way in from the peek.
   const bool icon_hidden =
       (notification_layout_frame->origin.y < frame_too_high_for_icon_threshold) ||
-      (notification_layout_frame->origin.y > top_banner_not_visible_threshold);
+      (notification_layout_frame->origin.y > 0);
   layer_set_hidden(&icon_layer->layer, icon_hidden);
 }
 #endif
 
 #if PBL_ROUND
-static PBL_CONST_FUNC int32_t prv_interpolate_linear(int32_t out_min, int32_t out_max,
-                                                     int32_t in_min, int32_t in_max,
-                                                     int32_t progress) {
-  return out_min + (out_max - out_min) * (progress - in_min) / (in_max - in_min);
-}
-
 // Effective notification status bar height: taller when the "Big & Bold" clock
 // style is selected, otherwise the default. The content top is pushed down by
 // this amount, so the banner clip math must match it.
@@ -532,43 +524,75 @@ static int16_t prv_notif_status_bar_height(void) {
              : STATUS_BAR_LAYER_HEIGHT;
 }
 
-void notification_layout_get_banner_circle(int16_t origin_y, GPoint *center, int16_t *radius) {
-  // The y-position of a layout frame when its banner is peeking
-  const int32_t banner_peek_static_y = PBL_DISPLAY_HEIGHT - prv_notif_status_bar_height();
-  const int32_t banner_movement_raw_offset =
-      PBL_CLAMP(banner_peek_static_y - origin_y, 0, banner_peek_static_y);
-  *radius = (int16_t)prv_interpolate_linear(BOTTOM_BANNER_CIRCLE_RADIUS, BANNER_CIRCLE_RADIUS, 0,
-                                            banner_peek_static_y, banner_movement_raw_offset);
-  // We use PBL_DISPLAY_WIDTH instead of the layer's frame or bounds because the notification
-  // layout's frame is not the same size as the display
-  *center = GPoint(PBL_DISPLAY_WIDTH / 2, (int16_t)prv_interpolate_linear(
-                                              0, LAYOUT_TOP_BANNER_ORIGIN_Y, 0,
-                                              banner_peek_static_y, banner_movement_raw_offset));
+// How far below its resting place a swapping-in card's peek has become a ball: a sixth of the way.
+#define BANNER_BALL_BELOW (LAYOUT_HEIGHT - LAYOUT_HEIGHT / 6)
+// Centers relative to the card: the peek's cap, the ball near the bottom of the screen, the banner.
+#define BANNER_PEEK_CENTER_Y (BANNER_CIRCLE_RADIUS - LAYOUT_PEEK_HEIGHT_ROUND)
+#define BANNER_BALL_CENTER_Y                                                       \
+  (LAYOUT_HEIGHT - LAYOUT_PEEK_BALL_MARGIN_ROUND - LAYOUT_PEEK_BALL_RADIUS_ROUND - \
+   BANNER_BALL_BELOW)
+
+static int16_t prv_lerp_round(int32_t from, int32_t to, int32_t num, int32_t den) {
+  return (int16_t)(from + ((to - from) * num) / den);
+}
+
+//! Interpolates between the peek (just below the screen), the ball and the banner (at rest),
+//! linearly with how far the card is below its resting place, as stock grows its banner.
+static int16_t prv_banner_keyframes(int16_t below_rest, int16_t peek, int16_t ball, int16_t rest) {
+  const int32_t below = PBL_CLAMP(below_rest, 0, LAYOUT_HEIGHT);
+  if (below >= BANNER_BALL_BELOW) {
+    return prv_lerp_round(peek, ball, LAYOUT_HEIGHT - below, LAYOUT_HEIGHT - BANNER_BALL_BELOW);
+  }
+  return prv_lerp_round(ball, rest, BANNER_BALL_BELOW - below, BANNER_BALL_BELOW);
+}
+
+void notification_layout_get_banner_round(int16_t card_top_y, int16_t below_rest, GPoint *center,
+                                          int16_t *radius) {
+  *center =
+      GPoint(PBL_DISPLAY_WIDTH / 2,
+             card_top_y + prv_banner_keyframes(below_rest, BANNER_PEEK_CENTER_Y,
+                                               BANNER_BALL_CENTER_Y, LAYOUT_TOP_BANNER_ORIGIN_Y));
+  *radius = prv_banner_keyframes(below_rest, BANNER_CIRCLE_RADIUS, LAYOUT_PEEK_BALL_RADIUS_ROUND,
+                                 BANNER_CIRCLE_RADIUS);
+}
+
+void notification_layout_fill_banner_round(GContext *ctx, int16_t card_top_y, int16_t below_rest) {
+  GPoint center;
+  int16_t r;
+  notification_layout_get_banner_round(card_top_y, below_rest, &center, &r);
+  graphics_fill_oval(ctx, GRect(center.x - r, center.y - r, 2 * r, 2 * r), GOvalScaleModeFitCircle);
+}
+
+int16_t notification_layout_get_banner_icon_top_round(int16_t below_rest) {
+  // In the peek as far below its edge as the icon of a resting card is above the banner's edge.
+  const int16_t rest_center = CARD_ICON_UPPER_PADDING + NOTIFICATION_TINY_RESOURCE_HEIGHT / 2;
+  const int16_t edge_to_center = (LAYOUT_TOP_BANNER_ORIGIN_Y + BANNER_CIRCLE_RADIUS) - rest_center;
+  const int16_t peek_center = -LAYOUT_PEEK_HEIGHT_ROUND + edge_to_center;
+  const int16_t below = PBL_CLAMP(below_rest, 0, LAYOUT_HEIGHT);
+  int16_t center;
+  if (below >= BANNER_BALL_BELOW) {
+    center = prv_banner_keyframes(below, peek_center, BANNER_BALL_CENTER_Y, BANNER_BALL_CENTER_Y);
+  } else {
+    // In the middle of the ball as it flies up, until that is where the icon rests on screen.
+    const int16_t ball_center = prv_banner_keyframes(
+        below, BANNER_PEEK_CENTER_Y, BANNER_BALL_CENTER_Y, LAYOUT_TOP_BANNER_ORIGIN_Y);
+    center = PBL_MAX(ball_center, rest_center - below);
+  }
+  return center - NOTIFICATION_TINY_RESOURCE_HEIGHT / 2;
 }
 
 static void prv_draw_banner_round(NotificationLayout *notification_layout, GContext *ctx,
                                   const GRect *const notification_layout_frame,
                                   LayoutColors colors) {
-  const int16_t status_bar_height = prv_notif_status_bar_height();
-  if (notification_layout_frame->origin.y >= PBL_DISPLAY_HEIGHT - status_bar_height) {
-    // Still below the screen: no dot peeking in, the swap layer's next bubble stands for it.
-    return;
-  }
   graphics_context_set_fill_color(ctx, colors.bg_color);
-  const int32_t saved_clip_box_size_h = ctx->draw_state.clip_box.size.h;
-  const int32_t saved_clip_box_origin_y = ctx->draw_state.clip_box.origin.y;
-  ctx->draw_state.clip_box.origin.y =
-      PBL_MAX(ctx->draw_state.clip_box.origin.y - status_bar_height, 0);
+  // The banner reaches above the card: over the status bar, or the card above as it peeks.
+  const int16_t reach = PBL_MAX(prv_notif_status_bar_height(), LAYOUT_PEEK_HEIGHT_ROUND);
+  const GRect saved_clip_box = ctx->draw_state.clip_box;
+  ctx->draw_state.clip_box.origin.y = PBL_MAX(ctx->draw_state.clip_box.origin.y - reach, 0);
   ctx->draw_state.clip_box.size.h = PBL_DISPLAY_HEIGHT;
   grect_clip(&ctx->draw_state.clip_box, &DISP_FRAME);
-
-  GPoint center;
-  int16_t radius;
-  notification_layout_get_banner_circle(notification_layout_frame->origin.y, &center, &radius);
-  const GRect banner_frame = GRect(center.x - radius, center.y - radius, radius * 2, radius * 2);
-  graphics_fill_oval(ctx, banner_frame, GOvalScaleModeFitCircle);
-  ctx->draw_state.clip_box.origin.y = saved_clip_box_origin_y;
-  ctx->draw_state.clip_box.size.h = saved_clip_box_size_h;
+  notification_layout_fill_banner_round(ctx, 0, notification_layout_frame->origin.y);
+  ctx->draw_state.clip_box = saved_clip_box;
 }
 #endif
 
