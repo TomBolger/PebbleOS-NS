@@ -1119,7 +1119,8 @@ void menu_layer_update_caches(MenuLayer *menu_layer) {
 
   prv_menu_layer_walk_downward_from_iterator(&it.it);
   int16_t total_height = it.it.cursor.y;
-  if (menu_layer->pad_bottom) {
+  // A clamped round list ends on its last row, like it starts on its first
+  if (menu_layer->pad_bottom && !(PBL_ROUND && menu_layer->center_focused)) {
     total_height += MENU_LAYER_BOTTOM_PADDING;
   }
 
@@ -1278,6 +1279,30 @@ static void prv_menu_layer_update_selection_highlight(MenuLayer *menu_layer, boo
   }
 }
 
+//! Content offset at which \a span rests on a center-focused menu: centred. On round, a list
+//! that scrolls stops at its ends instead, so the first and last rows rest at the top and bottom
+//! edges with no blank space around them, and a list that fits is centred as a whole.
+static int16_t prv_center_focus_rest_offset_y(MenuLayer *menu_layer, const MenuCellSpan *span) {
+  const int16_t frame_h = menu_layer->scroll_layer.layer.frame.size.h;
+  const int16_t y = (int16_t)((frame_h / 2) - span->y - (span->h / 2));
+#if PBL_ROUND
+  const int16_t content_h = scroll_layer_get_content_size(&menu_layer->scroll_layer).h;
+  if (content_h <= frame_h) {
+    return (int16_t)((frame_h - content_h) / 2);
+  }
+  return PBL_CLAMP(y, (int16_t)(frame_h - content_h), (int16_t)0);
+#else
+  return y;
+#endif
+}
+
+//! Whether \a span rests at the centre, rather than clamped near an end of the content.
+static bool prv_center_focus_rests_centered(MenuLayer *menu_layer, const MenuCellSpan *span) {
+  const int16_t frame_h = menu_layer->scroll_layer.layer.frame.size.h;
+  return prv_center_focus_rest_offset_y(menu_layer, span) ==
+         (int16_t)((frame_h / 2) - span->y - (span->h / 2));
+}
+
 static MenuRowAlign prv_corrected_scroll_align(MenuLayer *menu_layer, MenuRowAlign align) {
   if (menu_layer->center_focused) {
     return MenuRowAlignCenter;
@@ -1305,7 +1330,9 @@ static void prv_menu_layer_update_selection_scroll_position(MenuLayer *menu_laye
 
       default:
       case MenuRowAlignCenter:
-        y = (frame_size.h / 2) - menu_layer->selection.y - (menu_layer->selection.h / 2);
+        y = menu_layer->center_focused
+                ? prv_center_focus_rest_offset_y(menu_layer, &menu_layer->selection)
+                : (frame_size.h / 2) - menu_layer->selection.y - (menu_layer->selection.h / 2);
         break;
     }
 
@@ -1529,8 +1556,27 @@ static void prv_apply_selection_change(MenuLayer *menu_layer, MenuRowAlign scrol
   // The selection (and its animations) own the highlight again.
   menu_layer->touch_center_pin = false;
 #endif
-  if (menu_layer->center_focused && animated) {
+  if (menu_layer->center_focused && animated &&
+      prv_center_focus_rests_centered(menu_layer, prev_selection) &&
+      prv_center_focus_rests_centered(menu_layer, &menu_layer->selection)) {
     prv_schedule_center_focus_animation(menu_layer, up, prev_selection, was_animating);
+  } else if (menu_layer->center_focused && animated) {
+    // Near the ends of a round list, or in one that fits, the content stays put, so the highlight
+    // slides to the new row instead, as on a rectangular menu.
+    Animation *scroll_animation = (Animation *)menu_layer->scroll_layer.animation;
+    if (animation_is_scheduled(scroll_animation)) {
+      animation_unschedule(scroll_animation);
+    }
+    if (menu_layer->selection_animation_disabled || process_manager_compiled_with_legacy2_sdk()) {
+      prv_menu_layer_update_selection_highlight(menu_layer, up, false, true);
+    } else {
+      prv_setup_selection_animation(menu_layer, up);
+    }
+    const int16_t rest_y = prv_center_focus_rest_offset_y(menu_layer, &menu_layer->selection);
+    scroll_layer_set_content_offset(&menu_layer->scroll_layer, GPoint(0, rest_y), true);
+    if (did_change) {
+      prv_announce_selection_changed(menu_layer, prev_selection->index);
+    }
   } else {
     prv_menu_layer_update_selection_highlight(menu_layer, up, animated, true);
     prv_menu_layer_update_selection_scroll_position(menu_layer, scroll_align, animated);
@@ -1854,6 +1900,13 @@ static void prv_menu_touch_offset_bounds(MenuLayer *menu_layer, int16_t *min_y, 
   const int16_t content_h = scroll_layer_get_content_size(&menu_layer->scroll_layer).h;
   *min_y = PBL_MIN((int16_t)(frame_h - content_h), (int16_t)0);
   *max_y = 0;
+#if PBL_ROUND
+  // Round carousels stop at the content ends; a list that fits stays centred (see
+  // prv_center_focus_rest_offset_y()).
+  if (menu_layer->center_focused && (content_h <= frame_h)) {
+    *min_y = *max_y = (int16_t)((frame_h - content_h) / 2);
+  }
+#else
   if (menu_layer->center_focused) {
     const int16_t sel_rest_y = (int16_t)((frame_h - menu_layer->selection.h) / 2);
     *max_y = prv_menu_index_is_first_index(menu_layer, &menu_layer->selection.index)
@@ -1863,6 +1916,7 @@ static void prv_menu_touch_offset_bounds(MenuLayer *menu_layer, int16_t *min_y, 
                  ? (int16_t)(sel_rest_y - menu_layer->selection.y)
                  : (int16_t)(*min_y - (frame_h / 2));
   }
+#endif
 }
 
 static int16_t prv_menu_touch_clamp_offset_y(MenuLayer *menu_layer, int16_t y) {
@@ -2079,8 +2133,13 @@ static void prv_menu_touch_track_center_row(MenuLayer *menu_layer) {
 // MenuRowAlignCenter case of prv_menu_layer_update_selection_scroll_position, which cannot be used
 // here because it forces animated=false on center-focused menus.
 static void prv_menu_touch_settle_to_center(MenuLayer *menu_layer, bool animated) {
+#if PBL_ROUND
+  // Round lists stop at their ends rather than centring the first and last rows
+  const int16_t y = prv_center_focus_rest_offset_y(menu_layer, &menu_layer->selection);
+#else
   const int16_t frame_h = menu_layer->scroll_layer.layer.frame.size.h;
   const int16_t y = (int16_t)(frame_h / 2 - menu_layer->selection.y - menu_layer->selection.h / 2);
+#endif
   scroll_layer_set_content_offset(&menu_layer->scroll_layer, GPoint(0, y), animated);
 }
 
@@ -2099,7 +2158,11 @@ static void prv_menu_touch_update_center_pin(MenuLayer *menu_layer) {
   }
   const GSize frame_size = menu_layer->scroll_layer.layer.frame.size;
   const int16_t offset_y = scroll_layer_get_content_offset(&menu_layer->scroll_layer).y;
-  int16_t pinned_y = (int16_t)(-offset_y + ((frame_size.h - menu_layer->selection.h) / 2));
+  // The box stays where the selection rests on screen: the centre, or nearer an end on round.
+  int16_t pinned_y = PBL_IF_ROUND_ELSE(
+      (int16_t)(menu_layer->selection.y +
+                prv_center_focus_rest_offset_y(menu_layer, &menu_layer->selection) - offset_y),
+      (int16_t)(-offset_y + ((frame_size.h - menu_layer->selection.h) / 2)));
   // Past the ends there is no next row to transit to: the box glues to the terminal row and
   // moves together with the rubber-banded pull instead of hovering over the exposed gap. (In
   // transit near a terminal row the inequality points the other way, so this never engages.)
@@ -2216,12 +2279,18 @@ void menu_layer_touch_handle_snap(MenuLayer *menu_layer, GPoint base, GPoint fin
   const int16_t new_y = prv_menu_touch_clamp_offset_y(menu_layer, base.y + final_delta.y);
   prv_scrollbar_kick(menu_layer);
   const int16_t current_y = scroll_layer_get_content_offset(&menu_layer->scroll_layer).y;
-  if (!menu_layer->center_focused &&
+  if ((!menu_layer->center_focused || PBL_ROUND) &&
       current_y != prv_menu_touch_clamp_offset_y(menu_layer, current_y)) {
     // Rubber-banded past an edge: glide back to it regardless of velocity (a coast from out of
     // bounds would be clipped to the edge on its first frame by the standard animation setter).
-    // Center-focused menus don't take this path: their settle-to-center below glides them back.
-    scroll_layer_touch_overscroll_spring_back(&menu_layer->scroll_layer, new_y,
+    // Rectangular carousels don't take this path: their settle-to-center below glides them back.
+    // A round carousel stops at its ends, so it springs back to where its centre row rests.
+    int16_t target_y = new_y;
+    if (menu_layer->center_focused) {
+      prv_menu_touch_track_center_row(menu_layer);
+      target_y = prv_center_focus_rest_offset_y(menu_layer, &menu_layer->selection);
+    }
+    scroll_layer_touch_overscroll_spring_back(&menu_layer->scroll_layer, target_y,
                                               prv_menu_touch_spring_back_stopped, menu_layer);
     return;
   }
