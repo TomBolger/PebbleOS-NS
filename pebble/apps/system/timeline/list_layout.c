@@ -17,24 +17,13 @@ void timeline_list_stack(const TimelineListPin *pins, int num_pins, int first_pl
   }
 }
 
-int16_t timeline_list_page_height(const TimelineListGeometry *geometry) {
-  return geometry->height;
-}
-
 int16_t timeline_list_selected_top(const TimelineListGeometry *geometry,
-                                   const TimelineListPin *pins, int num_pins, int selected,
-                                   bool *whole_screen_out) {
+                                   const TimelineListPin *pins, int num_pins, int selected) {
   const TimelineListPin *pin = &pins[selected];
   const int16_t margin = geometry->margin;
   if (geometry->align == TimelineListAlignAnchor) {
     // Its anchor always rests on the geometry's anchor
-    const int16_t top = geometry->anchor_y - pin->anchor_y;
-    *whole_screen_out = (top < margin) || (top + pin->height > geometry->height - margin);
-    return top;
-  }
-  *whole_screen_out = (pin->height > geometry->height - 2 * margin);
-  if (*whole_screen_out) {
-    return geometry->page_top;
+    return geometry->anchor_y - pin->anchor_y;
   }
   const TimelineListPin *above = (selected > 0) ? &pins[selected - 1] : nullptr;
   const TimelineListPin *below = (selected + 1 < num_pins) ? &pins[selected + 1] : nullptr;
@@ -74,12 +63,9 @@ int16_t timeline_list_selected_top(const TimelineListGeometry *geometry,
 }
 
 void timeline_list_arrange(const TimelineListGeometry *geometry, const TimelineListPin *pins,
-                           int num_pins, int selected, int16_t scroll, int16_t *tops_out,
-                           bool *shown_out) {
+                           int num_pins, int selected, int16_t *tops_out, bool *shown_out) {
   const int16_t height = geometry->height;
-  bool whole_screen;
-  const int16_t sel_top =
-      timeline_list_selected_top(geometry, pins, num_pins, selected, &whole_screen) - scroll;
+  const int16_t sel_top = timeline_list_selected_top(geometry, pins, num_pins, selected);
   tops_out[selected] = sel_top;
   shown_out[selected] = true;
   // The pins around the selected one stack beyond the gap from it, those within reach resting out
@@ -122,43 +108,6 @@ void timeline_list_arrange(const TimelineListGeometry *geometry, const TimelineL
   }
 }
 
-void timeline_list_layout(const TimelineListGeometry *geometry, const TimelineListPin *pins,
-                          int num_pins, int selected, int16_t *tops_out) {
-  const int16_t margin = geometry->margin;
-  switch (geometry->align) {
-    case TimelineListAlignAnchor:
-      tops_out[selected] = geometry->anchor_y - pins[selected].anchor_y;
-      timeline_list_stack(pins, num_pins, selected, selected, tops_out);
-      break;
-    case TimelineListAlignTop:
-      tops_out[0] = margin + geometry->top_space;
-      timeline_list_stack(pins, num_pins, 0, 0, tops_out);
-      break;
-  }
-  const int16_t shift = PBL_MAX(margin - tops_out[selected], 0);
-  for (int i = 0; i < num_pins; i++) {
-    tops_out[i] += shift;
-  }
-}
-
-int16_t timeline_list_page_bottom(const TimelineListGeometry *geometry, const TimelineListPin *pins,
-                                  int num_pins, int selected, int16_t page_top,
-                                  int16_t min_height) {
-  const int16_t bottom = PBL_MAX(geometry->height - geometry->margin, page_top + min_height);
-  if (selected + 1 >= num_pins) {
-    return bottom;
-  }
-  const int16_t above_next = geometry->height - geometry->margin - pins[selected + 1].height;
-  return (above_next - page_top >= min_height) ? above_next : bottom;
-}
-
-int16_t timeline_list_max_scroll(int16_t content_height, int16_t page_height) {
-  if (page_height <= 0 || content_height <= page_height) {
-    return 0;
-  }
-  return ((content_height - 1) / page_height) * page_height;
-}
-
 //! Distance from a row to the nearest or the farthest row of a run, 0 to the nearest of a run
 //! spanning it
 static int16_t prv_rows_distance(int16_t row, int16_t top, int16_t bottom, bool farthest) {
@@ -193,29 +142,6 @@ static int16_t prv_edge_inset(const TimelineListArc *arc, int16_t top, int16_t b
   const int16_t r = arc->display_radius - arc->text_inset;
   const int16_t distance = prv_rows_distance(arc->display_radius, top, bottom, true);
   return PBL_MAX(arc->text_inset + r - prv_half_width(r, distance), arc->min_inset);
-}
-
-int16_t timeline_list_arc_edge_inset(const TimelineListArc *arc, int16_t top, int16_t bottom) {
-  // The edge of the display inset as text flow does it
-  const int16_t r = arc->display_radius - arc->text_inset;
-  const int16_t distance = prv_rows_distance(arc->display_radius, top, bottom, true);
-  return PBL_MAX(arc->text_inset + r - prv_half_width(r, distance), arc->min_inset);
-}
-
-int16_t timeline_list_arc_text_width(const TimelineListArc *arc, int16_t head_top,
-                                     int16_t head_bottom, int16_t top, int16_t bottom) {
-  const int16_t edge = timeline_list_arc_edge_inset(arc, head_top, head_bottom);
-  const int16_t clear = timeline_list_arc_depth(arc, top, bottom) + arc->gap;
-  return 2 * arc->display_radius - PBL_MAX(edge, clear) - edge;
-}
-
-int16_t timeline_list_arc_text_inset(const TimelineListArc *arc, int16_t head_top,
-                                     int16_t head_bottom, int16_t top, int16_t bottom,
-                                     int16_t width) {
-  // Clear of the circle where it is deepest
-  const int16_t limit =
-      2 * arc->display_radius - timeline_list_arc_depth(arc, top, bottom) - arc->gap - width;
-  return PBL_MIN(timeline_list_arc_edge_inset(arc, head_top, head_bottom), limit);
 }
 
 int16_t timeline_list_arc_text_range(const TimelineListArc *arc, int16_t top, int16_t bottom,
