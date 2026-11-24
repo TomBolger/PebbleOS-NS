@@ -215,8 +215,8 @@ static bool prv_should_enlarge_emoji(NotificationLayout *layout) {
 //! circle, so the image takes a page of its own and sits centred in it.
 #define NOTIFICATION_IMAGE_CIRCLE_INSET (8)
 #define NOTIFICATION_IMAGE_RADIUS       (PBL_DISPLAY_HEIGHT / 2 - NOTIFICATION_IMAGE_CIRCLE_INSET)
-//! Centre of the page the image gets, which sits between the status bar and the paging arrow and so
-//! is a couple of pixels below the circle's own centre.
+//! Centre of the page the image gets, which sits below the status bar and so is a little below the
+//! circle's own centre.
 #define NOTIFICATION_IMAGE_PAGE_CENTRE_Y (STATUS_BAR_LAYER_HEIGHT + LAYOUT_HEIGHT / 2)
 
 //! Whether a `width`-wide image of this aspect, centred in its page, clears the bezel.
@@ -538,7 +538,7 @@ static void PBL_NOINLINE prv_init_view(NotificationLayout *layout) {
     // Only calculate size if using a body icon, calculating size is stack expensive
     prv_card_render(layout, graphics_context_get_current_context(), false /* render */);
 
-    if ((layout->view_size.h > (LAYOUT_HEIGHT + LAYOUT_ARROW_HEIGHT))) {
+    if (layout->view_size.h > LAYOUT_HEIGHT) {
       // The large emoji won't fit in a single screen, so don't use the large emoji
       prv_destroy_view(layout);
       layout->view_node = prv_create_view(layout, false /* use_body_icon */);
@@ -639,7 +639,7 @@ static PBL_NOINLINE void prv_card_render_internal(NotificationLayout *layout, GC
   };
   static const GRect page_frame_on_screen = {
     .origin = {0, STATUS_BAR_LAYER_HEIGHT},
-    .size = {PBL_DISPLAY_WIDTH, PBL_DISPLAY_HEIGHT - STATUS_BAR_LAYER_HEIGHT - LAYOUT_ARROW_HEIGHT}
+    .size = {PBL_DISPLAY_WIDTH, LAYOUT_HEIGHT}
   };
   static const GTextNodeDrawConfig config = {
     .page_frame = &page_frame_on_screen,
@@ -661,9 +661,9 @@ static PBL_NOINLINE void prv_card_render_internal(NotificationLayout *layout, GC
 
   layout->view_size.h += LAYOUT_TOP_BANNER_HEIGHT;
 
-  // Room at the bottom for the arrow to the next card, and never shorter than the screen.
-  layout->view_size.h += CARD_BOTTOM_PADDING + LAYOUT_ARROW_HEIGHT;
-  layout->view_size.h = PBL_MAX(layout->view_size.h, PBL_DISPLAY_HEIGHT - STATUS_BAR_LAYER_HEIGHT);
+  // Some room at the bottom, and never shorter than the screen.
+  layout->view_size.h += CARD_BOTTOM_PADDING;
+  layout->view_size.h = PBL_MAX(layout->view_size.h, LAYOUT_HEIGHT);
 }
 
 static void prv_card_render(NotificationLayout *layout, GContext *ctx, bool render) {

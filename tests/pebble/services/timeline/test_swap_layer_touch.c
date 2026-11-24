@@ -38,12 +38,6 @@ void *layout_get_context(LayoutLayer *layout) {
   return nullptr;
 }
 
-bool gbitmap_init_with_resource(GBitmap *bitmap, uint32_t resource_id) {
-  return true;
-}
-void gbitmap_deinit(GBitmap *bitmap) {
-}
-
 void *applib_malloc(size_t bytes) {
   return nullptr;
 }

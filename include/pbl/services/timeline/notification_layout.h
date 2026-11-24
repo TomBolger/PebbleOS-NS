@@ -37,10 +37,8 @@
 #define LAYOUT_TOP_BANNER_HEIGHT              \
   PBL_IF_RECT_ELSE(LAYOUT_BANNER_HEIGHT_RECT, \
                    LAYOUT_TOP_BANNER_HEIGHT_ROUND - STATUS_BAR_LAYER_HEIGHT)
-/** @brief Height of the white arrow layer. */
-#define LAYOUT_ARROW_HEIGHT PBL_IF_RECT_ELSE(19, 16)
-/** @brief Height of the layout text region: the display minus the status bar and arrow. */
-#define LAYOUT_HEIGHT (PBL_DISPLAY_HEIGHT - STATUS_BAR_LAYER_HEIGHT - LAYOUT_ARROW_HEIGHT)
+/** @brief Height of the layout region: the display minus the status bar. */
+#define LAYOUT_HEIGHT (PBL_DISPLAY_HEIGHT - STATUS_BAR_LAYER_HEIGHT)
 /** @brief Vertical offset before the text begins. */
 #define LAYOUT_BEFORE_TEXT_SPACING_Y 40
 /** @brief Radius of the round banner. */
