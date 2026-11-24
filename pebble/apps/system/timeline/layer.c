@@ -16,6 +16,7 @@
 #include <pbl/logging/logging.h>
 #include <pbl/services/clock.h>
 #include <pbl/services/timeline/layout_layer.h>
+#include <pbl/services/timeline/notification_layout.h>
 #include <pbl/services/timeline/timeline_layout.h>
 #include <pbl/services/timeline/timeline_resources.h>
 #include <pbl/util/math.h>
@@ -137,7 +138,29 @@ int16_t timeline_layer_get_icon_offset_y(void) {
   return prv_get_style()->icon_offset_y;
 }
 
+//! Up to the default text size, the pins fit as a list around the selected one
+static bool prv_is_compact(void) {
+  return (system_theme_get_content_size() <= PreferredContentSizeDefault);
+}
+
+#if PBL_ROUND
+//! On round, the compact list's sidebar is the notification banner's circle hanging off the side
+//! of the display, as the round action menu has it, as deep as the banner and with the pins' icons
+//! where the banner has its icon
+#define LIST_ARC_RADIUS        BANNER_CIRCLE_RADIUS
+#define LIST_ARC_CENTER_INSET  LAYOUT_TOP_BANNER_CENTER_Y_ROUND
+#define LIST_ARC_DEPTH         (LIST_ARC_CENTER_INSET + LIST_ARC_RADIUS + 1)
+#define LIST_ARC_ICON_DISTANCE (LAYOUT_TOP_BANNER_ICON_CENTER_Y_ROUND - LIST_ARC_CENTER_INSET)
+//! Length along the arc between the icons of pins next to each other
+#define LIST_ARC_ICON_SPACING (2 * TIMELINE_TINY_RESOURCE_SIZE.h)
+#endif
+
 uint16_t timeline_layer_get_ideal_sidebar_width(void) {
+#if PBL_ROUND
+  if (prv_is_compact()) {
+    return LIST_ARC_DEPTH;
+  }
+#endif
   return prv_get_style()->sidebar_width;
 }
 
@@ -581,6 +604,65 @@ static GRect prv_list_full_frame(TimelineLayer *layer, int16_t y, int16_t h) {
   };
 }
 
+#if PBL_ROUND
+static TimelineListArc prv_list_arc(TimelineLayer *layer) {
+  const TimelineLayerStyle *style = prv_get_style();
+  return (TimelineListArc){
+    .display_radius = layer->layer.bounds.size.w / 2,
+    .text_inset = TIMELINE_LAYOUT_TEXT_FLOW_INSET,
+    .min_inset = style->left_margin,
+    .center_inset = LIST_ARC_CENTER_INSET,
+    .radius = LIST_ARC_RADIUS,
+    // As far from the circle as from the display's edge, as the action menu's rows are
+    .gap = TIMELINE_LAYOUT_TEXT_FLOW_INSET,
+  };
+}
+
+//! Rows of a pin's head, its time and the first line of its title, which place it beside the arc
+static void prv_list_get_head_rows(const TimelineListPinView *pin, const GRect *frame,
+                                   int16_t *top_out, int16_t *bottom_out) {
+  int16_t top;
+  int16_t bottom;
+  timeline_layout_get_head_rows(pin->layout, &top, &bottom);
+  const int16_t content_y = frame->origin.y + TIMELINE_LAYOUT_COMPACT_PADDING_TOP;
+  *top_out = content_y + top;
+  *bottom_out = content_y + bottom;
+}
+
+//! Places a pin sideways, keeping its width: its text starts inside the display's edge beside its
+//! head, and stays clear of the circle. Pins are placed alike at rest and while they move.
+static void prv_list_place_beside_arc(TimelineLayer *layer, const TimelineListPinView *pin,
+                                      GRect *frame) {
+  const TimelineListArc arc = prv_list_arc(layer);
+  int16_t head_top;
+  int16_t head_bottom;
+  prv_list_get_head_rows(pin, frame, &head_top, &head_bottom);
+  const int16_t text_width = frame->size.w - timeline_layer_get_ideal_sidebar_width();
+  const int16_t inset = timeline_list_arc_text_inset(&arc, head_top, head_bottom, frame->origin.y,
+                                                     grect_get_max_y(frame) - 1, text_width);
+  frame->origin.x = timeline_layer_sidebar_is_on_right()
+                        ? inset
+                        : (layer->layer.bounds.size.w - inset - frame->size.w);
+}
+#endif
+
+//! Frame a pin rests at: as wide as the list, or on round from inside the display's edge beside
+//! its head to the sidebar
+static GRect prv_list_rest_frame(TimelineLayer *layer, const TimelineListPinView *pin, int16_t y,
+                                 int16_t h) {
+  GRect frame = prv_list_full_frame(layer, y, h);
+#if PBL_ROUND
+  const TimelineListArc arc = prv_list_arc(layer);
+  int16_t head_top;
+  int16_t head_bottom;
+  prv_list_get_head_rows(pin, &frame, &head_top, &head_bottom);
+  frame.size.w = timeline_list_arc_text_width(&arc, head_top, head_bottom, y, y + h - 1) +
+                 timeline_layer_get_ideal_sidebar_width();
+  prv_list_place_beside_arc(layer, pin, &frame);
+#endif
+  return frame;
+}
+
 //! Offset from a pin's top of where it rests on the anchor: the round arrow points at its title
 static int16_t prv_list_get_anchor_y(TimelineLayout *layout) {
   return PBL_IF_ROUND_ELSE(
@@ -597,6 +679,11 @@ static void prv_list_pin_set_selected(TimelineLayer *layer, TimelineListPinView 
     const GRect *frame = &layout->layer.frame;
     const GRect full = prv_list_full_frame(layer, frame->origin.y, frame->size.h);
     layer_set_frame(&layout->layer, &full);
+    if (selected) {
+      // The list lays the selected pin's text out where it rests, which may not be where it last
+      // did
+      pin->layout->page_frame = GRectZero;
+    }
     layout_set_mode(layout, prv_list_mode(selected));
     timeline_layout_set_page_scroll(pin->layout, 0);
   }
@@ -654,14 +741,37 @@ static void prv_list_pin_create_layout(TimelineLayer *layer, TimelineListPinView
   layer_add_child(&layer->layouts_layer, (Layer *)&pin->layout->icon_layer);
 }
 
+#if PBL_ROUND
+//! Angle on the arc of an icon some length along it from the selected pin's icon
+static int32_t prv_list_icon_angle(int32_t length) {
+  return timeline_list_arc_angle(LIST_ARC_ICON_DISTANCE, length);
+}
+
+//! Frame of an icon on the arc. Icons turn about the circle's center as the pins move, and are
+//! cut off by the display as they turn in and out.
+static void prv_list_get_arc_icon_frame(TimelineLayer *layer, int32_t angle, GRect *icon_frame) {
+  const TimelineListArc arc = prv_list_arc(layer);
+  int16_t center_y;
+  const int16_t inset =
+      timeline_list_arc_icon_inset(&arc, LIST_ARC_ICON_DISTANCE, angle, &center_y);
+  const int16_t center_x =
+      timeline_layer_sidebar_is_on_right() ? (layer->layer.bounds.size.w - 1 - inset) : inset;
+  icon_frame->origin = GPoint(center_x - icon_frame->size.w / 2, center_y - icon_frame->size.h / 2);
+}
+#endif
+
 static void prv_list_get_icon_frame(TimelineLayer *layer, const TimelineListPinView *pin,
-                                    const GRect *frame, GRect *icon_frame) {
+                                    [[maybe_unused]] const GRect *frame, GRect *icon_frame) {
+#if PBL_ROUND
+  // The icon rests on the arc, wherever the pin is
+  *icon_frame = (GRect){.size = TIMELINE_TINY_RESOURCE_SIZE};
+  prv_list_get_arc_icon_frame(layer, prv_list_icon_angle(pin->icon_slot * LIST_ARC_ICON_SPACING),
+                              icon_frame);
+#else
   // The icon sits by the content, below the pin's padding
   GRect content_frame = *frame;
   content_frame.origin.y += TIMELINE_LAYOUT_COMPACT_PADDING_TOP;
   prv_get_pin_icon_frame(layer, &content_frame, icon_frame);
-#if PBL_ROUND
-  icon_frame->origin.y = frame->origin.y + pin->anchor_y - icon_frame->size.h / 2;
 #endif
 }
 
@@ -786,27 +896,6 @@ static void prv_list_build(TimelineLayer *layer) {
   }
 }
 
-#if PBL_ROUND
-//! Narrows a pin so that its one-line title, aligned to the sidebar, ends before the display's
-//! edge. It stays wide enough for its time.
-static void prv_list_fit_to_display(TimelineLayer *layer, const TimelineListPinView *pin,
-                                    GRect *frame) {
-  const GRect *bounds = &layer->layer.bounds;
-  const int16_t title_y = frame->origin.y + pin->anchor_y;
-  if (title_y < 0 || title_y >= bounds->size.h) {
-    return;
-  }
-  const int16_t half_line = fonts_get_font_height(system_theme_get_font(TextStyleFont_Title)) / 2;
-  const int16_t distance_y = PBL_ABS(title_y - bounds->size.h / 2) + half_line;
-  const int16_t edge_x = timeline_list_round_edge_inset(bounds->size.w / 2, distance_y);
-  const int16_t inset = PBL_CLAMP(edge_x - prv_get_style()->left_margin, 0, frame->size.w / 4);
-  frame->size.w -= inset;
-  if (timeline_layer_sidebar_is_on_right()) {
-    frame->origin.x += inset;
-  }
-}
-#endif
-
 static void prv_list_get_pins(TimelineLayer *layer, TimelineListPin *pins) {
   TimelineList *list = &layer->list;
   for (int i = 0; i < list->num_pins; i++) {
@@ -872,8 +961,13 @@ static void prv_list_layout(TimelineLayer *layer) {
     const int16_t page_bottom =
         timeline_list_page_bottom(&geometry, pins, num_pins, selected, page_top, min_page_height);
     page = GRect(0, page_top, layer->layer.bounds.size.w, page_bottom - page_top);
-    timeline_layout_set_page(selected_layout, prv_list_full_frame(layer, page_top, 0).origin,
-                             &page);
+    // Its text is laid out in the width it rests at
+    const GRect rest = prv_list_rest_frame(layer, selected_pin, page_top, pins[selected].height);
+    GRect frame = ((Layer *)selected_layout)->frame;
+    frame.origin.x = rest.origin.x;
+    frame.size.w = rest.size.w;
+    layer_set_frame((Layer *)selected_layout, &frame);
+    timeline_layout_set_page(selected_layout, rest.origin, &page);
     const int16_t anchor_y = prv_list_get_anchor_y(selected_layout);
     if (anchor_y == pins[selected].anchor_y) {
       break;
@@ -888,18 +982,14 @@ static void prv_list_layout(TimelineLayer *layer) {
 
   for (int i = 0; i < num_pins; i++) {
     const int screen_index = prv_list_screen_index(layer, num_pins, i);
-    list->pins[i]->frame =
-        prv_list_full_frame(layer, tops[screen_index], pins[screen_index].height);
+    TimelineListPinView *pin = list->pins[i];
+    pin->frame = prv_list_rest_frame(layer, pin, tops[screen_index], pins[screen_index].height);
+    pin->icon_slot = (int8_t)(screen_index - selected);
 #if PBL_ROUND
-    // The selected pin's text flows inside the display, the others are one line narrowed to it.
-    // A pin resting off screen keeps its width, as it is still seen leaving.
-    GRect *frame = &list->pins[i]->frame;
-    if (frame->origin.y >= height || grect_get_max_y(frame) <= 0) {
-      const GRect *current = &((Layer *)list->pins[i]->layout)->frame;
-      frame->origin.x = current->origin.x;
-      frame->size.w = current->size.w;
-    } else if (i != list->selected) {
-      prv_list_fit_to_display(layer, list->pins[i], frame);
+    // A pin resting off screen keeps its width, as it is still seen leaving
+    if (pin->frame.origin.y >= height || grect_get_max_y(&pin->frame) <= 0) {
+      pin->frame.size.w = ((Layer *)pin->layout)->frame.size.w;
+      prv_list_place_beside_arc(layer, pin, &pin->frame);
     }
 #endif
   }
@@ -1086,6 +1176,31 @@ static void prv_list_start_from_current(TimelineLayer *layer) {
     TimelineListPinView *pin = list->pins[i];
     pin->from = ((Layer *)pin->layout)->frame;
     pin->from_selected = (i == list->selected);
+    pin->icon_from_slot = pin->icon_slot;
+  }
+}
+
+//! Icons turn on the arc by as many steps as the selection moves: those coming in turn in from
+//! beyond the pins they come next to, those leaving turn out the same way
+static void prv_list_turn_icons(TimelineLayer *layer, TimelineListPinView **old, int num_old) {
+  TimelineList *list = &layer->list;
+  int turn = 0;
+  for (int i = 0; i < num_old; i++) {
+    if (old[i] == list->pins[list->selected]) {
+      turn = old[i]->icon_slot - old[i]->icon_from_slot;
+    }
+  }
+  for (int i = 0; i < list->num_pins; i++) {
+    bool kept = false;
+    for (int j = 0; j < num_old; j++) {
+      kept |= (old[j] == list->pins[i]);
+    }
+    if (!kept) {
+      list->pins[i]->icon_from_slot = (int8_t)(list->pins[i]->icon_slot - turn);
+    }
+  }
+  for (int i = 0; i < list->num_leaving; i++) {
+    list->leaving[i]->icon_slot = (int8_t)(list->leaving[i]->icon_from_slot + turn);
   }
 }
 
@@ -1109,6 +1224,7 @@ static void prv_list_move(TimelineLayer *layer) {
       TimelineListPinView *pin = list->pins[i];
       pin->frame = pin->from;
       pin->frame.origin.y += shift;
+      pin->icon_slot = (int8_t)(pin->icon_from_slot - layer->move_delta * TIMELINE_LIST_MAX_PINS);
       list->leaving[list->num_leaving++] = pin;
     }
     list->num_pins = 0;
@@ -1137,6 +1253,7 @@ static void prv_list_move(TimelineLayer *layer) {
     }
   }
   prv_list_place_offscreen(layer, old, num_old);
+  prv_list_turn_icons(layer, old, num_old);
   prv_list_follow_with_indicators(layer);
 }
 
@@ -1166,6 +1283,7 @@ static void prv_list_reset(TimelineLayer *layer) {
     pin->from = pin->frame;
     pin->from.origin.y += slide;
     pin->from_selected = (i == list->selected);
+    pin->icon_from_slot = pin->icon_slot;
   }
   list->selection_changed = true;
   list->day_end = nullptr;
@@ -1233,6 +1351,16 @@ static void prv_list_frames_update(Animation *animation, AnimationProgress progr
     GRect frame = pin->from;
     frame.origin.y = interpolate(progress, pin->from.origin.y, pin->frame.origin.y);
     frame.size.h = bottom - frame.origin.y;
+#if PBL_ROUND
+    // Pins follow the display's edge, their icons turn on the arc
+    prv_list_place_beside_arc(layer, pin, &frame);
+    GRect icon_frame = ((Layer *)&pin->layout->icon_layer)->frame;
+    // Along the arc, so the icons move as far as the pins on each frame of the animation
+    const int32_t length = interpolate(progress, pin->icon_from_slot * LIST_ARC_ICON_SPACING,
+                                       pin->icon_slot * LIST_ARC_ICON_SPACING);
+    prv_list_get_arc_icon_frame(layer, prv_list_icon_angle(length), &icon_frame);
+    layer_set_frame((Layer *)&pin->layout->icon_layer, &icon_frame);
+#endif
     layer_set_frame((Layer *)pin->layout, &frame);
     bottom = frame.origin.y;
   }
@@ -1246,21 +1374,27 @@ static void prv_list_frames_update(Animation *animation, AnimationProgress progr
 }
 
 static void prv_list_start_pin_move(TimelineLayer *layer, TimelineListPinView *pin,
-                                    uint32_t duration) {
+                                    [[maybe_unused]] uint32_t duration) {
+#if PBL_ROUND
+  prv_list_place_beside_arc(layer, pin, &pin->from);
+#else
   GRect icon_from;
   GRect icon_to;
   prv_list_get_icon_frame(layer, pin, &pin->from, &icon_from);
   prv_list_get_icon_frame(layer, pin, &pin->frame, &icon_to);
+  timeline_layout_animate_icon_up_down(pin->layout, &icon_from, &icon_to, duration,
+                                       layer->list.interpolate);
+#endif
   prv_list_set_frame(layer, pin, &pin->from);
   // A pin growing into the selected one reveals its text as its frame grows
   layer_set_clips((Layer *)pin->layout, true);
-  timeline_layout_animate_icon_up_down(pin->layout, &icon_from, &icon_to, duration,
-                                       layer->list.interpolate);
 }
 
 static void prv_list_finish_pin_move(TimelineLayer *layer, TimelineListPinView *pin) {
   prv_list_set_frame(layer, pin, &pin->frame);
+#if PBL_RECT
   timeline_layout_finish_icon_up_down(pin->layout);
+#endif
   prv_list_set_rest_clips(layer, pin);
 }
 
@@ -1514,6 +1648,24 @@ static void prv_draw_round_flip(GContext *ctx, const GRect *layer_bounds, const 
 }
 #endif
 
+#if PBL_ROUND
+//! Fills the compact list's sidebar: the arc's circle, its edge where the sidebar's is. Wider than
+//! the display, as it starts the intro, it fills it.
+static void prv_draw_list_arc(GContext *ctx, const GRect *layer_bounds, int16_t sidebar_width,
+                              bool on_right) {
+  if (sidebar_width >= layer_bounds->size.w) {
+    graphics_fill_rect(ctx, layer_bounds);
+    return;
+  }
+  const int16_t edge_x = on_right ? (layer_bounds->size.w - sidebar_width) : (sidebar_width - 1);
+  const GPoint center = {
+    .x = edge_x + (on_right ? LIST_ARC_RADIUS : -LIST_ARC_RADIUS),
+    .y = layer_bounds->size.h / 2,
+  };
+  graphics_fill_circle(ctx, center, LIST_ARC_RADIUS);
+}
+#endif
+
 static void prv_update_proc(struct Layer *layer, GContext *ctx) {
   TimelineLayer *timeline_layer = (TimelineLayer *)layer;
   const GRect *bounds = &layer->bounds;
@@ -1544,17 +1696,24 @@ static void prv_update_proc(struct Layer *layer, GContext *ctx) {
   const GRect sidebar_rect = GRect(sidebar_x, 0, sidebar_width, bounds->size.h);
   graphics_context_set_fill_color(ctx, timeline_layer->sidebar_color);
 
-  // On round displays, draw the round flip effect if we're animating the intro or exit and then
-  // return early so we don't draw the arrow notch
+  // On round displays, draw the round flip effect, or the compact list's arc, if we're animating
+  // the intro or exit and then return early so we don't draw the arrow notch
 #if PBL_ROUND
-  if (timeline_layer->animating_intro_or_exit) {
+  if (timeline_layer->compact) {
+    prv_draw_list_arc(ctx, bounds, sidebar_width, timeline_layer_sidebar_is_on_right());
+    if (timeline_layer->animating_intro_or_exit) {
+      return;
+    }
+  } else if (timeline_layer->animating_intro_or_exit) {
     prv_draw_round_flip(ctx, bounds, bounds->size.w - sidebar_width,
                         timeline_layer_sidebar_is_on_right());
     return;
+  } else {
+    graphics_fill_rect(ctx, &sidebar_rect);
   }
-#endif
-
+#else
   graphics_fill_rect(ctx, &sidebar_rect);
+#endif
   const bool sidebar_on_right = timeline_layer_sidebar_is_on_right();
   int16_t arrow_base_x = sidebar_on_right ? (bounds->size.w - sidebar_width) : (sidebar_width - 1);
 #if PBL_ROUND
@@ -1884,8 +2043,7 @@ void timeline_layer_init(TimelineLayer *layer, const GRect *frame_ref,
   layer_set_update_proc(&layer->layer, prv_update_proc);
   TimelineIterState *state = timeline_model_get_current_state();
   layer->current_day = PBL_NULL_SAFE_FIELD_ACCESS(state, current_day, 0);
-  // Up to the default text size, the pins fit as a list around the selected one
-  layer->compact = (system_theme_get_content_size() <= PreferredContentSizeDefault);
+  layer->compact = prv_is_compact();
   const TimelineLayerStyle *style = prv_get_style();
   // The arrow is inverted on round, so hide it by extending the width of the sidebar
   layer->sidebar_width = frame_ref->size.w + PBL_IF_ROUND_ELSE(style->sidebar_arrow_size.w, 0);
