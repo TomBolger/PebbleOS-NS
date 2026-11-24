@@ -256,6 +256,17 @@ void timeline_layout_get_icon_frame(const GRect *bounds, TimelineScrollDirection
                                     GRect *frame);
 
 /**
+ * @brief Get the vertical center of a pin's title.
+ *
+ * The center is that of the title's glyphs rather than of its line boxes, so it lines up with the
+ * pin icon.
+ *
+ * @param layout Pin layout, laid out in a pinned mode.
+ * @return Offset of the center from the top of the layout's content.
+ */
+int16_t timeline_layout_get_title_center_y(TimelineLayout *layout);
+
+/**
  * @brief LayoutLayerSizeGetter of timeline layouts.
  *
  * @param ctx Graphics context.
