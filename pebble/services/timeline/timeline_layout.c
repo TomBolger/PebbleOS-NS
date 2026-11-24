@@ -402,6 +402,22 @@ int16_t timeline_layout_get_title_bottom_y(TimelineLayout *layout) {
   return container->nodes[0]->cached_size.h + title->offset.y + title->cached_size.h;
 }
 
+//! Whether the pin is the selected one of the compact list, laid out in pages where it rests
+static bool prv_is_page_pin(const TimelineLayout *layout) {
+  return (layout->info->compact && layout->layout_layer.mode == LayoutLayerModePinnedFat);
+}
+
+void timeline_layout_get_head_rows(TimelineLayout *layout, int16_t *top_out, int16_t *bottom_out) {
+  GTextNodeContainer *container = (GTextNodeContainer *)layout->view_node;
+  const int16_t time_height = container->nodes[0]->cached_size.h;
+  const GTextNodeText *title = (GTextNodeText *)container->nodes[1];
+  const int16_t font_height = fonts_get_font_height(title->font);
+  const int16_t title_top = time_height + title->node.offset.y;
+  // A pin laid out in pages keeps its time inside the display on its own
+  *top_out = prv_is_page_pin(layout) ? (title_top + font_height / 2) : (time_height / 2);
+  *bottom_out = title_top + font_height;
+}
+
 void timeline_layout_init_view(TimelineLayout *layout, LayoutLayerMode mode) {
   GTextNode *view_node = nullptr;
   switch (mode) {
@@ -802,8 +818,7 @@ static void prv_get_card_view_bounds(TimelineLayout *layout, GRect *box_out) {
 }
 
 static bool prv_is_paged_pin(const TimelineLayout *layout) {
-  return (layout->info->compact && layout->layout_layer.mode == LayoutLayerModePinnedFat &&
-          layout->page_frame.size.h > 0);
+  return (prv_is_page_pin(layout) && layout->page_frame.size.h > 0);
 }
 
 static void prv_render_view(TimelineLayout *layout, GContext *ctx, bool render, GSize *size_out) {
@@ -822,7 +837,7 @@ static void prv_render_view(TimelineLayout *layout, GContext *ctx, bool render, 
   GTextNodeDrawConfig config = {
     .page_frame = is_peek ? &GRectZero : &page_frame_on_screen,
     .origin_on_screen = is_peek ? &GPointZero : &page_frame_on_screen.origin,
-    .content_inset = 8,
+    .content_inset = TIMELINE_LAYOUT_TEXT_FLOW_INSET,
     .text_flow = PBL_IF_ROUND_ELSE(paging, false),
     .paging = PBL_IF_ROUND_ELSE(paging, false),
   };
