@@ -488,20 +488,21 @@ void prv_rel_bar_show(void *context) {
 #define TIMELINE_NUM_REL_BARS (TIMELINE_NUM_VISIBLE_ITEMS + 1)
 static void prv_update_rel_bars(TimelineLayer *layer) {
   // Store prev, current, and next item relationship bar types
-  RelationshipBarType rel_bar_types[TIMELINE_NUM_REL_BARS];
+  RelationshipBarType rel_bar_types[TIMELINE_NUM_REL_BARS] = {};
 
   layer->relbar_layer.prev_rel_bar.rel_bar_type = layer->relbar_layer.curr_rel_bar.rel_bar_type;
 
   for (int index = 0; index < TIMELINE_NUM_REL_BARS; index++) {
-    if (layer->layouts_info[index]) {
+    TimelineLayoutInfo *info = timeline_layer_get_layout_info(layer, index);
+    if (info) {
       rel_bar_types[index] =
-          prv_get_pin_relationship(layer->layouts_info[index], layer->layouts_info[index + 1]);
+          prv_get_pin_relationship(info, timeline_layer_get_layout_info(layer, index + 1));
     }
   }
   layer->relbar_layer.curr_rel_bar.rel_bar_type = rel_bar_types[1];
-  if (layer->layouts_info[1]) {
-    PBL_LOG_DBG("Current rel bar %d, duration %" PRIu32, rel_bar_types[1],
-                layer->layouts_info[1]->duration_s);
+  TimelineLayoutInfo *current = timeline_layer_get_layout_info(layer, 1);
+  if (current) {
+    PBL_LOG_DBG("Current rel bar %d, duration %" PRIu32, rel_bar_types[1], current->duration_s);
   }
 }
 
