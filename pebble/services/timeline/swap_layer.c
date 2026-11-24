@@ -11,6 +11,7 @@
 #include <applib/applib_malloc.auto.h>
 #include <applib/graphics/graphics.h>
 #include <applib/graphics/gtypes.h>
+#include <applib/ui/kino/kino_reel.h>
 #include <applib/ui/property_animation.h>
 #include <applib/ui/status_bar_layer.h>
 #include <applib/ui/window.h>
@@ -39,13 +40,18 @@
 #define SCROLL_MS 200
 #define SWAP_MS   200
 
-// Pixel peek amount for next layout: its banner on rectangular displays, the top of its banner
-// circle (a half dot) on round ones
-#define PEEK_PX PBL_IF_RECT_ELSE(LAYOUT_BANNER_HEIGHT_RECT, STATUS_BAR_LAYER_HEIGHT)
+// Pixel peek amount for next layout: its banner on rectangular displays. Round displays show the
+// next bubble instead, so the end of a layout is the end of scrolling.
+#define PEEK_PX PBL_IF_RECT_ELSE(LAYOUT_BANNER_HEIGHT_RECT, 0)
 
 // Get within FUDGE_PX to the end of the layout on a scroll, and will
 // scroll the rest of the way.
-#define FUDGE_PX PEEK_PX
+#define FUDGE_PX PBL_IF_RECT_ELSE(PEEK_PX, STATUS_BAR_LAYER_HEIGHT)
+
+// The round next bubble rises in over NEXT_BUBBLE_RISE_MS, and has turned into the incoming
+// layout's banner once that has come NEXT_BUBBLE_HANDOFF_DIV-th of the way.
+#define NEXT_BUBBLE_RISE_MS     320
+#define NEXT_BUBBLE_HANDOFF_DIV 2
 
 // Press and hold: after HOLD_START_MS the layout scrolls on evenly to its end, rests there for
 // HOLD_BUMP_MS, then swaps in HOLD_SWAP_MS ending at the hold speed and carries straight on.
@@ -165,6 +171,21 @@ static void prv_announce_interaction(SwapLayer *swap_layer) {
   }
 }
 
+//! Adds a layout to the swap layer, under the round next bubble.
+static void prv_add_layout(SwapLayer *swap_layer, LayoutLayer *layout) {
+  layer_add_child(&swap_layer->layer, (Layer *)layout);
+#if PBL_ROUND
+  layer_insert_below_sibling((Layer *)layout, &swap_layer->next_bubble.layer);
+#endif
+}
+
+#if PBL_ROUND
+static void prv_next_bubble_load(SwapLayer *swap_layer);
+static void prv_next_bubble_update(SwapLayer *swap_layer);
+static void prv_next_bubble_hide(SwapLayer *swap_layer);
+static void prv_next_bubble_swap_started(SwapLayer *swap_layer, ScrollDirection direction);
+#endif
+
 static void prv_refresh_next_layer(SwapLayer *swap_layer) {
   prv_remove_old_layout(swap_layer, swap_layer->next);
   LayoutLayer *new_next = prv_fetch_next_layout(swap_layer, +1);
@@ -177,8 +198,12 @@ static void prv_refresh_next_layer(SwapLayer *swap_layer) {
 
     next_frame.origin.y = current_frame->origin.y + current_frame->size.h;
     prv_layout_set_frame(swap_layer->next, &next_frame);
-    layer_add_child(&swap_layer->layer, (Layer *)swap_layer->next);
+    prv_add_layout(swap_layer, swap_layer->next);
   }
+#if PBL_ROUND
+  prv_next_bubble_load(swap_layer);
+  prv_next_bubble_update(swap_layer);
+#endif
 }
 
 //////////////////////////
@@ -388,7 +413,7 @@ static bool prv_setup_swap_up(SwapLayer *swap_layer) {
   // set relative offset for the previous layer
   prev_frame.origin.y = -prev_frame.size.h + current_frame->origin.y;
   prv_layout_set_frame(swap_layer->previous, &prev_frame);
-  layer_add_child(&swap_layer->layer, (Layer *)swap_layer->previous);
+  prv_add_layout(swap_layer, swap_layer->previous);
 
   return true;
 }
@@ -407,6 +432,10 @@ static void prv_swap_down_complete(Animation *animation, bool finished, void *co
   // remove the previous layer
   prv_remove_old_layout(swap_layer, swap_layer->previous);
   swap_layer->previous = nullptr;
+#if PBL_ROUND
+  // The bubble has become the new layout's banner.
+  prv_next_bubble_hide(swap_layer);
+#endif
 
   // let the client know we have moved to another layer
   prv_announce_layout_did_appear(swap_layer, swap_layer->current, +1);
@@ -467,6 +496,9 @@ static void prv_set_offset(SwapLayer *swap_layer, int16_t offset) {
     next_frame.origin.y = current_frame.origin.y + current_frame.size.h;
     prv_layout_set_frame(swap_layer->next, &next_frame);
   }
+#if PBL_ROUND
+  prv_next_bubble_update(swap_layer);
+#endif
 }
 
 static void prv_scroll_update(Animation *animation, const AnimationProgress progress) {
@@ -580,6 +612,9 @@ static bool prv_attempt_swap_at(SwapLayer *swap_layer, ScrollDirection direction
     animation = prv_create_swap_up_animation(swap_layer, full_swap, held);
   }
 
+#if PBL_ROUND
+  prv_next_bubble_swap_started(swap_layer, direction);
+#endif
   animation_set_handlers(
       animation,
       (AnimationHandlers){
@@ -598,19 +633,191 @@ static bool prv_attempt_swap(SwapLayer *swap_layer, ScrollDirection direction, b
   return prv_attempt_swap_at(swap_layer, direction, full_swap, false /* held */);
 }
 
+int16_t swap_layer_max_scroll_dy(int16_t layout_h, int16_t frame_h, bool has_next) {
+  // we are peeking the next notification if we have a next.
+  const int16_t max_dy = layout_h - frame_h + (has_next ? PEEK_PX : 0);
+  return PBL_MAX(max_dy, 0);
+}
+
 //! Computes the amount the current layer frame can scroll until a swap is necessary.
 //! Always returns a positive number
 static int16_t prv_get_max_scroll_dy(SwapLayer *swap_layer) {
-  int16_t max_dy = swap_layer->current->layer.frame.size.h - swap_layer->layer.frame.size.h;
+  return swap_layer_max_scroll_dy(swap_layer->current->layer.frame.size.h,
+                                  swap_layer->layer.frame.size.h, swap_layer->next != nullptr);
+}
 
-  // we are peeking the next notification if we have a next.
-  if (swap_layer->next != nullptr) {
-    max_dy += PEEK_PX;
+// ---------------------------------------------------------------------------------------------
+// Next bubble
+
+bool swap_layer_next_bubble_visible(int16_t offset, int16_t max_dy, bool has_next) {
+#if PBL_ROUND
+  return has_next && (offset >= max_dy);
+#else
+  return false;
+#endif
+}
+
+int32_t swap_layer_next_bubble_handoff(int16_t origin_y, int16_t frame_h) {
+  if (frame_h <= 0) {
+    return 1000;
+  }
+  const int32_t rise = PBL_CLAMP(frame_h - origin_y, 0, frame_h);
+  return PBL_MIN((rise * NEXT_BUBBLE_HANDOFF_DIV * 1000) / frame_h, 1000);
+}
+
+#if PBL_ROUND
+// Ease out with a slight overshoot, in thousandths: 1 + (s + 1)(t - 1)^3 + s (t - 1)^2, s = 1.2
+static int32_t prv_next_bubble_ease(int32_t t) {
+  const int64_t u = t - 1000;
+  const int64_t u2 = u * u / 1000;
+  const int64_t u3 = u2 * u / 1000;
+  return (int32_t)(1000 + (2200 * u3) / 1000 + (1200 * u2) / 1000);
+}
+
+static int16_t prv_lerp16(int16_t from, int16_t to, int32_t thousandths) {
+  return (int16_t)(from + ((to - from) * thousandths) / 1000);
+}
+
+static SwapLayer *prv_next_bubble_owner(Layer *layer) {
+  return (SwapLayer *)((uint8_t *)layer - offsetof(SwapLayer, next_bubble.layer));
+}
+
+static void prv_next_bubble_stop(SwapLayer *swap_layer) {
+  if (animation_is_scheduled(swap_layer->next_bubble.animation)) {
+    animation_unschedule(swap_layer->next_bubble.animation);
+  }
+  swap_layer->next_bubble.animation = nullptr;
+}
+
+static void prv_next_bubble_hide(SwapLayer *swap_layer) {
+  prv_next_bubble_stop(swap_layer);
+  swap_layer->next_bubble.shown = false;
+  swap_layer->next_bubble.handoff = false;
+  swap_layer->next_bubble.progress = 0;
+  layer_set_hidden(&swap_layer->next_bubble.layer, true);
+}
+
+//! Takes the look of the bubble from the next layout.
+static void prv_next_bubble_load(SwapLayer *swap_layer) {
+  if (swap_layer->next_bubble.handoff) {
+    // Still showing the layout swapping in.
+    return;
+  }
+  kino_reel_destroy(swap_layer->next_bubble.icon);
+  swap_layer->next_bubble.icon = nullptr;
+  SwapLayerNextBubble look;
+  if (swap_layer->next && swap_layer->callbacks.get_next_bubble_handler &&
+      swap_layer->callbacks.get_next_bubble_handler(swap_layer, swap_layer->next, &look,
+                                                    swap_layer->context)) {
+    swap_layer->next_bubble.color = look.color;
+    swap_layer->next_bubble.icon =
+        kino_reel_create_with_resource_system(look.icon.res_app_num, look.icon.res_id);
+  }
+  layer_mark_dirty(&swap_layer->next_bubble.layer);
+}
+
+static void prv_next_bubble_rise_update(Animation *animation, const AnimationProgress progress) {
+  SwapLayer *swap_layer = animation_get_context(animation);
+  swap_layer->next_bubble.progress = (progress * 1000) / ANIMATION_NORMALIZED_MAX;
+  layer_mark_dirty(&swap_layer->next_bubble.layer);
+}
+
+//! Shows the bubble once the current layout is at its end, and hides it when it no longer is.
+static void prv_next_bubble_update(SwapLayer *swap_layer) {
+  if (swap_layer->next_bubble.handoff || swap_layer->is_deiniting) {
+    return;
+  }
+  const bool visible = swap_layer->current && swap_layer->next_bubble.icon &&
+                       swap_layer_next_bubble_visible(
+                           prv_get_current_notification_offset(swap_layer),
+                           prv_get_max_scroll_dy(swap_layer), swap_layer->next != nullptr);
+  if (visible == swap_layer->next_bubble.shown) {
+    return;
+  }
+  if (!visible) {
+    prv_next_bubble_hide(swap_layer);
+    return;
+  }
+  swap_layer->next_bubble.shown = true;
+  swap_layer->next_bubble.progress = 0;
+  layer_set_hidden(&swap_layer->next_bubble.layer, false);
+  static const AnimationImplementation s_rise_implementation = {
+    .update = prv_next_bubble_rise_update,
+  };
+  Animation *animation = animation_create();
+  if (!animation) {
+    swap_layer->next_bubble.progress = 1000;
+    return;
+  }
+  animation_set_implementation(animation, &s_rise_implementation);
+  animation_set_duration(animation, NEXT_BUBBLE_RISE_MS);
+  animation_set_curve(animation, AnimationCurveLinear);
+  animation_set_handlers(animation, (AnimationHandlers){}, swap_layer);
+  swap_layer->next_bubble.animation = animation;
+  animation_schedule(animation);
+}
+
+//! A swap down takes the bubble along into the incoming layout's banner; any other swap hides it.
+static void prv_next_bubble_swap_started(SwapLayer *swap_layer, ScrollDirection direction) {
+  if (!swap_layer->next_bubble.shown) {
+    return;
+  }
+  if (direction == ScrollDirectionDown) {
+    swap_layer->next_bubble.handoff = true;
+  } else {
+    prv_next_bubble_hide(swap_layer);
+  }
+}
+
+//! Where to draw the icon centered in an icon box at box_top, as a card lays its own icon out.
+static GPoint prv_next_bubble_icon_origin(KinoReel *icon, int16_t center_x, int16_t box_top) {
+  const GSize box = NOTIFICATION_TINY_RESOURCE_SIZE;
+  const GSize size = kino_reel_get_size(icon);
+  return GPoint(center_x - (box.w / 2) + (box.w - size.w) / 2, box_top + (box.h - size.h) / 2);
+}
+
+static void prv_next_bubble_update_proc(Layer *layer, GContext *ctx) {
+  SwapLayer *swap_layer = prv_next_bubble_owner(layer);
+  if (!swap_layer->next_bubble.shown) {
+    return;
+  }
+  // At rest it sits on the bottom of the screen, or of the swap layer if that ends above it.
+  const GRect *frame = &swap_layer->layer.frame;
+  const int16_t bottom = PBL_MIN(frame->size.h, PBL_DISPLAY_HEIGHT - frame->origin.y);
+  const int16_t rest_y = bottom - LAYOUT_NEXT_BUBBLE_MARGIN - LAYOUT_NEXT_BUBBLE_RADIUS;
+  const int16_t below_y = bottom + LAYOUT_NEXT_BUBBLE_RADIUS;
+  GPoint center =
+      GPoint(PBL_DISPLAY_WIDTH / 2,
+             prv_lerp16(below_y, rest_y, prv_next_bubble_ease(swap_layer->next_bubble.progress)));
+  int16_t radius = LAYOUT_NEXT_BUBBLE_RADIUS;
+  int16_t icon_top = center.y - NOTIFICATION_TINY_RESOURCE_SIZE.h / 2;
+
+  if (swap_layer->next_bubble.handoff && swap_layer->current) {
+    // Turn into the banner of the layout swapping in, and its icon into the layout's icon.
+    const GRect *incoming = &swap_layer->current->layer.frame;
+    const int32_t handoff = swap_layer_next_bubble_handoff(incoming->origin.y, frame->size.h);
+    GPoint banner_center;
+    int16_t banner_radius;
+    notification_layout_get_banner_circle(incoming->origin.y, &banner_center, &banner_radius);
+    center.x = prv_lerp16(center.x, incoming->origin.x + banner_center.x, handoff);
+    center.y = prv_lerp16(center.y, incoming->origin.y + banner_center.y, handoff);
+    radius = prv_lerp16(radius, banner_radius, handoff);
+    // The icon stays in the middle of the circle, then settles into the layout's own icon as the
+    // layout lands.
+    const int32_t rise = frame->size.h - incoming->origin.y;
+    const int32_t landing = PBL_CLAMP((rise * 1000) / PBL_MAX(frame->size.h, 1), 0, 1000);
+    icon_top = prv_lerp16(center.y - NOTIFICATION_TINY_RESOURCE_SIZE.h / 2,
+                          incoming->origin.y + CARD_ICON_UPPER_PADDING, landing);
   }
 
-  max_dy = PBL_MAX(max_dy, 0);
-  return max_dy;
+  graphics_context_set_fill_color(ctx, swap_layer->next_bubble.color);
+  graphics_fill_oval(ctx, GRect(center.x - radius, center.y - radius, radius * 2, radius * 2),
+                     GOvalScaleModeFitCircle);
+  graphics_context_set_compositing_mode(ctx, GCompOpSet);
+  kino_reel_draw(swap_layer->next_bubble.icon, ctx,
+                 prv_next_bubble_icon_origin(swap_layer->next_bubble.icon, center.x, icon_top));
 }
+#endif
 
 PBL_T_STATIC void prv_attempt_scroll(SwapLayer *swap_layer, ScrollDirection direction) {
   // Never drop a press because something is still moving: jump to its end and act on that.
@@ -864,13 +1071,16 @@ void swap_layer_reload_data(SwapLayer *swap_layer) {
 
   LayoutLayer *current = prv_fetch_next_layout(swap_layer, 0);
   if (!current) {
+#if PBL_ROUND
+    prv_next_bubble_hide(swap_layer);
+#endif
     return;
   }
 
   GRect current_frame = current->layer.frame;
   current_frame.origin = (GPoint){0, 0};
   prv_layout_set_frame(current, &current_frame);
-  layer_add_child(&swap_layer->layer, (Layer *)current);
+  prv_add_layout(swap_layer, current);
   swap_layer->current = current;
 
   prv_announce_layout_will_appear(swap_layer, swap_layer->current);
@@ -882,9 +1092,13 @@ void swap_layer_reload_data(SwapLayer *swap_layer) {
     GRect next_frame = next->layer.frame;
     next_frame.origin.y = swap_layer->current->layer.frame.size.h;
     prv_layout_set_frame(next, &next_frame);
-    layer_add_child(&swap_layer->layer, (Layer *)next);
+    prv_add_layout(swap_layer, next);
     swap_layer->next = next;
   }
+#if PBL_ROUND
+  prv_next_bubble_load(swap_layer);
+  prv_next_bubble_update(swap_layer);
+#endif
 
   // A held button carries on into the new layouts
   prv_hold_step(swap_layer);
@@ -1384,6 +1598,13 @@ void swap_layer_init(SwapLayer *swap_layer, const GRect *frame) {
   layer_init(layer, frame);
   layer_set_update_proc(layer, prv_swap_layer_update_proc);
 
+#if PBL_ROUND
+  layer_init(&swap_layer->next_bubble.layer, &GRect(0, 0, frame->size.w, frame->size.h));
+  layer_set_update_proc(&swap_layer->next_bubble.layer, prv_next_bubble_update_proc);
+  layer_set_hidden(&swap_layer->next_bubble.layer, true);
+  layer_add_child(layer, &swap_layer->next_bubble.layer);
+#endif
+
 #ifdef CONFIG_TOUCH
   swap_layer_touch_register(swap_layer);
 #endif
@@ -1399,6 +1620,12 @@ void swap_layer_deinit(SwapLayer *swap_layer) {
   swap_layer_touch_deregister(swap_layer);
 #endif
   prv_swap_layer_reset(swap_layer);
+#if PBL_ROUND
+  prv_next_bubble_stop(swap_layer);
+  kino_reel_destroy(swap_layer->next_bubble.icon);
+  swap_layer->next_bubble.icon = nullptr;
+  layer_deinit(&swap_layer->next_bubble.layer);
+#endif
   layer_deinit(&swap_layer->layer);
 }
 
