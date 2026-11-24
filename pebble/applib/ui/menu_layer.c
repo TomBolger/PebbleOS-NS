@@ -553,6 +553,86 @@ static inline void prv_menu_layer_draw_separator(MenuLayer *menu_layer, Layer *c
   }
 }
 
+#if PBL_ROUND
+static bool prv_draws_round_pill(const MenuLayer *menu_layer) {
+  const GColor normal_bg = menu_layer->normal_colors[MenuLayerColorBackground];
+  return menu_layer->round_pill_highlight && !process_manager_compiled_with_legacy2_sdk() &&
+         !gcolor_is_transparent(normal_bg) &&
+         !gcolor_equal(normal_bg, menu_layer->highlight_colors[MenuLayerColorBackground]);
+}
+
+//! How far either end circle's centre of a pill with ends of \a radius, \a dy from the middle of
+//! the screen, can be from the middle while keeping MENU_ROUND_PILL_BEZEL_MARGIN plus \a margin
+//! clear of the bezel.
+static int32_t prv_round_pill_half_span(int64_t dy, int32_t radius, int32_t margin) {
+  const int32_t reach = (PBL_MIN(PBL_DISPLAY_WIDTH, PBL_DISPLAY_HEIGHT) / 2) -
+                        MENU_ROUND_PILL_BEZEL_MARGIN - margin - radius;
+  return (reach > dy) ? integer_sqrt(((int64_t)reach * reach) - (dy * dy)) : 0;
+}
+
+//! The round highlight: a rounded rectangle, in the coordinates of the drawing box
+typedef struct {
+  GRect box;
+  int16_t radius;
+} MenuRoundShape;
+
+//! The pill over \a frame (content coordinates) in a drawing box starting at \a origin_y: inset
+//! from the top and bottom, with fully round ends that keep MENU_ROUND_PILL_BEZEL_MARGIN in from
+//! the bezel at their height. While the highlight stretches between rows the ends keep the radius
+//! of a pill \a rest_h tall, so every row draws its part of one shape.
+static bool prv_round_pill_shape(const GContext *ctx, const MenuLayer *menu_layer, int16_t origin_y,
+                                 const GRect *frame, int16_t rest_h, MenuRoundShape *shape) {
+  const int16_t height = frame->size.h - (2 * MENU_ROUND_PILL_INSET_Y);
+  if (height <= 0) {
+    return false;
+  }
+  const int16_t top = frame->origin.y - origin_y + MENU_ROUND_PILL_INSET_Y;
+  const int16_t radius = PBL_MAX(PBL_MIN(height, rest_h - (2 * MENU_ROUND_PILL_INSET_Y)) / 2, 1);
+
+  // The end circles' centres stay inside a circle concentric with the screen
+  const GPoint screen = ctx->draw_state.drawing_box.origin;
+  const int32_t end_top = screen.y + top + radius - (PBL_DISPLAY_HEIGHT / 2);
+  const int32_t end_bottom = screen.y + top + height - radius - (PBL_DISPLAY_HEIGHT / 2);
+  const int64_t dy = PBL_MAX(PBL_ABS(end_top), PBL_ABS(end_bottom));
+  const int32_t half_right = prv_round_pill_half_span(dy, radius, 0);
+  const int32_t half_left =
+      prv_round_pill_half_span(dy, radius, menu_layer->round_pill_left_margin);
+
+  const int32_t width = menu_layer->scroll_layer.layer.frame.size.w;
+  const int32_t left = PBL_MAX((PBL_DISPLAY_WIDTH / 2) - half_left - radius - screen.x, 0);
+  const int32_t right = PBL_MIN((PBL_DISPLAY_WIDTH / 2) + half_right + radius - screen.x, width);
+  if (right <= left) {
+    return false;
+  }
+  *shape = (MenuRoundShape){
+    .box = GRect(left, top, right - left, height),
+    .radius = PBL_MIN(radius, (right - left) / 2),
+  };
+  return true;
+}
+
+//! The highlight's shape as it is now, in a drawing box starting at \a origin_y (content
+//! coordinates).
+static bool prv_round_shape(const GContext *ctx, const MenuLayer *menu_layer, int16_t origin_y,
+                            MenuRoundShape *shape) {
+  return prv_round_pill_shape(ctx, menu_layer, origin_y, &menu_layer->inverter.layer.frame,
+                              menu_layer->selection.h, shape);
+}
+
+static void prv_fill_round_shape(GContext *ctx, const MenuLayer *menu_layer,
+                                 const MenuRoundShape *shape) {
+  graphics_context_set_fill_color(ctx, menu_layer->highlight_colors[MenuLayerColorBackground]);
+  graphics_fill_round_rect(ctx, &shape->box, (uint16_t)shape->radius, GCornersAll);
+}
+
+void menu_layer_set_round_pill_left_margin(MenuLayer *menu_layer, uint8_t margin) {
+  if (menu_layer->round_pill_left_margin != margin) {
+    menu_layer->round_pill_left_margin = margin;
+    layer_mark_dirty(menu_layer_get_layer(menu_layer));
+  }
+}
+#endif
+
 static void prv_prepare_row(GContext *ctx, MenuLayer *menu_layer, Layer *cell_layer,
                             bool highlight) {
   if (!process_manager_compiled_with_legacy2_sdk()) {
@@ -560,7 +640,12 @@ static void prv_prepare_row(GContext *ctx, MenuLayer *menu_layer, Layer *cell_la
     ctx->draw_state.fill_color = colors[MenuLayerColorBackground];
     ctx->draw_state.text_color = colors[MenuLayerColorForeground];
     ctx->draw_state.tint_color = colors[MenuLayerColorForeground];
-    if (!gcolor_is_transparent(ctx->draw_state.fill_color)) {
+    bool fill = !gcolor_is_transparent(ctx->draw_state.fill_color);
+#if PBL_ROUND
+    // The highlight shape has already been drawn under the highlighted content
+    fill = fill && !(highlight && prv_draws_round_pill(menu_layer));
+#endif
+    if (fill) {
       graphics_fill_rect(ctx, &cell_layer->bounds);
     }
   }
@@ -584,6 +669,47 @@ static void prv_prepare_and_draw_row(GContext *ctx, MenuLayer *menu_layer, Layer
   cell_layer->bounds = prev_bounds;
 }
 
+#if PBL_ROUND
+//! Round rows under the highlight are drawn as they are, then the highlight shape over them, then
+//! their highlighted content inside the shape, clipped to three boxes that fill most of it.
+static void prv_menu_layer_draw_row_round(MenuLayer *menu_layer, Layer *cell_layer,
+                                          MenuCellSpan *cursor, GContext *ctx) {
+  prv_prepare_and_draw_row(ctx, menu_layer, cell_layer, cursor, false);
+
+  const GRect *rows = &menu_layer->inverter.layer.frame;
+  MenuRoundShape shape;
+  if (!grect_overlaps_grect(&cell_layer->frame, rows) ||
+      !prv_round_shape(ctx, menu_layer, cell_layer->frame.origin.y, &shape)) {
+    return;
+  }
+  prv_fill_round_shape(ctx, menu_layer, &shape);
+
+  // The boxes reach the shape's outline at 30 and 60 degrees from its ends
+  const GRect box = shape.box;
+  const int16_t r = shape.radius;
+  const int16_t near = r - (r * 866 / 1000);
+  const int16_t half = r / 2;
+  const GRect inner[] = {
+    GRect(box.origin.x + half, box.origin.y + near, box.size.w - (2 * half),
+          box.size.h - (2 * near)),
+    GRect(box.origin.x + near, box.origin.y + half, half - near, box.size.h - (2 * half)),
+    GRect(grect_get_max_x(&box) - half, box.origin.y + half, half - near, box.size.h - (2 * half)),
+  };
+  const GRect clip = ctx->draw_state.clip_box;
+  for (size_t i = 0; i < PBL_ARRAY_SIZE(inner); i++) {
+    GRect inner_clip = inner[i];
+    inner_clip.origin = gpoint_add(inner_clip.origin, ctx->draw_state.drawing_box.origin);
+    grect_clip(&inner_clip, &clip);
+    if (grect_is_empty(&inner_clip)) {
+      continue;
+    }
+    ctx->draw_state.clip_box = inner_clip;
+    prv_prepare_and_draw_row(ctx, menu_layer, cell_layer, cursor, true);
+  }
+  ctx->draw_state.clip_box = clip;
+}
+#endif
+
 static inline void prv_menu_layer_draw_row(MenuLayer *menu_layer, Layer *cell_layer,
                                            MenuCellSpan *cursor, GContext *ctx) {
   if (cursor->h == 0) {
@@ -606,6 +732,14 @@ static inline void prv_menu_layer_draw_row(MenuLayer *menu_layer, Layer *cell_la
   // the space available to it and remove overflow
   const GRect *const rect_clipper = (const GRect *const)&ctx->draw_state.drawing_box;
   grect_clip((GRect *const)&ctx->draw_state.clip_box, rect_clipper);
+
+#if PBL_ROUND
+  if (prv_draws_round_pill(menu_layer)) {
+    prv_menu_layer_draw_row_round(menu_layer, cell_layer, cursor, ctx);
+    graphics_context_set_drawing_state(ctx, prev_state);
+    return;
+  }
+#endif
 
   const bool fully_covered = grect_equal(&cell_layer->frame, &menu_layer->inverter.layer.frame);
   const bool partial = grect_overlaps_grect(&cell_layer->frame, &menu_layer->inverter.layer.frame);
@@ -890,8 +1024,18 @@ void menu_layer_update_proc(Layer *scroll_content_layer, GContext *ctx) {
   if (menu_layer->overscroll_stretched) {
     // The overscroll-stretched selection background: cells paint over their own part, so only
     // the gap beyond the content edge shows it.
-    graphics_context_set_fill_color(ctx, menu_layer->highlight_colors[MenuLayerColorBackground]);
-    graphics_fill_rect(ctx, &menu_layer->inverter.layer.frame);
+#if PBL_ROUND
+    MenuRoundShape shape;
+    if (prv_draws_round_pill(menu_layer)) {
+      if (prv_round_shape(ctx, menu_layer, 0, &shape)) {
+        prv_fill_round_shape(ctx, menu_layer, &shape);
+      }
+    } else
+#endif
+    {
+      graphics_context_set_fill_color(ctx, menu_layer->highlight_colors[MenuLayerColorBackground]);
+      graphics_fill_rect(ctx, &menu_layer->inverter.layer.frame);
+    }
   }
 
   MenuRenderIterator *render_iter = applib_type_malloc(MenuRenderIterator);
@@ -996,6 +1140,7 @@ void menu_layer_init(MenuLayer *menu_layer, const GRect *frame) {
   if (system_theme_is_system_ui()) {
     menu_layer->normal_colors_follow_theme = true;
     menu_layer->highlight_colors_follow_theme = true;
+    menu_layer->round_pill_highlight = true;
     prv_refresh_theme_colors(menu_layer);
   } else {
     // Third-party apps keep the documented defaults, without the system accent
