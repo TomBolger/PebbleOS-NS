@@ -57,4 +57,17 @@ typedef struct NotificationWindowData {
   // Set once we've pushed a modal color preempt for this notification's
   // backlight pulse, so window_unload knows to balance it with a pop.
   bool color_preempted;
+
+  // The "poof" played over the card when it is dismissed
+  Layer poof_layer;
+  GDrawCommandSequence *poof_sequence;
+  Animation *poof_animation;
+  uint32_t poof_elapsed_ms;
+
+  // A new notification doesn't take over the screen while the user is reading or acting on
+  // another; it is focused once they stop.
+  uint64_t last_interaction_ms;
+  bool has_deferred_focus;
+  Uuid deferred_focus_id;
+  EventedTimerID deferred_focus_timer;
 } NotificationWindowData;

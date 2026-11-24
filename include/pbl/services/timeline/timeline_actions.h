@@ -59,6 +59,17 @@ ActionMenuLevel *timeline_actions_create_action_menu_root_level(uint8_t num_acti
                                                                 TimelineItemActionSource source);
 
 /**
+ * @brief Called when an action succeeds with a "dismissed" result while its action menu is open.
+ *
+ * @return true if the caller showed the result itself (the menu is then closed without a result
+ * dialog), false for the usual result dialog.
+ */
+typedef bool (*TimelineActionsDismissedHandler)(void);
+
+/** @brief Set the handler for dismissed results; NULL for none. */
+void timeline_actions_set_dismissed_handler(TimelineActionsDismissedHandler handler);
+
+/**
  * @brief Create a timeline action menu and push it.
  *
  * The menu hierarchy is destroyed when the menu closes.
