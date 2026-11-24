@@ -53,3 +53,16 @@ int16_t menu_round_row_height(int16_t frame_h, int16_t focused_h, int16_t unfocu
 //! tall. Content that fits with that space is centred as a whole.
 int16_t menu_round_rest_offset(int16_t frame_h, int16_t content_h, int16_t span_y, int16_t span_h,
                                int16_t top_space, int16_t bottom_space);
+
+//! The shape \a progress thousandths of the way from \a from to \a to: the box in between, its
+//! corners as round as half its shorter side. A pill and a circle are both such boxes, so every
+//! step is a single pill or circle. Past either end, when \a progress overshoots 0 to 1000, the
+//! shape keeps its size and only its centre carries on.
+MenuRoundShape menu_round_morph(const MenuRoundShape *from, const MenuRoundShape *to,
+                                int32_t progress);
+
+//! Scroll position of a list of \a count rows \a row_h tall, with \a selected selected, whose
+//! first row starts \a edge_rows rows above the middle: the selection walks down to the middle,
+//! the list then scrolls under it and stops with the last row \a edge_rows rows below the middle.
+int32_t menu_round_list_scroll(uint16_t selected, uint16_t count, int16_t row_h,
+                               uint16_t edge_rows);
