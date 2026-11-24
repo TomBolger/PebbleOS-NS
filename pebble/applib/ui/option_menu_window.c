@@ -16,8 +16,6 @@
 #if PBL_ROUND
 //! Space between the text and the icon, and on the left of the text
 #define ROUND_ICON_TEXT_INSET 14
-//! Extra left inset of unselected text beside an icon, so it isn't clipped
-#define ROUND_UNSELECTED_TEXT_INSET 8
 #endif
 
 static const SystemThemeOptionMenuStyle *prv_get_style(void) {
@@ -59,11 +57,10 @@ uint16_t option_menu_default_cell_height(OptionMenuContentType content_type, boo
 static int16_t prv_get_title_width(const OptionMenu *option_menu) {
   const SystemThemeOptionMenuStyle *const style = prv_get_style();
 #if PBL_ROUND
-  // Unselected rows beside an icon
   const int16_t icon_inset = gbitmap_get_bounds(&option_menu->chosen_image).size.w +
                              ROUND_ICON_TEXT_INSET + style->right_icon_spacing;
   return layer_get_bounds_by_value((const Layer *)&option_menu->menu_layer).size.w - icon_inset -
-         ROUND_ICON_TEXT_INSET - ROUND_UNSELECTED_TEXT_INSET;
+         ROUND_ICON_TEXT_INSET;
 #else
   const int16_t left_inset = menu_cell_basic_horizontal_inset();
   int16_t right_inset = left_inset;
@@ -161,11 +158,7 @@ static void prv_draw_row_callback(GContext *ctx, const Layer *cell_layer, MenuIn
     remaining_rect = grect_inset(remaining_rect, GEdgeInsets(0, right_inset_x, 0, left_inset_x));
   }
 
-#if PBL_ROUND
-  if (!is_selected && option_menu->icons_enabled) {
-    remaining_rect = grect_inset(remaining_rect, GEdgeInsets(0, 0, 0, ROUND_UNSELECTED_TEXT_INSET));
-  }
-#else
+#if PBL_RECT
   const SystemThemeOptionMenuStyle *const style = prv_get_style();
   const int32_t left_text_inset = menu_cell_basic_horizontal_inset();
   const int32_t right_text_inset =

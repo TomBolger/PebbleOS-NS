@@ -35,6 +35,7 @@
 #include <applib/ui/dialogs/confirmation_dialog.h>
 #include <applib/ui/dialogs/dialog.h>
 #include <applib/ui/dialogs/expandable_dialog.h>
+#include <applib/ui/menu_layer_private.h>
 #include <applib/ui/option_menu_window.h>
 #include <applib/ui/ui.h>
 #include <kernel/event_loop.h>
@@ -268,6 +269,10 @@ static void prv_information_window_load(Window *window) {
   };
   bounds = grect_inset(bounds, menu_layer_insets);
   menu_layer_init(menu_layer, &bounds);
+#if PBL_ROUND
+  // Every row shows its subtitle, so the rows are laid out tall enough for it
+  menu_layer_set_round_subtitle_height(menu_layer, menu_cell_round_subtitle_height());
+#endif
   menu_layer_set_callbacks(menu_layer, data,
                            &(MenuLayerCallbacks){
                              .get_num_rows = prv_information_get_num_rows_callback,
@@ -651,6 +656,10 @@ static void prv_debugging_window_load(Window *window) {
   };
   bounds = grect_inset(bounds, menu_layer_insets);
   menu_layer_init(menu_layer, &bounds);
+#if PBL_ROUND
+  // Every row shows its subtitle, so the rows are laid out tall enough for it
+  menu_layer_set_round_subtitle_height(menu_layer, menu_cell_round_subtitle_height());
+#endif
   menu_layer_set_callbacks(menu_layer, data,
                            &(MenuLayerCallbacks){
                              .get_num_rows = prv_debugging_get_num_rows_callback,
@@ -1168,6 +1177,10 @@ static void prv_certification_window_load(Window *window) {
   };
   bounds = grect_inset(bounds, menu_layer_insets);
   menu_layer_init(menu_layer, &bounds);
+#if PBL_ROUND
+  // Every row shows its subtitle, so the rows are laid out tall enough for it
+  menu_layer_set_round_subtitle_height(menu_layer, menu_cell_round_subtitle_height());
+#endif
   menu_layer_set_callbacks(menu_layer, data,
                            &(MenuLayerCallbacks){
                              .get_num_rows = prv_certification_get_num_rows_callback,
