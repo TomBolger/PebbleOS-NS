@@ -95,6 +95,9 @@ typedef enum {
  */
 #define TIMELINE_LAYOUT_COMPACT_PADDING_TOP 8
 
+/** @brief How far inside a round display's edge the text of a timeline layout flows. */
+#define TIMELINE_LAYOUT_TEXT_FLOW_INSET 8
+
 /** @brief Timing information of the pin rendered by a TimelineLayout. */
 typedef struct {
   /** App owning the pin. */
@@ -288,6 +291,19 @@ int16_t timeline_layout_get_title_center_y(TimelineLayout *layout);
  * @return Offset of the bottom of the title from the top of the layout's content.
  */
 int16_t timeline_layout_get_title_bottom_y(TimelineLayout *layout);
+
+/**
+ * @brief Get the rows of a pin's head, its time and the first line of its title, as text flow
+ * sees them: the lower half of each line, where its glyphs are.
+ *
+ * The selected pin of the compact list, laid out in pages, places its time inside the display on
+ * its own, so its head is only the first line of its title.
+ *
+ * @param layout Pin layout, laid out in a pinned mode.
+ * @param[out] top_out Offset of the head's first row from the top of the layout's content.
+ * @param[out] bottom_out Offset of the head's last row from the top of the layout's content.
+ */
+void timeline_layout_get_head_rows(TimelineLayout *layout, int16_t *top_out, int16_t *bottom_out);
 
 /**
  * @brief LayoutLayerSizeGetter of timeline layouts.
