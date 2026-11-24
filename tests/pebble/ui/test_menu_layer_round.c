@@ -2,6 +2,7 @@
 /* SPDX-License-Identifier: Apache-2.0 */
 
 #include <pbl/util/math.h>
+#include <pbl/util/size.h>
 
 #include <applib/ui/menu_layer_round.h>
 #include <clar.h>
@@ -86,6 +87,96 @@ void test_menu_layer_round__no_pill_without_room(void) {
 
 static int16_t prv_rest(int16_t row, int16_t space) {
   return menu_round_rest_offset(260, CONTENT_H, row * ROW_H, ROW_H, space, space);
+}
+
+//! \a point is inside \a shape, \a margin clear of its edge
+static bool prv_inside_shape(const MenuRoundShape *shape, GPoint point, int32_t margin) {
+  const GRect *box = &shape->box;
+  const int32_t r = shape->radius;
+  const int32_t cy = PBL_CLAMP(point.y, box->origin.y + r, grect_get_max_y(box) - r);
+  const int32_t cx = PBL_CLAMP(point.x, box->origin.x + r, grect_get_max_x(box) - r);
+  return prv_distance(point.x - cx, point.y - cy) + margin <= r;
+}
+
+void test_menu_layer_round__row_end_in_the_middle(void) {
+  const GRect row = GRect(0, 104, 260, ROW_H);
+  cl_assert_equal_i(menu_round_row_end_x(DISPLAY, row, 130, 130, MENU_ROUND_PILL_END_GAP),
+                    260 - MENU_ROUND_PILL_BEZEL_MARGIN - MENU_ROUND_PILL_END_GAP);
+  // A span off the middle of the pill ends further in, inside its round end
+  cl_assert(menu_round_row_end_x(DISPLAY, row, 120, 140, MENU_ROUND_PILL_END_GAP) <
+            menu_round_row_end_x(DISPLAY, row, 130, 130, MENU_ROUND_PILL_END_GAP));
+}
+
+//! Right-aligned icons, such as radio buttons, follow the curve of the bezel: every row's is as far
+//! from it, give or take the round end of a tall pill, and stays inside the end of the pill of a
+//! row the selection rests on
+void test_menu_layer_round__icons_follow_the_bezel_inside_the_pill(void) {
+  const int16_t heights[] = {44, 52, 60, 68};
+  const int16_t icon_sizes[] = {14, 18, 22};
+  for (unsigned h = 0; h < PBL_ARRAY_SIZE(heights); h++) {
+    const int16_t row_h = heights[h];
+    for (unsigned i = 0; i < PBL_ARRAY_SIZE(icon_sizes); i++) {
+      const int16_t size = icon_sizes[i];
+      const int16_t half = size / 2;
+      int32_t middle_from_bezel = 0;
+      int16_t middle_x = 0;
+      // The selection rests at most a row from the middle
+      for (int16_t row = 0; row <= 1; row++) {
+        for (int16_t side = -1; side <= 1; side += 2) {
+          const int16_t top = 130 - (row_h / 2) + (side * row * row_h);
+          const int16_t center_y = top + (row_h / 2);
+          const GRect frame = GRect(0, top, 260, row_h);
+          const int16_t end_x =
+              menu_round_row_end_x(DISPLAY, frame, center_y, center_y, MENU_ROUND_PILL_END_GAP);
+          const int16_t center_x = end_x - half;
+          const int32_t from_bezel = 130 - prv_distance(center_x - 130, center_y - 130);
+          if (row == 0) {
+            middle_from_bezel = from_bezel;
+            middle_x = end_x;
+          } else {
+            // Further in than the middle row's, about as far from the bezel: a little further in a
+            // tall row, whose pill has rounder ends
+            cl_assert(end_x < middle_x);
+            cl_assert(PBL_ABS(from_bezel - middle_from_bezel) <= ((row_h <= 52) ? 2 : 5));
+          }
+          MenuRoundShape pill;
+          cl_assert(menu_round_pill(DISPLAY, BOUNDS, frame, row_h, 0, &pill));
+          // The icon's box, corners and all, keeps clear of the pill's end
+          const GPoint corners[] = {
+            GPoint(end_x, center_y - half),
+            GPoint(end_x, center_y + half),
+            GPoint(end_x, center_y),
+          };
+          for (unsigned c = 0; c < PBL_ARRAY_SIZE(corners); c++) {
+            cl_assert(prv_inside_shape(&pill, corners[c], 1));
+          }
+          cl_assert(prv_inside_shape(&pill, GPoint(end_x, center_y), MENU_ROUND_PILL_END_GAP - 1));
+        }
+      }
+    }
+  }
+}
+
+//! Right-aligned text keeps its whole line inside the end of the pill, the line off its middle
+void test_menu_layer_round__text_stays_inside_the_pill(void) {
+  for (int16_t row_h = 60; row_h <= 72; row_h += 2) {
+    for (int16_t row = -1; row <= 1; row++) {
+      const int16_t top = 130 - (row_h / 2) + (row * row_h);
+      const GRect frame = GRect(0, top, 260, row_h);
+      MenuRoundShape pill;
+      cl_assert(menu_round_pill(DISPLAY, BOUNDS, frame, row_h, 0, &pill));
+      // A value on the title's line, over a subtitle: the top of 42 px of lines centred in the row
+      const int16_t line_top = top + ((row_h - 42) / 2);
+      const int16_t line_bottom = line_top + 19;
+      const int16_t end_x =
+          menu_round_row_end_x(DISPLAY, frame, line_top, line_bottom, MENU_ROUND_PILL_END_GAP);
+      cl_assert(prv_inside_shape(&pill, GPoint(end_x, line_top), MENU_ROUND_PILL_END_GAP - 1));
+      cl_assert(prv_inside_shape(&pill, GPoint(end_x, line_bottom), MENU_ROUND_PILL_END_GAP - 1));
+      // ... further in than a line in the middle
+      cl_assert(end_x < menu_round_row_end_x(DISPLAY, frame, top + (row_h / 2), top + (row_h / 2),
+                                             MENU_ROUND_PILL_END_GAP));
+    }
+  }
 }
 
 void test_menu_layer_round__end_space(void) {
