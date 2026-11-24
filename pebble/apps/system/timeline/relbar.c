@@ -434,8 +434,10 @@ static void prv_update_proc(Layer *layer, GContext *ctx) {
   TimelineLayer *timeline_layer = (TimelineLayer *)relbar_layer->timeline_layer;
   // Don't draw the relationship bars if they are meant to be hidden
   // Currently drawing relationship bar for future only - no plan for past
+  // The bars are drawn between the icons, so they need room there
   if (layer_get_hidden(&relbar_layer->layer) ||
-      (timeline_layer->scroll_direction == TimelineScrollDirectionUp)) {
+      (timeline_layer->scroll_direction == TimelineScrollDirectionUp) ||
+      (prv_get_line_length(timeline_layer, nullptr, nullptr) <= 0)) {
     return;
   }
 
