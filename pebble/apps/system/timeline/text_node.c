@@ -261,7 +261,12 @@ static void prv_draw_text_node_text(GTextNodeDrawContext *ctx) {
   };
   const GTextNodeDrawConfig *config = ctx->config;
   if (config) {
-    if (config->text_flow) {
+    if (config->text_flow && config->perimeter) {
+      layout.flow_data.perimeter = (TextLayoutFlowDataPerimeter){
+        .impl = config->perimeter,
+        .inset = config->content_inset,
+      };
+    } else if (config->text_flow) {
       graphics_text_attributes_enable_screen_text_flow((TextLayout *)&layout,
                                                        config->content_inset);
     }
