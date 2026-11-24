@@ -21,6 +21,7 @@
 #include <applib/ui/dialogs/dialog.h>
 #include <applib/ui/dialogs/expandable_dialog.h>
 #include <applib/ui/dialogs/simple_dialog.h>
+#include <applib/ui/menu_layer_private.h>
 #include <applib/ui/preferred_durations.h>
 #include <applib/ui/ui.h>
 #include <process_state/app_state/app_state.h>
@@ -388,6 +389,10 @@ static void prv_handle_init(void) {
       data->window.layer.bounds,
       GEdgeInsets(STATUS_BAR_LAYER_HEIGHT, 0, PBL_IF_ROUND_ELSE(STATUS_BAR_LAYER_HEIGHT, 0), 0));
   menu_layer_init(&data->menu_layer, &bounds);
+#if PBL_ROUND
+  // Every row shows its subtitle, so the rows are laid out tall enough for it
+  menu_layer_set_round_subtitle_height(&data->menu_layer, menu_cell_round_subtitle_height());
+#endif
   menu_layer_set_callbacks(&data->menu_layer, data,
                            &(MenuLayerCallbacks){
                              .get_num_sections = prv_alarm_list_get_num_sections_callback,

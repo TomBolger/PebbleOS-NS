@@ -97,15 +97,27 @@ void test_menu_layer_round__end_space(void) {
 
 //! Rows keep one height whatever is selected, as many fitting as on a stock round menu
 void test_menu_layer_round__row_height_fits_five_rows(void) {
-  cl_assert_equal_i(menu_round_row_height(260, 68, 32), 52);
-  cl_assert(MENU_ROUND_VISIBLE_ROWS * menu_round_row_height(244, 84, 24) <= 244);
+  cl_assert_equal_i(menu_round_row_height(260, 68, 32, 0), 52);
+  cl_assert(MENU_ROUND_VISIBLE_ROWS * menu_round_row_height(244, 84, 24, 0) <= 244);
   // A row shorter than that keeps its height
-  cl_assert_equal_i(menu_round_row_height(260, 40, 30), 40);
+  cl_assert_equal_i(menu_round_row_height(260, 40, 30, 0), 40);
   // A card, taller than that even unselected, keeps its height selected
-  cl_assert_equal_i(menu_round_row_height(260, 120, 100), 120);
-  cl_assert_equal_i(menu_round_row_height(260, 120, 120), 120);
+  cl_assert_equal_i(menu_round_row_height(260, 120, 100, 0), 120);
+  cl_assert_equal_i(menu_round_row_height(260, 120, 120, 0), 120);
   // So does a page, taller than half the frame selected
-  cl_assert_equal_i(menu_round_row_height(260, 260, 0), 260);
+  cl_assert_equal_i(menu_round_row_height(260, 260, 0, 0), 260);
+}
+
+void test_menu_layer_round__row_height_with_a_subtitle(void) {
+  // A list whose rows show a subtitle adds its line to the height of a single line, so the title
+  // and subtitle keep the padding a single line has
+  cl_assert_equal_i(menu_round_row_height(260, 68, 32, 18), 52 + 18);
+  cl_assert_equal_i(menu_round_row_height(228, 68, 32, 18), 45 + 18);
+  // Rows shorter than fit grow by the line too
+  cl_assert_equal_i(menu_round_row_height(260, 40, 30, 18), 40 + 18);
+  // Cards and pages keep their height
+  cl_assert_equal_i(menu_round_row_height(260, 120, 100, 18), 120);
+  cl_assert_equal_i(menu_round_row_height(260, 260, 0, 18), 260);
 }
 
 void test_menu_layer_round__rest_offset_centres_the_middle(void) {

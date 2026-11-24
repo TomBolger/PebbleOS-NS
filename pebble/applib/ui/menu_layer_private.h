@@ -53,6 +53,14 @@ bool menu_layer_get_round_highlight(MenuLayer *menu_layer, MenuRoundShape *shape
 //! Moves the left end of the highlight pill \a margin further in from the bezel, e.g. to keep it
 //! clear of something drawn along the rim. 0 restores the default.
 void menu_layer_set_round_pill_left_margin(MenuLayer *menu_layer, uint8_t margin);
+
+//! Lays every row of \a menu_layer, a round list with the pill, out \a height taller, for the
+//! subtitle line its rows show under their title, keeping the padding of a single line. 0, the
+//! default, is for lists without subtitles.
+void menu_layer_set_round_subtitle_height(MenuLayer *menu_layer, uint8_t height);
+
+//! Height of the subtitle line of a system menu cell, see menu_layer_set_round_subtitle_height()
+int16_t menu_cell_round_subtitle_height(void);
 #endif
 
 #ifdef CONFIG_TOUCH

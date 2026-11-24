@@ -511,7 +511,7 @@ static int16_t prv_round_focused_height(MenuLayer *menu_layer, MenuIndex index) 
   const int16_t frame_h = menu_layer->scroll_layer.layer.frame.size.h;
   if (!menu_layer->callbacks.get_cell_height) {
     const int16_t h = menu_cell_basic_cell_height();
-    return menu_round_row_height(frame_h, h, h);
+    return menu_round_row_height(frame_h, h, h, menu_layer->round_subtitle_height);
   }
   const MenuIndex selected_index = menu_layer->selection.index;
   menu_layer->selection.index = index;
@@ -521,7 +521,7 @@ static int16_t prv_round_focused_height(MenuLayer *menu_layer, MenuIndex index) 
   const int16_t unfocused =
       menu_layer->callbacks.get_cell_height(menu_layer, &index, menu_layer->callback_context);
   menu_layer->selection.index = selected_index;
-  return menu_round_row_height(frame_h, focused, unfocused);
+  return menu_round_row_height(frame_h, focused, unfocused, menu_layer->round_subtitle_height);
 }
 
 static bool prv_draws_round_pill(const MenuLayer *menu_layer);
@@ -631,6 +631,13 @@ void menu_layer_set_round_pill_left_margin(MenuLayer *menu_layer, uint8_t margin
   if (menu_layer->round_pill_left_margin != margin) {
     menu_layer->round_pill_left_margin = margin;
     layer_mark_dirty(menu_layer_get_layer(menu_layer));
+  }
+}
+
+void menu_layer_set_round_subtitle_height(MenuLayer *menu_layer, uint8_t height) {
+  if (menu_layer->round_subtitle_height != height) {
+    menu_layer->round_subtitle_height = height;
+    menu_layer_reload_data(menu_layer);
   }
 }
 #endif
