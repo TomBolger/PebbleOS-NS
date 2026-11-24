@@ -21,6 +21,12 @@ pbl_clar_test(test_action_bar_layer
   DEFINES CONFIG_ORIENTATION_MANAGER
 )
 
+pbl_clar_test(test_menu_layer_round
+  SOURCES
+    pebble/applib/graphics/gtypes.c
+    pebble/applib/ui/menu_layer_round.c
+)
+
 pbl_clar_test(test_layer_rect
   SOURCES
     pebble/applib/graphics/graphics_private_raw.c
@@ -203,6 +209,7 @@ pbl_clar_test(test_menu_layer
     pebble/applib/ui/layer.c
     pebble/applib/ui/scroll_layer.c
     pebble/applib/ui/menu_layer.c
+    pebble/applib/ui/menu_layer_round.c
     pebble/applib/ui/menu_text_scroll.c
     pebble/applib/ui/shadows.c
     pebble/applib/ui/animation_interpolate.c
@@ -225,6 +232,7 @@ pbl_clar_test(test_action_menu_layer
     pebble/applib/ui/layer.c
     pebble/applib/ui/scroll_layer.c
     pebble/applib/ui/menu_layer.c
+    pebble/applib/ui/menu_layer_round.c
     pebble/applib/ui/menu_text_scroll.c
     pebble/applib/ui/shadows.c
     pebble/applib/ui/animation_interpolate.c
@@ -254,6 +262,7 @@ pbl_clar_test(test_menu_layer_system_cells
     pebble/applib/graphics/text_resources.c
     pebble/applib/ui/layer.c
     pebble/applib/ui/menu_layer_system_cells.c
+    pebble/applib/ui/menu_layer_round.c
     pebble/applib/ui/menu_text_scroll.c
     subsys/logging/hexdump.c
     tests/fakes/fake_gbitmap_get_data_row.c
@@ -306,6 +315,7 @@ pbl_clar_test(test_notification_window
     pebble/applib/graphics/text_resources.c
     pebble/applib/ui/layer.c
     pebble/applib/ui/menu_layer_system_cells.c
+    pebble/applib/ui/menu_layer_round.c
     pebble/applib/ui/menu_text_scroll.c
     pebble/applib/ui/preferred_durations.c
     subsys/logging/hexdump.c
@@ -383,6 +393,7 @@ pbl_clar_test(test_emoji_fonts
     pebble/applib/graphics/text_resources.c
     pebble/applib/ui/layer.c
     pebble/applib/ui/menu_layer_system_cells.c
+    pebble/applib/ui/menu_layer_round.c
     pebble/applib/ui/menu_text_scroll.c
     pebble/shell/system_theme_style.c
     tests/fakes/fake_round_display.c
@@ -451,6 +462,7 @@ pbl_clar_test(test_actionable_dialog
     pebble/applib/graphics/text_resources.c
     pebble/applib/ui/layer.c
     pebble/applib/ui/menu_layer_system_cells.c
+    pebble/applib/ui/menu_layer_round.c
     pebble/shell/system_theme_style.c
     subsys/logging/hexdump.c
     tests/fakes/fake_gbitmap_get_data_row.c
@@ -486,6 +498,7 @@ pbl_clar_test(test_selection_windows
     pebble/applib/graphics/text_resources.c
     pebble/applib/ui/layer.c
     pebble/applib/ui/menu_layer_system_cells.c
+    pebble/applib/ui/menu_layer_round.c
     pebble/applib/ui/menu_text_scroll.c
     subsys/logging/hexdump.c
     tests/fakes/fake_gbitmap_get_data_row.c
@@ -529,6 +542,7 @@ pbl_clar_test(test_timeline_peek
     pebble/applib/graphics/text_resources.c
     pebble/applib/ui/layer.c
     pebble/applib/ui/menu_layer_system_cells.c
+    pebble/applib/ui/menu_layer_round.c
     pebble/applib/ui/menu_text_scroll.c
     subsys/logging/hexdump.c
     tests/fakes/fake_gbitmap_get_data_row.c
