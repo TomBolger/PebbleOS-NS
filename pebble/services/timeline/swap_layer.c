@@ -11,6 +11,7 @@
 #include <applib/applib_malloc.auto.h>
 #include <applib/graphics/graphics.h>
 #include <applib/graphics/gtypes.h>
+#include <applib/ui/kino/kino_reel.h>
 #include <applib/ui/property_animation.h>
 #include <applib/ui/status_bar_layer.h>
 #include <applib/ui/window.h>
@@ -39,13 +40,16 @@
 #define SCROLL_MS 200
 #define SWAP_MS   200
 
-// Pixel peek amount for next layout: its banner on rectangular displays, the top of its banner
-// circle (a half dot) on round ones
-#define PEEK_PX PBL_IF_RECT_ELSE(LAYOUT_BANNER_HEIGHT_RECT, STATUS_BAR_LAYER_HEIGHT)
+// Pixel peek amount for next layout: its banner on rectangular displays. Round displays show the
+// next bubble instead, so the end of a layout is the end of scrolling.
+#define PEEK_PX PBL_IF_RECT_ELSE(LAYOUT_BANNER_HEIGHT_RECT, 0)
 
 // Get within FUDGE_PX to the end of the layout on a scroll, and will
 // scroll the rest of the way.
-#define FUDGE_PX PEEK_PX
+#define FUDGE_PX PBL_IF_RECT_ELSE(PEEK_PX, STATUS_BAR_LAYER_HEIGHT)
+
+// A round next layout's banner that arrives without anything moving rises in over BANNER_RISE_MS.
+#define BANNER_RISE_MS 320
 
 // Press and hold: after HOLD_START_MS the layout scrolls on evenly to its end, rests there for
 // HOLD_BUMP_MS, then swaps in HOLD_SWAP_MS ending at the hold speed and carries straight on.
@@ -165,6 +169,20 @@ static void prv_announce_interaction(SwapLayer *swap_layer) {
   }
 }
 
+//! Adds a layout to the swap layer, under the round banners.
+static void prv_add_layout(SwapLayer *swap_layer, LayoutLayer *layout) {
+  layer_add_child(&swap_layer->layer, (Layer *)layout);
+#if PBL_ROUND
+  layer_insert_below_sibling((Layer *)layout, &swap_layer->banners.layer);
+#endif
+}
+
+#if PBL_ROUND
+static void prv_banners_sync(SwapLayer *swap_layer, bool rise);
+static void prv_banners_stop_rise(SwapLayer *swap_layer);
+static void prv_banners_shift(SwapLayer *swap_layer, ScrollDirection direction);
+#endif
+
 static void prv_refresh_next_layer(SwapLayer *swap_layer) {
   prv_remove_old_layout(swap_layer, swap_layer->next);
   LayoutLayer *new_next = prv_fetch_next_layout(swap_layer, +1);
@@ -177,8 +195,11 @@ static void prv_refresh_next_layer(SwapLayer *swap_layer) {
 
     next_frame.origin.y = current_frame->origin.y + current_frame->size.h;
     prv_layout_set_frame(swap_layer->next, &next_frame);
-    layer_add_child(&swap_layer->layer, (Layer *)swap_layer->next);
+    prv_add_layout(swap_layer, swap_layer->next);
   }
+#if PBL_ROUND
+  prv_banners_sync(swap_layer, true /* rise */);
+#endif
 }
 
 //////////////////////////
@@ -335,6 +356,9 @@ static void prv_swap_up_complete(Animation *animation, bool finished, void *cont
   swap_layer->next = swap_layer->current;
   swap_layer->current = swap_layer->previous;
   swap_layer->previous = nullptr;
+#if PBL_ROUND
+  prv_banners_shift(swap_layer, ScrollDirectionUp);
+#endif
 
   // let the client know we have moved to another layer
   prv_announce_layout_did_appear(swap_layer, swap_layer->current, -1);
@@ -388,7 +412,7 @@ static bool prv_setup_swap_up(SwapLayer *swap_layer) {
   // set relative offset for the previous layer
   prev_frame.origin.y = -prev_frame.size.h + current_frame->origin.y;
   prv_layout_set_frame(swap_layer->previous, &prev_frame);
-  layer_add_child(&swap_layer->layer, (Layer *)swap_layer->previous);
+  prv_add_layout(swap_layer, swap_layer->previous);
 
   return true;
 }
@@ -443,11 +467,24 @@ static bool prv_setup_swap_down(SwapLayer *swap_layer) {
     return false;
   }
 
-  // shift all of the indexes. No need to fetch the new next layout, since we will do that
-  // in the swap down complete
+  // shift all of the indexes. The new next layout is fetched again in the swap down complete, in
+  // case the data model jumped around.
   swap_layer->previous = swap_layer->current;
   swap_layer->current = swap_layer->next;
   swap_layer->next = nullptr;
+#if PBL_ROUND
+  // Round banners peek above their layout: bring the one after along under the incoming layout,
+  // so its peek rises with it.
+  swap_layer->next = prv_fetch_next_layout(swap_layer, +2);
+  if (swap_layer->next) {
+    GRect next_frame = swap_layer->next->layer.frame;
+    next_frame.origin.y =
+        swap_layer->current->layer.frame.origin.y + swap_layer->current->layer.frame.size.h;
+    prv_layout_set_frame(swap_layer->next, &next_frame);
+    prv_add_layout(swap_layer, swap_layer->next);
+  }
+  prv_banners_shift(swap_layer, ScrollDirectionDown);
+#endif
 
   return true;
 }
@@ -580,6 +617,9 @@ static bool prv_attempt_swap_at(SwapLayer *swap_layer, ScrollDirection direction
     animation = prv_create_swap_up_animation(swap_layer, full_swap, held);
   }
 
+#if PBL_ROUND
+  prv_banners_stop_rise(swap_layer);
+#endif
   animation_set_handlers(
       animation,
       (AnimationHandlers){
@@ -598,19 +638,163 @@ static bool prv_attempt_swap(SwapLayer *swap_layer, ScrollDirection direction, b
   return prv_attempt_swap_at(swap_layer, direction, full_swap, false /* held */);
 }
 
+int16_t swap_layer_max_scroll_dy(int16_t layout_h, int16_t frame_h, bool has_next) {
+  // we are peeking the next notification if we have a next.
+  const int16_t max_dy = layout_h - frame_h + (has_next ? PEEK_PX : 0);
+  return PBL_MAX(max_dy, 0);
+}
+
 //! Computes the amount the current layer frame can scroll until a swap is necessary.
 //! Always returns a positive number
 static int16_t prv_get_max_scroll_dy(SwapLayer *swap_layer) {
-  int16_t max_dy = swap_layer->current->layer.frame.size.h - swap_layer->layer.frame.size.h;
-
-  // we are peeking the next notification if we have a next.
-  if (swap_layer->next != nullptr) {
-    max_dy += PEEK_PX;
-  }
-
-  max_dy = PBL_MAX(max_dy, 0);
-  return max_dy;
+  return swap_layer_max_scroll_dy(swap_layer->current->layer.frame.size.h,
+                                  swap_layer->layer.frame.size.h, swap_layer->next != nullptr);
 }
+
+// ---------------------------------------------------------------------------------------------
+// Next bubble
+
+#if PBL_ROUND
+// Ease out with a slight overshoot, in thousandths: 1 + (s + 1)(t - 1)^3 + s (t - 1)^2, s = 1.2
+static int32_t prv_banner_rise_ease(int32_t t) {
+  const int64_t u = t - 1000;
+  const int64_t u2 = u * u / 1000;
+  const int64_t u3 = u2 * u / 1000;
+  return (int32_t)(1000 + (2200 * u3) / 1000 + (1200 * u2) / 1000);
+}
+
+static SwapLayer *prv_banners_owner(Layer *layer) {
+  return (SwapLayer *)((uint8_t *)layer - offsetof(SwapLayer, banners.layer));
+}
+
+static void prv_banner_clear(struct SwapLayerBanner *banner) {
+  kino_reel_destroy(banner->icon);
+  *banner = (struct SwapLayerBanner){};
+}
+
+static bool prv_looks_equal(const SwapLayerBannerLook *a, const SwapLayerBannerLook *b) {
+  return gcolor_equal(a->color, b->color) && (a->icon.res_app_num == b->icon.res_app_num) &&
+         (a->icon.res_id == b->icon.res_id);
+}
+
+//! Gives a banner the look of a layout. Returns whether it changed.
+static bool prv_banner_set(SwapLayer *swap_layer, struct SwapLayerBanner *banner,
+                           LayoutLayer *layout) {
+  SwapLayerBannerLook look;
+  if (!layout || !swap_layer->callbacks.get_banner_look_handler ||
+      !swap_layer->callbacks.get_banner_look_handler(swap_layer, layout, &look,
+                                                     swap_layer->context)) {
+    const bool changed = banner->valid;
+    prv_banner_clear(banner);
+    return changed;
+  }
+  if (banner->valid && prv_looks_equal(&banner->look, &look)) {
+    return false;
+  }
+  kino_reel_destroy(banner->icon);
+  banner->icon = kino_reel_create_with_resource_system(look.icon.res_app_num, look.icon.res_id);
+  banner->look = look;
+  banner->valid = true;
+  return true;
+}
+
+static void prv_banners_stop_rise(SwapLayer *swap_layer) {
+  if (animation_is_scheduled(swap_layer->banners.rise)) {
+    animation_unschedule(swap_layer->banners.rise);
+  }
+  swap_layer->banners.rise = nullptr;
+  swap_layer->banners.rise_progress = 1000;
+}
+
+static void prv_banners_rise_update(Animation *animation, const AnimationProgress progress) {
+  SwapLayer *swap_layer = animation_get_context(animation);
+  swap_layer->banners.rise_progress = (progress * 1000) / ANIMATION_NORMALIZED_MAX;
+  layer_mark_dirty(&swap_layer->banners.layer);
+}
+
+static void prv_banners_rise(SwapLayer *swap_layer) {
+  prv_banners_stop_rise(swap_layer);
+  static const AnimationImplementation s_rise_implementation = {
+    .update = prv_banners_rise_update,
+  };
+  Animation *animation = animation_create();
+  if (!animation) {
+    return;
+  }
+  swap_layer->banners.rise_progress = 0;
+  animation_set_implementation(animation, &s_rise_implementation);
+  animation_set_duration(animation, BANNER_RISE_MS);
+  animation_set_curve(animation, AnimationCurveLinear);
+  animation_set_handlers(animation, (AnimationHandlers){}, swap_layer);
+  swap_layer->banners.rise = animation;
+  animation_schedule(animation);
+}
+
+//! Takes the banner looks from the current and next layouts. With rise, a next banner that looks
+//! different from the one there was rises in.
+static void prv_banners_sync(SwapLayer *swap_layer, bool rise) {
+  prv_banner_set(swap_layer, &swap_layer->banners.current, swap_layer->current);
+  const bool next_changed = prv_banner_set(swap_layer, &swap_layer->banners.next, swap_layer->next);
+  if (rise && next_changed && swap_layer->banners.next.valid) {
+    prv_banners_rise(swap_layer);
+  } else if (!swap_layer->banners.next.valid) {
+    prv_banners_stop_rise(swap_layer);
+  }
+  layer_mark_dirty(&swap_layer->banners.layer);
+}
+
+//! The layouts moved one along: so do their banners.
+static void prv_banners_shift(SwapLayer *swap_layer, ScrollDirection direction) {
+  struct SwapLayerBanner *from =
+      (direction == ScrollDirectionDown) ? &swap_layer->banners.next : &swap_layer->banners.current;
+  struct SwapLayerBanner *to =
+      (direction == ScrollDirectionDown) ? &swap_layer->banners.current : &swap_layer->banners.next;
+  prv_banner_clear(to);
+  *to = *from;
+  *from = (struct SwapLayerBanner){};
+  prv_banners_sync(swap_layer, false /* rise */);
+}
+
+//! Where to draw the icon centered in an icon box at box_top, as a card lays its own icon out.
+static GPoint prv_banner_icon_origin(KinoReel *icon, int16_t center_x, int16_t box_top) {
+  const GSize box = NOTIFICATION_TINY_RESOURCE_SIZE;
+  const GSize size = kino_reel_get_size(icon);
+  return GPoint(center_x - (box.w / 2) + (box.w - size.w) / 2, box_top + (box.h - size.h) / 2);
+}
+
+static void prv_draw_banner(SwapLayer *swap_layer, GContext *ctx, LayoutLayer *layout,
+                            const struct SwapLayerBanner *banner, int16_t drop) {
+  if (!layout || !banner->valid) {
+    return;
+  }
+  const int16_t top = layout->layer.frame.origin.y + drop;
+  if (top <= 0) {
+    // At rest or above: the layout draws its own banner and icon.
+    return;
+  }
+  graphics_context_set_fill_color(ctx, banner->look.color);
+  notification_layout_fill_banner_round(ctx, top, top);
+  if (banner->icon) {
+    const int16_t icon_top = top + notification_layout_get_banner_icon_top_round(top);
+    graphics_context_set_compositing_mode(ctx, GCompOpSet);
+    kino_reel_draw(banner->icon, ctx,
+                   prv_banner_icon_origin(banner->icon, PBL_DISPLAY_WIDTH / 2, icon_top));
+  }
+}
+
+static void prv_banners_update_proc(Layer *layer, GContext *ctx) {
+  SwapLayer *swap_layer = prv_banners_owner(layer);
+  // A banner flying in reaches over the status bar above the swap layer.
+  ctx->draw_state.clip_box.origin.y =
+      PBL_MAX(ctx->draw_state.clip_box.origin.y - STATUS_BAR_LAYER_HEIGHT, 0);
+  ctx->draw_state.clip_box.size.h = PBL_DISPLAY_HEIGHT;
+  grect_clip(&ctx->draw_state.clip_box, &DISP_FRAME);
+  prv_draw_banner(swap_layer, ctx, swap_layer->current, &swap_layer->banners.current, 0);
+  const int32_t risen = prv_banner_rise_ease(swap_layer->banners.rise_progress);
+  const int16_t drop = (int16_t)((LAYOUT_PEEK_HEIGHT_ROUND * (1000 - risen)) / 1000);
+  prv_draw_banner(swap_layer, ctx, swap_layer->next, &swap_layer->banners.next, drop);
+}
+#endif
 
 PBL_T_STATIC void prv_attempt_scroll(SwapLayer *swap_layer, ScrollDirection direction) {
   // Never drop a press because something is still moving: jump to its end and act on that.
@@ -860,17 +1044,23 @@ static void prv_swap_layer_reset(SwapLayer *swap_layer) {
 }
 
 void swap_layer_reload_data(SwapLayer *swap_layer) {
+#if PBL_ROUND
+  const bool had_layouts = (swap_layer->current != nullptr);
+#endif
   prv_swap_layer_reset(swap_layer);
 
   LayoutLayer *current = prv_fetch_next_layout(swap_layer, 0);
   if (!current) {
+#if PBL_ROUND
+    prv_banners_sync(swap_layer, false /* rise */);
+#endif
     return;
   }
 
   GRect current_frame = current->layer.frame;
   current_frame.origin = (GPoint){0, 0};
   prv_layout_set_frame(current, &current_frame);
-  layer_add_child(&swap_layer->layer, (Layer *)current);
+  prv_add_layout(swap_layer, current);
   swap_layer->current = current;
 
   prv_announce_layout_will_appear(swap_layer, swap_layer->current);
@@ -882,9 +1072,13 @@ void swap_layer_reload_data(SwapLayer *swap_layer) {
     GRect next_frame = next->layer.frame;
     next_frame.origin.y = swap_layer->current->layer.frame.size.h;
     prv_layout_set_frame(next, &next_frame);
-    layer_add_child(&swap_layer->layer, (Layer *)next);
+    prv_add_layout(swap_layer, next);
     swap_layer->next = next;
   }
+#if PBL_ROUND
+  // A next layout that comes along with the data rises in; not with the first.
+  prv_banners_sync(swap_layer, had_layouts /* rise */);
+#endif
 
   // A held button carries on into the new layouts
   prv_hold_step(swap_layer);
@@ -1375,6 +1569,13 @@ void swap_layer_init(SwapLayer *swap_layer, const GRect *frame) {
   layer_init(layer, frame);
   layer_set_update_proc(layer, prv_swap_layer_update_proc);
 
+#if PBL_ROUND
+  layer_init(&swap_layer->banners.layer, &GRect(0, 0, frame->size.w, frame->size.h));
+  layer_set_update_proc(&swap_layer->banners.layer, prv_banners_update_proc);
+  layer_add_child(layer, &swap_layer->banners.layer);
+  swap_layer->banners.rise_progress = 1000;
+#endif
+
 #ifdef CONFIG_TOUCH
   swap_layer_touch_register(swap_layer);
 #endif
@@ -1390,6 +1591,12 @@ void swap_layer_deinit(SwapLayer *swap_layer) {
   swap_layer_touch_deregister(swap_layer);
 #endif
   prv_swap_layer_reset(swap_layer);
+#if PBL_ROUND
+  prv_banners_stop_rise(swap_layer);
+  prv_banner_clear(&swap_layer->banners.current);
+  prv_banner_clear(&swap_layer->banners.next);
+  layer_deinit(&swap_layer->banners.layer);
+#endif
   layer_deinit(&swap_layer->layer);
 }
 
