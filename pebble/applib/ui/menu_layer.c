@@ -570,10 +570,14 @@ static int32_t prv_round_pill_half_span(int64_t dy, int32_t radius, int32_t marg
   return (reach > dy) ? integer_sqrt(((int64_t)reach * reach) - (dy * dy)) : 0;
 }
 
-//! The round highlight: a rounded rectangle, in the coordinates of the drawing box
+//! The round highlight, in the coordinates of the drawing box: a rounded rectangle, and while
+//! morphing between the first row's bubble and a pill, a circle as well
 typedef struct {
   GRect box;
   int16_t radius;
+  GPoint circle_center;
+  //! 0 without a circle
+  int16_t circle_radius;
 } MenuRoundShape;
 
 //! The pill over \a frame (content coordinates) in a drawing box starting at \a origin_y: inset
@@ -618,9 +622,8 @@ static MenuRoundShape prv_round_bubble_shape(const GContext *ctx, int16_t origin
   const int16_t bottom = frame->origin.y + frame->size.h - origin_y - MENU_ROUND_PILL_INSET_Y;
   const int16_t center_x = (PBL_DISPLAY_WIDTH / 2) - ctx->draw_state.drawing_box.origin.x;
   return (MenuRoundShape){
-    .box = GRect(center_x - MENU_ROUND_BUBBLE_RADIUS, bottom - (2 * MENU_ROUND_BUBBLE_RADIUS),
-                 2 * MENU_ROUND_BUBBLE_RADIUS, 2 * MENU_ROUND_BUBBLE_RADIUS),
-    .radius = MENU_ROUND_BUBBLE_RADIUS,
+    .circle_center = GPoint(center_x, bottom - MENU_ROUND_BUBBLE_RADIUS),
+    .circle_radius = MENU_ROUND_BUBBLE_RADIUS,
   };
 }
 
@@ -646,7 +649,9 @@ static bool prv_round_shape(const GContext *ctx, const MenuLayer *menu_layer, in
     return prv_round_pill_shape(ctx, menu_layer, origin_y, highlight, menu_layer->selection.h,
                                 shape);
   }
-  // Morphing: the highlight frame is the first row, the animation target the other row
+  // Morphing: the highlight frame is the first row, the animation target the other row. The
+  // bubble drops towards the pill, shrinking as it goes, its bottom always round, while the pill
+  // spreads out from its bottom over the last part of the way.
   const MenuRoundShape bubble = prv_round_bubble_shape(ctx, origin_y, highlight);
   MenuRoundShape pill;
   const GRect *target = &menu_layer->animation.target;
@@ -664,17 +669,23 @@ static bool prv_round_shape(const GContext *ctx, const MenuLayer *menu_layer, in
     shift = (int16_t)(m * MENU_ROUND_MORPH_OVERSHOOT_PX / MENU_ROUND_MORPH_PILL);
     m = 0;
   }
-  const int16_t x0 = prv_lerp16(bubble.box.origin.x, pill.box.origin.x, m);
-  const int16_t y0 = prv_lerp16(bubble.box.origin.y, pill.box.origin.y, m);
-  const int16_t x1 = prv_lerp16(grect_get_max_x(&bubble.box), grect_get_max_x(&pill.box), m);
-  const int16_t y1 = prv_lerp16(grect_get_max_y(&bubble.box), grect_get_max_y(&pill.box), m);
-  if ((x1 <= x0) || (y1 <= y0)) {
-    return false;
-  }
-  const int16_t radius = prv_lerp16(bubble.radius, pill.radius, m);
+  const int16_t radius = prv_lerp16(bubble.circle_radius, pill.radius, m);
+  const int16_t bottom =
+      prv_lerp16(bubble.circle_center.y + bubble.circle_radius, grect_get_max_y(&pill.box), m);
+  const int16_t center_x =
+      prv_lerp16(bubble.circle_center.x, pill.box.origin.x + (pill.box.size.w / 2), m);
+  const int16_t center_y = bottom - radius + shift;
+  const int32_t grow = (m <= MENU_ROUND_MORPH_PILL_GROWS)
+                           ? 0
+                           : (m - MENU_ROUND_MORPH_PILL_GROWS) * MENU_ROUND_MORPH_PILL /
+                                 (MENU_ROUND_MORPH_PILL - MENU_ROUND_MORPH_PILL_GROWS);
+  const int16_t pill_w = prv_lerp16(2 * pill.radius, pill.box.size.w, grow);
   *shape = (MenuRoundShape){
-    .box = GRect(x0, y0 + shift, x1 - x0, y1 - y0),
-    .radius = PBL_CLAMP(radius, 1, PBL_MIN(x1 - x0, y1 - y0) / 2),
+    .box =
+        GRect(center_x - (pill_w / 2), bottom + shift - (2 * pill.radius), pill_w, 2 * pill.radius),
+    .radius = pill.radius,
+    .circle_center = GPoint(center_x, center_y),
+    .circle_radius = PBL_MAX(radius, 1),
   };
   return true;
 }
@@ -682,7 +693,54 @@ static bool prv_round_shape(const GContext *ctx, const MenuLayer *menu_layer, in
 static void prv_fill_round_shape(GContext *ctx, const MenuLayer *menu_layer,
                                  const MenuRoundShape *shape) {
   graphics_context_set_fill_color(ctx, menu_layer->highlight_colors[MenuLayerColorBackground]);
-  graphics_fill_round_rect(ctx, &shape->box, (uint16_t)shape->radius, GCornersAll);
+  if (shape->circle_radius > 0) {
+    graphics_fill_circle(ctx, shape->circle_center, (uint16_t)shape->circle_radius);
+  }
+  if (!grect_is_empty(&shape->box)) {
+    graphics_fill_round_rect(ctx, &shape->box, (uint16_t)shape->radius, GCornersAll);
+  }
+}
+
+#define MENU_ROUND_MAX_CLIPS 10
+
+//! Boxes that together cover the shape, as closely as a few boxes can, without overlapping: the
+//! shape's box, or for a circle and the pill at its bottom, strips across them.
+static size_t prv_round_shape_clips(const MenuRoundShape *shape, GRect *clips) {
+  if (shape->circle_radius == 0) {
+    clips[0] = shape->box;
+    return 1;
+  }
+  // Strip edges and the circle's half height at their inner edges, in thousandths of its radius
+  static const int16_t s_edges[] = {0, 500, 766, 940, 1000};
+  static const int16_t s_heights[] = {1000, 866, 643, 342};
+  const GPoint c = shape->circle_center;
+  const int32_t r = shape->circle_radius;
+  const int16_t pill_half_w = shape->box.size.w / 2;
+  size_t count = 0;
+  for (size_t i = 0; i < PBL_ARRAY_SIZE(s_heights); i++) {
+    const int16_t inner = (int16_t)(r * s_edges[i] / 1000);
+    const int16_t outer = (int16_t)(r * s_edges[i + 1] / 1000);
+    const int16_t half_h = (int16_t)(r * s_heights[i] / 1000);
+    int16_t top = c.y - half_h;
+    int16_t bottom = c.y + half_h + 1;
+    if (inner < pill_half_w) {
+      // The pill sits at the bottom of the circle
+      top = PBL_MIN(top, shape->box.origin.y);
+      bottom = PBL_MAX(bottom, grect_get_max_y(&shape->box));
+    }
+    // The circle reaches one pixel right of its centre plus its radius
+    const int16_t last = (i == PBL_ARRAY_SIZE(s_heights) - 1) ? 1 : 0;
+    clips[count++] = GRect(c.x + inner, top, outer - inner + last, bottom - top);
+    clips[count++] = GRect(c.x - outer, top, outer - inner, bottom - top);
+  }
+  if (pill_half_w > r) {
+    const int16_t right = (int16_t)(c.x + r + 1);
+    clips[count++] =
+        GRect(right, shape->box.origin.y, grect_get_max_x(&shape->box) - right, shape->box.size.h);
+    clips[count++] =
+        GRect(shape->box.origin.x, shape->box.origin.y, pill_half_w - r, shape->box.size.h);
+  }
+  return count;
 }
 
 //! Rows the highlight can reach, in content coordinates: during a morph, both ends of it.
@@ -746,6 +804,7 @@ static void prv_prepare_and_draw_row(GContext *ctx, MenuLayer *menu_layer, Layer
 //! Round rows under the highlight are drawn as they are, then the highlight shape over them, then
 //! their highlighted content over the shape's box, so nothing inside the shape is hidden. Only the
 //! box's corners outside the round ends, by the bezel, get highlighted content without the shape.
+//! While morphing, the circle's box would reach far outside it, so strips that follow it are used.
 static void prv_menu_layer_draw_row_round(MenuLayer *menu_layer, Layer *cell_layer,
                                           MenuCellSpan *cursor, GContext *ctx) {
   prv_prepare_and_draw_row(ctx, menu_layer, cell_layer, cursor, false);
@@ -758,11 +817,25 @@ static void prv_menu_layer_draw_row_round(MenuLayer *menu_layer, Layer *cell_lay
   }
   prv_fill_round_shape(ctx, menu_layer, &shape);
 
+  GRect clips[MENU_ROUND_MAX_CLIPS];
+  size_t num_clips = 1;
+  if (menu_layer->round_morph_running) {
+    num_clips = prv_round_shape_clips(&shape, clips);
+  } else if (shape.circle_radius > 0) {
+    // The resting bubble: its box, as much of it as this row has
+    const int16_t r = shape.circle_radius;
+    clips[0] = GRect(shape.circle_center.x - r, shape.circle_center.y - r, 2 * r, 2 * r);
+  } else {
+    clips[0] = shape.box;
+  }
   const GRect clip = ctx->draw_state.clip_box;
-  GRect shape_clip = shape.box;
-  shape_clip.origin = gpoint_add(shape_clip.origin, ctx->draw_state.drawing_box.origin);
-  grect_clip(&shape_clip, &clip);
-  if (!grect_is_empty(&shape_clip)) {
+  for (size_t i = 0; i < num_clips; i++) {
+    GRect shape_clip = clips[i];
+    shape_clip.origin = gpoint_add(shape_clip.origin, ctx->draw_state.drawing_box.origin);
+    grect_clip(&shape_clip, &clip);
+    if (grect_is_empty(&shape_clip)) {
+      continue;
+    }
     ctx->draw_state.clip_box = shape_clip;
     prv_prepare_and_draw_row(ctx, menu_layer, cell_layer, cursor, true);
   }

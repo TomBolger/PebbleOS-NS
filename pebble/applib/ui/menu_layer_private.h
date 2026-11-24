@@ -56,6 +56,8 @@ GRect menu_cell_round_follow_bezel(const GContext *ctx, GRect frame);
 #define MENU_ROUND_MORPH_MS 320
 //! How far, per whole morph past its end, the shape carries on before settling
 #define MENU_ROUND_MORPH_OVERSHOOT_PX 60
+//! How far a morph is from the bubble when the pill starts spreading out from the circle's bottom
+#define MENU_ROUND_MORPH_PILL_GROWS 500
 
 //! Highlights the first row with a bubble hanging from above the screen instead of a pill, the
 //! first row being laid out as a header at the top of the screen. Moving the selection to or from
