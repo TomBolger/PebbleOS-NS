@@ -40,3 +40,6 @@ void PBL_WEAK timeline_actions_invoke_action(const TimelineItemAction *action,
                                              const TimelineItem *pin, ActionCompleteCallback cb,
                                              void *cb_data) {
 }
+
+void PBL_WEAK timeline_actions_set_dismissed_handler(TimelineActionsDismissedHandler handler) {
+}
