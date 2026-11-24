@@ -28,13 +28,20 @@ Animation *animation_create(void) {
 
 static Animation *prv_create_from_array(Animation **animation_array, size_t array_len) {
   AnimationPrivate *parent = (AnimationPrivate *)animation_create();
-  parent->first_child = (AnimationPrivate *)animation_array[0];
+  // Like the real animations, skip missing children
+  AnimationPrivate *previous = nullptr;
   for (int i = 0; i < (int)array_len; i++) {
     AnimationPrivate *child = (AnimationPrivate *)animation_array[i];
-    child->parent = parent;
-    if (i + 1 < (int)array_len) {
-      child->sibling = (AnimationPrivate *)animation_array[i + 1];
+    if (!child) {
+      continue;
     }
+    child->parent = parent;
+    if (previous) {
+      previous->sibling = child;
+    } else {
+      parent->first_child = child;
+    }
+    previous = child;
   }
   return (Animation *)parent;
 }
