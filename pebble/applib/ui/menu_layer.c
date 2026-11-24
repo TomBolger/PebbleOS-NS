@@ -611,18 +611,91 @@ static bool prv_round_pill_shape(const GContext *ctx, const MenuLayer *menu_laye
   return true;
 }
 
+//! The bubble over the first row: a circle hanging from above the screen whose bottom rests where
+//! the row's pill would.
+static MenuRoundShape prv_round_bubble_shape(const GContext *ctx, int16_t origin_y,
+                                             const GRect *frame) {
+  const int16_t bottom = frame->origin.y + frame->size.h - origin_y - MENU_ROUND_PILL_INSET_Y;
+  const int16_t center_x = (PBL_DISPLAY_WIDTH / 2) - ctx->draw_state.drawing_box.origin.x;
+  return (MenuRoundShape){
+    .box = GRect(center_x - MENU_ROUND_BUBBLE_RADIUS, bottom - (2 * MENU_ROUND_BUBBLE_RADIUS),
+                 2 * MENU_ROUND_BUBBLE_RADIUS, 2 * MENU_ROUND_BUBBLE_RADIUS),
+    .radius = MENU_ROUND_BUBBLE_RADIUS,
+  };
+}
+
+static int16_t prv_lerp16(int16_t from, int16_t to, int32_t amount) {
+  return (int16_t)(from + ((to - from) * amount / MENU_ROUND_MORPH_PILL));
+}
+
+static bool prv_round_bubble_selected(const MenuLayer *menu_layer) {
+  return menu_layer->round_top_bubble && (menu_layer->selection.index.section == 0) &&
+         (menu_layer->selection.index.row == 0);
+}
+
 //! The highlight's shape as it is now, in a drawing box starting at \a origin_y (content
 //! coordinates).
 static bool prv_round_shape(const GContext *ctx, const MenuLayer *menu_layer, int16_t origin_y,
                             MenuRoundShape *shape) {
-  return prv_round_pill_shape(ctx, menu_layer, origin_y, &menu_layer->inverter.layer.frame,
-                              menu_layer->selection.h, shape);
+  const GRect *highlight = &menu_layer->inverter.layer.frame;
+  if (!menu_layer->round_morph_running) {
+    if (prv_round_bubble_selected(menu_layer)) {
+      *shape = prv_round_bubble_shape(ctx, origin_y, highlight);
+      return true;
+    }
+    return prv_round_pill_shape(ctx, menu_layer, origin_y, highlight, menu_layer->selection.h,
+                                shape);
+  }
+  // Morphing: the highlight frame is the first row, the animation target the other row
+  const MenuRoundShape bubble = prv_round_bubble_shape(ctx, origin_y, highlight);
+  MenuRoundShape pill;
+  const GRect *target = &menu_layer->animation.target;
+  if (!prv_round_pill_shape(ctx, menu_layer, origin_y, target, target->size.h, &pill)) {
+    return false;
+  }
+  // Past either end the shape keeps its size and only carries on a little in its direction
+  int32_t m = menu_layer->round_morph;
+  int16_t shift = 0;
+  if (m > MENU_ROUND_MORPH_PILL) {
+    shift = (int16_t)((m - MENU_ROUND_MORPH_PILL) * MENU_ROUND_MORPH_OVERSHOOT_PX /
+                      MENU_ROUND_MORPH_PILL);
+    m = MENU_ROUND_MORPH_PILL;
+  } else if (m < 0) {
+    shift = (int16_t)(m * MENU_ROUND_MORPH_OVERSHOOT_PX / MENU_ROUND_MORPH_PILL);
+    m = 0;
+  }
+  const int16_t x0 = prv_lerp16(bubble.box.origin.x, pill.box.origin.x, m);
+  const int16_t y0 = prv_lerp16(bubble.box.origin.y, pill.box.origin.y, m);
+  const int16_t x1 = prv_lerp16(grect_get_max_x(&bubble.box), grect_get_max_x(&pill.box), m);
+  const int16_t y1 = prv_lerp16(grect_get_max_y(&bubble.box), grect_get_max_y(&pill.box), m);
+  if ((x1 <= x0) || (y1 <= y0)) {
+    return false;
+  }
+  const int16_t radius = prv_lerp16(bubble.radius, pill.radius, m);
+  *shape = (MenuRoundShape){
+    .box = GRect(x0, y0 + shift, x1 - x0, y1 - y0),
+    .radius = PBL_CLAMP(radius, 1, PBL_MIN(x1 - x0, y1 - y0) / 2),
+  };
+  return true;
 }
 
 static void prv_fill_round_shape(GContext *ctx, const MenuLayer *menu_layer,
                                  const MenuRoundShape *shape) {
   graphics_context_set_fill_color(ctx, menu_layer->highlight_colors[MenuLayerColorBackground]);
   graphics_fill_round_rect(ctx, &shape->box, (uint16_t)shape->radius, GCornersAll);
+}
+
+//! Rows the highlight can reach, in content coordinates: during a morph, both ends of it.
+static GRect prv_round_highlight_rows(const MenuLayer *menu_layer) {
+  GRect rows = menu_layer->inverter.layer.frame;
+  if (menu_layer->round_morph_running) {
+    const GRect *target = &menu_layer->animation.target;
+    const int16_t top = PBL_MIN(rows.origin.y, target->origin.y);
+    const int16_t bottom = PBL_MAX(grect_get_max_y(&rows), grect_get_max_y(target));
+    rows.origin.y = top;
+    rows.size.h = bottom - top;
+  }
+  return rows;
 }
 
 void menu_layer_set_round_pill_left_margin(MenuLayer *menu_layer, uint8_t margin) {
@@ -676,9 +749,9 @@ static void prv_menu_layer_draw_row_round(MenuLayer *menu_layer, Layer *cell_lay
                                           MenuCellSpan *cursor, GContext *ctx) {
   prv_prepare_and_draw_row(ctx, menu_layer, cell_layer, cursor, false);
 
-  const GRect *rows = &menu_layer->inverter.layer.frame;
+  const GRect rows = prv_round_highlight_rows(menu_layer);
   MenuRoundShape shape;
-  if (!grect_overlaps_grect(&cell_layer->frame, rows) ||
+  if (!grect_overlaps_grect(&cell_layer->frame, &rows) ||
       !prv_round_shape(ctx, menu_layer, cell_layer->frame.origin.y, &shape)) {
     return;
   }
@@ -1388,6 +1461,89 @@ static void prv_setup_selection_animation(MenuLayer *menu_layer, bool up) {
 }
 
 static void prv_menu_layer_update_selection_highlight(MenuLayer *menu_layer, bool up, bool animated,
+                                                      bool change_ongoing_animation);
+
+#if PBL_ROUND
+static int16_t prv_get_round_morph(void *subject) {
+  return ((MenuLayer *)subject)->round_morph;
+}
+
+static void prv_set_round_morph(void *subject, int16_t value) {
+  MenuLayer *menu_layer = subject;
+  menu_layer->round_morph = value;
+  layer_mark_dirty(&menu_layer->scroll_layer.layer);
+}
+
+//! Eases out past the end and back, as the round notification action menu opens
+static int64_t prv_round_morph_interpolate(int32_t progress, int64_t from, int64_t to) {
+  // 1 + (s + 1)(t - 1)^3 + s (t - 1)^2 with s = 1.2, in thousandths
+  const int64_t u = ((int64_t)progress * 1000 / ANIMATION_NORMALIZED_MAX) - 1000;
+  const int64_t u2 = u * u / 1000;
+  const int64_t u3 = u2 * u / 1000;
+  const int64_t e = 1000 + (2200 * u3 / 1000) + (1200 * u2 / 1000);
+  return from + ((to - from) * e / 1000);
+}
+
+static void prv_round_morph_stopped(Animation *animation, bool finished, void *context) {
+  MenuLayer *menu_layer = context;
+  menu_layer->animation.animation = nullptr;
+  menu_layer->round_morph_running = false;
+  if (finished) {
+    menu_layer->round_morph =
+        prv_round_bubble_selected(menu_layer) ? 0 : (int16_t)MENU_ROUND_MORPH_PILL;
+    prv_menu_layer_update_selection_highlight(menu_layer, false, false, false);
+  } else {
+    menu_layer->round_morph_interrupted = true;
+  }
+  layer_mark_dirty(&menu_layer->scroll_layer.layer);
+}
+
+//! Morphs the highlight between the first row's bubble and the pill of the other row, from where
+//! an interrupted morph stopped if there was one.
+static void prv_start_round_morph(MenuLayer *menu_layer, const MenuCellSpan *prev_selection,
+                                  bool interrupted) {
+  static const PropertyAnimationImplementation s_round_morph_impl = {
+    .base = {.update = (AnimationUpdateImplementation)property_animation_update_int16},
+    .accessors = {.setter = {.int16 = prv_set_round_morph},
+                  .getter = {.int16 = prv_get_round_morph}},
+  };
+  const bool to_bubble = prv_round_bubble_selected(menu_layer);
+  const MenuCellSpan *first = to_bubble ? &menu_layer->selection : prev_selection;
+  const MenuCellSpan *other = to_bubble ? prev_selection : &menu_layer->selection;
+  int16_t from = interrupted ? menu_layer->round_morph
+                             : (to_bubble ? (int16_t)MENU_ROUND_MORPH_PILL : (int16_t)0);
+  int16_t to = to_bubble ? (int16_t)0 : (int16_t)MENU_ROUND_MORPH_PILL;
+
+  const int16_t w = menu_layer->scroll_layer.layer.frame.size.w;
+  menu_layer->inverter.layer.frame = GRect(0, first->y, w, first->h);
+  menu_layer->inverter.layer.bounds = GRect(0, 0, w, first->h);
+  menu_layer->animation.target = GRect(0, other->y, w, other->h);
+  menu_layer->round_morph = from;
+  menu_layer->round_morph_running = true;
+  layer_mark_dirty(&menu_layer->scroll_layer.layer);
+
+  PropertyAnimation *prop_anim =
+      property_animation_create(&s_round_morph_impl, menu_layer, &from, &to);
+  if (!prop_anim) {
+    prv_round_morph_stopped(nullptr, true, menu_layer);
+    return;
+  }
+  Animation *animation = property_animation_get_animation(prop_anim);
+  animation_set_duration(animation, MENU_ROUND_MORPH_MS);
+  animation_set_custom_interpolation(animation, prv_round_morph_interpolate);
+  animation_set_handlers(animation, (AnimationHandlers){.stopped = prv_round_morph_stopped},
+                         menu_layer);
+  menu_layer->animation.animation = animation;
+  animation_schedule(animation);
+}
+
+void menu_layer_set_round_top_bubble(MenuLayer *menu_layer, bool enabled) {
+  menu_layer->round_top_bubble = enabled;
+  layer_mark_dirty(&menu_layer->scroll_layer.layer);
+}
+#endif
+
+static void prv_menu_layer_update_selection_highlight(MenuLayer *menu_layer, bool up, bool animated,
                                                       bool change_ongoing_animation) {
   if (menu_layer->center_focused || menu_layer->selection_animation_disabled) {
     // animation on center_focused will not happen by moving the selection
@@ -1450,7 +1606,9 @@ static int16_t prv_center_focus_rest_offset_y(MenuLayer *menu_layer, const MenuC
                               : PBL_CLAMP(y, (int16_t)(frame_h - content_h), (int16_t)0);
   const int16_t below = prv_round_neighbour_height(menu_layer, span->index, 1);
   const int16_t above = prv_round_neighbour_height(menu_layer, span->index, -1);
-  const int16_t lowest = (int16_t)(y - ((below + span->h) / 2));
+  // A header bubble stays at the top
+  const int16_t lowest =
+      menu_layer->round_top_bubble ? INT16_MIN : (int16_t)(y - ((below + span->h) / 2));
   const int16_t highest = (int16_t)(y + ((above + span->h) / 2));
   return PBL_CLAMP(at_ends, lowest, highest);
 #else
@@ -1717,6 +1875,34 @@ static void prv_apply_selection_change(MenuLayer *menu_layer, MenuRowAlign scrol
   menu_layer->double_tap_armed = false;
   // The selection (and its animations) own the highlight again.
   menu_layer->touch_center_pin = false;
+#endif
+#if PBL_ROUND
+  const bool morph_interrupted = menu_layer->round_morph_interrupted;
+  menu_layer->round_morph_interrupted = false;
+  const bool first_row_before =
+      (prev_selection->index.section == 0) && (prev_selection->index.row == 0);
+  if (animated && did_change && prv_draws_round_pill(menu_layer) && menu_layer->round_top_bubble &&
+      (first_row_before || prv_round_bubble_selected(menu_layer))) {
+    Animation *scroll_animation = (Animation *)menu_layer->scroll_layer.animation;
+    if (animation_is_scheduled(scroll_animation)) {
+      animation_unschedule(scroll_animation);
+    }
+    prv_cancel_selection_animation(menu_layer);
+    prv_start_round_morph(menu_layer, prev_selection, morph_interrupted);
+    if (menu_layer->center_focused) {
+      const int16_t rest_y = prv_center_focus_rest_offset_y(menu_layer, &menu_layer->selection);
+      scroll_layer_set_content_offset(&menu_layer->scroll_layer, GPoint(0, rest_y), true);
+    } else {
+      prv_menu_layer_update_selection_scroll_position(menu_layer, scroll_align, true);
+    }
+    prv_announce_selection_changed(menu_layer, prev_selection->index);
+    return;
+  }
+  if (morph_interrupted) {
+    // Carry on from the pill end of the interrupted morph
+    menu_layer->inverter.layer.frame = menu_layer->animation.target;
+    menu_layer->inverter.layer.bounds.size = menu_layer->animation.target.size;
+  }
 #endif
   if (menu_layer->center_focused && animated &&
       prv_center_focus_rests_centered(menu_layer, prev_selection) &&

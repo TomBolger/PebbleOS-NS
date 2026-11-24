@@ -48,6 +48,20 @@ GRect menu_cell_round_follow_bezel(const GContext *ctx, GRect frame);
 //! Gap between the highlight pill and the top and bottom of its row on round displays
 #define MENU_ROUND_PILL_INSET_Y 3
 
+//! Radius of the bubble that highlights the first row of a menu with a round top bubble
+#define MENU_ROUND_BUBBLE_RADIUS 150
+//! A morph's progress from the bubble to the pill when it reaches the pill
+#define MENU_ROUND_MORPH_PILL 1000
+//! How long the highlight takes to morph between the bubble and a pill
+#define MENU_ROUND_MORPH_MS 320
+//! How far, per whole morph past its end, the shape carries on before settling
+#define MENU_ROUND_MORPH_OVERSHOOT_PX 60
+
+//! Highlights the first row with a bubble hanging from above the screen instead of a pill, the
+//! first row being laid out as a header at the top of the screen. Moving the selection to or from
+//! the first row morphs the bubble into the other row's pill.
+void menu_layer_set_round_top_bubble(MenuLayer *menu_layer, bool enabled);
+
 //! Moves the left end of the highlight pill \a margin further in from the bezel, e.g. to keep it
 //! clear of something drawn along the rim. 0 restores the default.
 void menu_layer_set_round_pill_left_margin(MenuLayer *menu_layer, uint8_t margin);
