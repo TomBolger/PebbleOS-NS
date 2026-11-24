@@ -242,10 +242,6 @@ static void prv_get_indicator_frame(TimelineLayer *layer, int index, GRect *fram
   frame->size.h = display_frame.size.h;
 }
 
-void timeline_layer_get_layout_frame(TimelineLayer *layer, int index, GRect *frame_out) {
-  prv_get_frame(layer, index, frame_out);
-}
-
 static void prv_get_icon_frame_exact(TimelineLayer *layer, int index, GRect *icon_frame) {
   const TimelineLayerStyle *style = prv_get_style();
   GRect frame;
@@ -843,6 +839,17 @@ void timeline_layer_move_data(TimelineLayer *layer, int delta) {
 
 TimelineLayout *timeline_layer_get_current_layout(TimelineLayer *timeline_layer) {
   return timeline_layer->layouts[TIMELINE_LAYER_FIRST_VISIBLE_LAYOUT];
+}
+
+void timeline_layer_get_current_icon_frame(TimelineLayer *layer, GRect *frame_out) {
+  GRect frame;
+  prv_get_frame(layer, TIMELINE_LAYER_FIRST_VISIBLE_LAYOUT, &frame);
+  timeline_layout_get_icon_frame(&frame, layer->scroll_direction, frame_out);
+}
+
+TimelineLayoutInfo *timeline_layer_get_layout_info(TimelineLayer *layer, int index) {
+  return (index >= 0 && index < TIMELINE_NUM_ITEMS_IN_TIMELINE_LAYER) ? layer->layouts_info[index]
+                                                                     : nullptr;
 }
 
 void timeline_layer_reset(TimelineLayer *layer) {
