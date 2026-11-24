@@ -453,6 +453,22 @@ static void prv_refresh(WeatherAppData *data) {
 // Push the clock face for the current day. static_push=true skips the clock's
 // spiral intro (a plain appearance — used arriving from the globe); false plays
 // the spiral intro (used after the main->clock icon shrink).
+// Sunrise and sunset at the forecast's location, in the watch's local clock, for the dial.
+static void prv_set_clock_sun_times(WeatherAppData *data) {
+  int sunrise =
+      weather_sun_sunrise_minutes(data->latitude_e2, data->longitude_e2, data->utc_offset_min);
+  int sunset =
+      weather_sun_sunset_minutes(data->latitude_e2, data->longitude_e2, data->utc_offset_min);
+  if ((sunrise >= 0) && (sunset >= 0) && (data->utc_offset_min != INT16_MIN)) {
+    const time_t now = time(nullptr);
+    const int watch_off_min = (int)(localtime(&now)->tm_gmtoff / 60);
+    const int shift = watch_off_min - data->utc_offset_min;
+    sunrise = (((sunrise + shift) % 1440) + 1440) % 1440;
+    sunset = (((sunset + shift) % 1440) + 1440) % 1440;
+  }
+  clock_face_set_sun_times(sunrise, sunset);
+}
+
 static void prv_push_clock(WeatherAppData *data, bool static_push) {
   unsigned int di = data->current_day_index;
   if (di >= WX_MAX_DAYS) {
@@ -501,6 +517,7 @@ static void prv_push_clock(WeatherAppData *data, bool static_push) {
     clock_face_push(data->days, data->days_received, (int)di, hourly_types, hourly_types ? 24 : 0,
                     false);
   }
+  prv_set_clock_sun_times(data);
   if (have_hourly) {
     clock_face_update_hourly_temps_for_day((int)di, s_hourly_temp, 24);
   }
