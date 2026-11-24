@@ -722,7 +722,7 @@ static void prv_push_dismiss_first_use_dialog(ActionMenu *action_menu) {
       gcolor_legible_over(GColorLightGray), GColorLightGray, nullptr,
       RESOURCE_ID_ACTION_BAR_ICON_CHECK, expandable_dialog_close_cb);
   pbl_i18n_free(tutorial_msg, action_menu);
-  expandable_dialog_push(first_use_dialog, action_menu->window.parent_window_stack);
+  expandable_dialog_push(first_use_dialog, action_menu_get_window_stack(action_menu));
 }
 
 static void prv_action_menu_cb(ActionMenu *action_menu, const ActionMenuItem *item, void *context) {
@@ -1109,8 +1109,8 @@ static void prv_timeline_action_menu_did_close(ActionMenu *action_menu, const Ac
   applib_free(timeline_action_menu);
 }
 
-ActionMenu *timeline_actions_push_action_menu(ActionMenuConfig *base_config,
-                                              WindowStack *window_stack) {
+static ActionMenu *prv_open_action_menu(ActionMenuConfig *base_config, WindowStack *window_stack,
+                                        const ActionMenuHost *host, void *host_context) {
   PBL_ASSERTN(base_config);
   TimelineActionMenu *timeline_action_menu = applib_zalloc(sizeof(TimelineActionMenu));
   if (!timeline_action_menu) {
@@ -1125,10 +1125,28 @@ ActionMenu *timeline_actions_push_action_menu(ActionMenuConfig *base_config,
   config.did_close = prv_timeline_action_menu_did_close;
 
   timeline_action_menu->item = base_config->context;
-  timeline_action_menu->action_menu = action_menu_open(window_stack, &config);
   timeline_action_menu->did_close = base_config->did_close;
+  timeline_action_menu->action_menu =
+      host ? action_menu_open_hosted(window_stack, &config, host, host_context)
+           : action_menu_open(window_stack, &config);
+  if (!timeline_action_menu->action_menu) {
+    applib_free(timeline_action_menu);
+    return nullptr;
+  }
 
   return timeline_action_menu->action_menu;
+}
+
+ActionMenu *timeline_actions_push_action_menu(ActionMenuConfig *base_config,
+                                              WindowStack *window_stack) {
+  return prv_open_action_menu(base_config, window_stack, nullptr, nullptr);
+}
+
+ActionMenu *timeline_actions_open_hosted_action_menu(ActionMenuConfig *base_config,
+                                                     WindowStack *window_stack,
+                                                     const ActionMenuHost *host,
+                                                     void *host_context) {
+  return prv_open_action_menu(base_config, window_stack, host, host_context);
 }
 
 ActionMenu *timeline_actions_push_response_menu(TimelineItem *item,

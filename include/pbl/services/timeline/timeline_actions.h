@@ -81,6 +81,25 @@ void timeline_actions_set_dismissed_handler(TimelineActionsDismissedHandler hand
 ActionMenu *timeline_actions_push_action_menu(ActionMenuConfig *base_config,
                                               WindowStack *window_stack);
 
+struct ActionMenuHost;
+
+/**
+ * @brief Create a timeline action menu drawn by a host instead of its own window.
+ *
+ * Like timeline_actions_push_action_menu, but the menu is shown and driven by @p host (see
+ * action_menu_open_hosted). Result and progress windows go on @p window_stack.
+ *
+ * @param base_config Menu configuration; its context must be the TimelineItem of the menu.
+ * @param window_stack Window stack for result windows.
+ * @param host Host showing the menu.
+ * @param host_context Context passed to the host.
+ * @return Action menu, or NULL if out of memory.
+ */
+ActionMenu *timeline_actions_open_hosted_action_menu(ActionMenuConfig *base_config,
+                                                     WindowStack *window_stack,
+                                                     const struct ActionMenuHost *host,
+                                                     void *host_context);
+
 /**
  * @brief Create a reply menu from a response action and push it.
  *
