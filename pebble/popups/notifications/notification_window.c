@@ -1161,6 +1161,9 @@ static void prv_action_menu_did_close(ActionMenu *action_menu, const ActionMenuI
                                       void *context) {
   NotificationWindowData *data = &s_notification_window_data;
   data->action_menu = nullptr;
+  // Using the menu is reading this notification: a newer one waiting to be focused keeps waiting
+  // rather than replacing the card as soon as the menu has closed back onto it.
+  prv_note_interaction(data);
 #if PBL_ROUND
   if (action_menu_is_hosted(action_menu)) {
     prv_round_actions_did_close(data);
