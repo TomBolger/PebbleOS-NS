@@ -33,9 +33,6 @@ typedef struct MenuRenderIterator {
 #if PBL_ROUND
 #include "menu_layer_round.h"
 
-//! How long the highlight takes to morph between the header bubble and a pill
-#define MENU_ROUND_MORPH_MS 320
-
 //! Gap between a right-aligned cell icon and the bezel on round displays, keeping the icon well
 //! inside the end of the highlight pill
 #define MENU_CELL_ROUND_BEZEL_MARGIN 11
@@ -47,12 +44,6 @@ int16_t menu_cell_round_chord_inset(const GContext *ctx, GRect frame);
 //! Moves \a frame, an icon on the right of the cell being drawn, so it sits
 //! MENU_CELL_ROUND_BEZEL_MARGIN in from the bezel at its row, following the curve of the display.
 GRect menu_cell_round_follow_bezel(const GContext *ctx, GRect frame);
-
-//! Highlights the first row, laid out as a header at the top of the screen, with a bubble
-//! hanging from above the screen instead of a pill. The bubble reaches \a depth down the row
-//! (0 for no bubble). Moving the selection to or from the first row morphs the bubble into the
-//! other row's pill and back.
-void menu_layer_set_round_header_bubble(MenuLayer *menu_layer, uint8_t depth);
 
 //! Moves the left end of the highlight pill \a margin further in from the bezel, e.g. to keep it
 //! clear of something drawn along the rim. 0 restores the default.
