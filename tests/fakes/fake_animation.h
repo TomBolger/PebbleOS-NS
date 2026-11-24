@@ -24,3 +24,8 @@ void fake_animation_cleanup(void);
 //! unscheduling it.
 //! @param animation The animation to run to completion.
 void fake_animation_complete(Animation *animation);
+
+//! Updates an animation and its children as if it had run to a progress, without stopping it.
+//! @param animation The animation to update.
+//! @param progress The progress, from 0 to ANIMATION_NORMALIZED_MAX.
+void fake_animation_update(Animation *animation, AnimationProgress progress);
