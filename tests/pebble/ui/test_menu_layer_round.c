@@ -143,6 +143,20 @@ void test_menu_layer_round__rest_offset_under_a_header(void) {
   cl_assert_equal_i(menu_round_rest_offset(260, content_h, header_h, ROW_H, top, SPACE), 0);
 }
 
+void test_menu_layer_round__rest_offset_under_a_banner(void) {
+  // A header as tall as the space past the top takes its place: the first row rests under it,
+  // with the second one in the middle, and selecting the second one doesn't move the list
+  const int16_t header_h = SPACE;
+  const int16_t content_h = header_h + 10 * ROW_H;
+  const int16_t top = menu_round_end_space(260, header_h + ROW_H, ROW_H);
+  cl_assert_equal_i(top, 0);
+  cl_assert_equal_i(menu_round_rest_offset(260, content_h, header_h, ROW_H, top, SPACE), 0);
+  cl_assert_equal_i(menu_round_rest_offset(260, content_h, header_h + ROW_H, ROW_H, top, SPACE), 0);
+  // The third one scrolls a row to the middle
+  cl_assert_equal_i(menu_round_rest_offset(260, content_h, header_h + 2 * ROW_H, ROW_H, top, SPACE),
+                    -ROW_H);
+}
+
 void test_menu_layer_round__rest_offset_centres_a_list_that_fits(void) {
   cl_assert_equal_i(menu_round_rest_offset(260, 3 * ROW_H, ROW_H, ROW_H, 0, 0),
                     (260 - 3 * ROW_H) / 2);
