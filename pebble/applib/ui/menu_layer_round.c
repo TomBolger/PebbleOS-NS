@@ -79,6 +79,21 @@ int16_t menu_round_end_space(int16_t frame_h, int16_t end_h, int16_t next_h) {
   return PBL_MAX((int16_t)((frame_h / 2) - end_h - (next_h / 2)), 0);
 }
 
+uint16_t menu_round_end_rows(int16_t frame_h, int16_t space, uint16_t count,
+                             MenuRoundRowHeight row_h, void *context) {
+  int32_t top = space;
+  uint16_t rows = 0;
+  while (rows < count) {
+    const int16_t h = row_h(rows, context);
+    if ((rows > 0) && ((top + (h / 2)) > (frame_h / 2))) {
+      break;
+    }
+    top += h;
+    rows++;
+  }
+  return rows;
+}
+
 int16_t menu_round_rest_offset(int16_t frame_h, int16_t content_h, int16_t span_y, int16_t span_h,
                                int16_t top_space, int16_t bottom_space) {
   // The content may have been measured before the selected row took its height

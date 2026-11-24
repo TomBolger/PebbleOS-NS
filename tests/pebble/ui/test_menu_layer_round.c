@@ -209,3 +209,90 @@ void test_menu_layer_round__rest_offset_measures_from_the_selection(void) {
   cl_assert_equal_i(menu_round_rest_offset(260, CONTENT_H - 10, 9 * ROW_H, ROW_H, 0, 0),
                     260 - CONTENT_H);
 }
+
+static int16_t prv_row_h(uint16_t i, void *context) {
+  return ((const int16_t *)context)[i];
+}
+
+void test_menu_layer_round__end_rows_reach_the_middle(void) {
+  const int16_t rows[] = {68, 68, 68, 68, 68};
+  // With the space, the end row and its neighbour, which sits in the middle
+  const int16_t space = menu_round_end_space(260, 68, 68);
+  cl_assert_equal_i(menu_round_end_rows(260, space, 5, prv_row_h, (void *)rows), 2);
+  // Without, every row whose middle isn't past the middle
+  const int16_t short_rows[] = {32, 32, 32, 32, 32, 32};
+  cl_assert_equal_i(menu_round_end_rows(260, 0, 6, prv_row_h, (void *)short_rows), 4);
+  // No more rows than the list has
+  cl_assert_equal_i(menu_round_end_rows(260, 0, 3, prv_row_h, (void *)short_rows), 3);
+  cl_assert_equal_i(menu_round_end_rows(260, 0, 0, prv_row_h, (void *)short_rows), 0);
+}
+
+void test_menu_layer_round__end_rows_keep_the_end_row(void) {
+  const int16_t rows[] = {300, 20};
+  cl_assert_equal_i(menu_round_end_rows(260, 0, 2, prv_row_h, (void *)rows), 1);
+}
+
+#define FOCUSED_H   68
+#define UNFOCUSED_H 32
+#define MAX_ROWS    12
+
+//! Lays out \a count rows with \a selected selected, as a round list with the pill does: the rows
+//! it selects while resting at an end at their focused height, the others focused only when
+//! selected. Fills \a screen_y with where each row starts on screen.
+static void prv_layout(uint16_t count, uint16_t selected, int16_t *screen_y) {
+  int16_t focused[MAX_ROWS];
+  for (uint16_t i = 0; i < count; i++) {
+    focused[i] = FOCUSED_H;
+  }
+  const int16_t top = menu_round_end_space(260, FOCUSED_H, (count > 1) ? FOCUSED_H : 0);
+  const int16_t bottom = top;
+  const uint16_t top_rows = menu_round_end_rows(260, top, count, prv_row_h, focused);
+  const uint16_t bottom_rows = menu_round_end_rows(260, bottom, count, prv_row_h, focused);
+  int16_t y[MAX_ROWS];
+  int16_t h[MAX_ROWS];
+  int16_t content_h = 0;
+  for (uint16_t i = 0; i < count; i++) {
+    const bool pinned = (i < top_rows) || (count - 1 - i < bottom_rows);
+    h[i] = (pinned || (i == selected)) ? FOCUSED_H : UNFOCUSED_H;
+    y[i] = content_h;
+    content_h += h[i];
+  }
+  const int16_t offset =
+      menu_round_rest_offset(260, content_h, y[selected], h[selected], top, bottom);
+  for (uint16_t i = 0; i < count; i++) {
+    screen_y[i] = offset + y[i];
+  }
+}
+
+static void prv_assert_still(uint16_t count, uint16_t from, uint16_t to) {
+  int16_t before[MAX_ROWS];
+  int16_t after[MAX_ROWS];
+  prv_layout(count, from, before);
+  prv_layout(count, to, after);
+  for (uint16_t i = 0; i < count; i++) {
+    cl_assert_equal_i(before[i], after[i]);
+  }
+}
+
+void test_menu_layer_round__rows_stay_still_in_a_list_that_fits(void) {
+  for (uint16_t count = 1; count <= 3; count++) {
+    for (uint16_t row = 1; row < count; row++) {
+      prv_assert_still(count, 0, row);
+    }
+  }
+  // Centred
+  int16_t y[MAX_ROWS];
+  prv_layout(3, 0, y);
+  cl_assert_equal_i(y[0], (260 - 3 * FOCUSED_H) / 2);
+}
+
+void test_menu_layer_round__rows_stay_still_at_the_ends(void) {
+  prv_assert_still(10, 0, 1);
+  prv_assert_still(10, 8, 9);
+  // Past them, the selected row scrolls to the middle
+  for (uint16_t row = 1; row <= 8; row++) {
+    int16_t y[MAX_ROWS];
+    prv_layout(10, row, y);
+    cl_assert_equal_i(y[row] + FOCUSED_H / 2, 130);
+  }
+}
