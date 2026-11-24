@@ -351,7 +351,6 @@ const LayoutColors *timeline_layout_get_colors(const LayoutLayer *layout_ref) {
 // View
 ////////////////////////
 
-#if PBL_ROUND
 typedef struct {
   GContext *ctx;
   GFont font;
@@ -376,7 +375,7 @@ static bool prv_measure_title_glyph(int index, Codepoint codepoint, void *contex
   return true;
 }
 
-static void prv_anchor_title(TimelineLayout *layout) {
+int16_t timeline_layout_get_title_center_y(TimelineLayout *layout) {
   GTextNodeContainer *container = (GTextNodeContainer *)layout->view_node;
   GTextNode *time_node = container->nodes[0];
   GTextNodeText *title = (GTextNodeText *)container->nodes[1];
@@ -388,16 +387,14 @@ static void prv_anchor_title(TimelineLayout *layout) {
   };
   utf8_each_codepoint(title->text, prv_measure_title_glyph, &metrics);
   if (metrics.top >= metrics.bottom) {
-    container->node.offset.y = -container->node.cached_size.h / 2;
-    return;
+    return container->node.cached_size.h / 2;
   }
   const int16_t last_line_offset = PBL_MAX(
       title->node.cached_size.h - title->node.margin.h - font_height - title->line_spacing_delta,
       0);
   const int16_t title_center = (metrics.top + metrics.bottom + last_line_offset) / 2;
-  container->node.offset.y = -time_node->cached_size.h - title->node.offset.y - title_center;
+  return time_node->cached_size.h + title->node.offset.y + title_center;
 }
-#endif
 
 void timeline_layout_init_view(TimelineLayout *layout, LayoutLayerMode mode) {
   GTextNode *view_node = nullptr;
@@ -418,7 +415,8 @@ void timeline_layout_init_view(TimelineLayout *layout, LayoutLayerMode mode) {
   timeline_layout_get_size(layout, graphics_context_get_current_context(), &layout->view_size);
 #if PBL_ROUND
   if (mode == LayoutLayerModePinnedFat) {
-    prv_anchor_title(layout);
+    GTextNodeContainer *container = (GTextNodeContainer *)layout->view_node;
+    container->node.offset.y = -timeline_layout_get_title_center_y(layout);
   }
 #endif
 }
