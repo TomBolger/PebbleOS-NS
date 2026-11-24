@@ -422,7 +422,7 @@ static void prv_insert_glances_for_app_selected_and_apps_above_and_below_with_gl
 }
 
 //! Round: the header's icon, title and subtitle sit tight under each other near the top, inside
-//! a bubble that ends before the second row
+//! a bubble that ends above the middle of the screen
 void test_launcher_menu_layer__round_header_layout(void) {
 #if PBL_ROUND
   const LauncherRoundHeaderLayout layout = launcher_menu_layer_round_header_layout(18, 14);
@@ -435,8 +435,9 @@ void test_launcher_menu_layer__round_header_layout(void) {
 #endif
 }
 
-//! Round: moving the selection between rows on screen moves only the highlight; the rows keep
-//! their heights and places, and the row under the header rests in the middle.
+//! Round: the header hangs from the top of the screen and the second row starts right under its
+//! bubble. Moving the selection between them moves only the highlight; the rows keep their
+//! heights and places until the list scrolls the third row to the middle.
 void test_launcher_menu_layer__round_rows_stay_in_place(void) {
 #if PBL_ROUND
   AppMenuDataSource data_source = {};
@@ -445,26 +446,29 @@ void test_launcher_menu_layer__round_rows_stay_in_place(void) {
   LauncherMenuLayer launcher_menu_layer = {};
   launcher_menu_layer_init(&launcher_menu_layer, &data_source);
   ScrollLayer *scroll_layer = &launcher_menu_layer.menu_layer.scroll_layer;
+  const LauncherMenuLayerStyle *style = launcher_menu_layer_get_style();
 
   prv_launcher_menu_layer_set_selection_index(&launcher_menu_layer, 0, MenuRowAlignCenter, false);
-  const int16_t offset = scroll_layer_get_content_offset(scroll_layer).y;
+  cl_assert_equal_i(scroll_layer_get_content_offset(scroll_layer).y, 0);
   GRangeVertical header;
   launcher_menu_layer_get_selection_vertical_range(&launcher_menu_layer, &header);
   cl_assert_equal_i(header.origin_y, 0);
+  cl_assert_equal_i(header.size_h,
+                    launcher_menu_layer_round_header_layout_for_style(style).bubble_depth);
 
   prv_launcher_menu_layer_set_selection_index(&launcher_menu_layer, 1, MenuRowAlignCenter, false);
-  cl_assert_equal_i(scroll_layer_get_content_offset(scroll_layer).y, offset);
+  cl_assert_equal_i(scroll_layer_get_content_offset(scroll_layer).y, 0);
   GRangeVertical second;
   launcher_menu_layer_get_selection_vertical_range(&launcher_menu_layer, &second);
   cl_assert_equal_i(second.origin_y, header.origin_y + header.size_h);
-  cl_assert_equal_i(second.origin_y + second.size_h / 2, PBL_DISPLAY_HEIGHT / 2);
+  cl_assert(second.origin_y + second.size_h / 2 < PBL_DISPLAY_HEIGHT / 2);
 
-  // The next step scrolls the list by one row, which keeps its height
+  // The next step scrolls the third row, as tall, to the middle
   prv_launcher_menu_layer_set_selection_index(&launcher_menu_layer, 2, MenuRowAlignCenter, false);
-  cl_assert_equal_i(scroll_layer_get_content_offset(scroll_layer).y, offset - second.size_h);
   GRangeVertical third;
   launcher_menu_layer_get_selection_vertical_range(&launcher_menu_layer, &third);
   cl_assert_equal_i(third.size_h, second.size_h);
+  cl_assert_equal_i(third.origin_y + third.size_h / 2, PBL_DISPLAY_HEIGHT / 2);
 
   launcher_menu_layer_deinit(&launcher_menu_layer);
   app_menu_data_source_deinit(&data_source);

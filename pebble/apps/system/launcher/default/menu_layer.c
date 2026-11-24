@@ -33,10 +33,11 @@ const LauncherMenuLayerStyle *launcher_menu_layer_get_style(void) {
 #if PBL_ROUND
 //! The header's icon box, as big as any glance icon, sits this far below the top of the screen,
 //! clear of the bezel
-#define ROUND_HEADER_ICON_TOP    8
+#define ROUND_HEADER_ICON_TOP    4
 #define ROUND_HEADER_ICON_HEIGHT (LAUNCHER_APP_GLANCE_STRUCTURED_ICON_LEGACY_MAX_SIZE.h)
-//! Space between the header's text and the bottom of its bubble
-#define ROUND_HEADER_BUBBLE_MARGIN 6
+//! Space between the header's text and the bottom of its bubble. The bubble narrows towards its
+//! bottom, so this also sets how wide the subtitle line is.
+#define ROUND_HEADER_BUBBLE_MARGIN 8
 
 LauncherRoundHeaderLayout launcher_menu_layer_round_header_layout(int16_t title_h,
                                                                   int16_t subtitle_h) {
@@ -61,10 +62,10 @@ static int16_t prv_round_row_height(const LauncherMenuLayerStyle *style) {
   return style->focused_cell_height;
 }
 
-//! The first row is a header from the top of the screen down to the second row, which then sits
-//! in the middle.
+//! The first row is a header from the top of the screen down to the bottom of its bubble, where
+//! the second row starts.
 static int16_t prv_round_header_height(const LauncherMenuLayerStyle *style) {
-  return (int16_t)((PBL_DISPLAY_HEIGHT / 2) - (prv_round_row_height(style) / 2));
+  return launcher_menu_layer_round_header_layout_for_style(style).bubble_depth;
 }
 #endif
 
