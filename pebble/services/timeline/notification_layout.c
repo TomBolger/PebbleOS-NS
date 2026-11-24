@@ -1,10 +1,12 @@
 /* SPDX-FileCopyrightText: 2024 Google LLC */
 /* SPDX-License-Identifier: Apache-2.0 */
 
+#include <pbl/i18n/i18n.h>
 #include <pbl/services/blob_db/pin_db.h>
 #include <pbl/services/clock.h>
 #include <pbl/services/notifications/alerts_preferences_private.h>
 #include <pbl/services/notifications/notification_image.h>
+#include <pbl/services/notifications/notification_style.h>
 #include <pbl/services/timeline/notification_jumboji_table.h>
 #include <pbl/services/timeline/notification_layout.h>
 #include <pbl/services/timeline/timeline_resources.h>
@@ -33,7 +35,9 @@
 // Footer -> Location
 
 #define LAYOUT_MAX_HEIGHT 2500
-#define CARD_MARGIN       PBL_IF_ROUND_ELSE(12, 10)
+#define CARD_MARGIN       PBL_IF_ROUND_ELSE(30, 10)
+//! Space between the banner and the header
+#define CARD_HEADER_GAP 7
 // All paddings relate to padding above the object unless othersize noted
 #define CARD_BOTTOM_PADDING         18
 #define BOTTOM_BANNER_CIRCLE_RADIUS 8
@@ -337,21 +341,46 @@ static PBL_NOINLINE GTextNode *prv_create_view(NotificationLayout *layout, bool 
   const NotificationStyle *style = &s_notification_styles[content_size];
 
   const bool is_reminder = prv_is_reminder(layout);
-  const LayoutNodeTextAttributeConfig header_config = {
-    .attr_id = AttributeIdAppName,
-    .text.style = text_size,
-    .text.style_font = TextStyleFont_Header,
-    .text.extent.offset.y = style->header_padding,
-    .text.extent.margin.h = style->header_padding,
+  // Notifications: who it is from (the title, else the app), then the message without a
+  // leading "Sender: " repeating it, in Gothic sized by the notification text size: the header
+  // regular, the message bold.
+  static const char *const s_header_fonts[] = {
+    FONT_KEY_GOTHIC_14, FONT_KEY_GOTHIC_18, FONT_KEY_GOTHIC_24
+  };
+  static const char *const s_body_fonts[] = {
+    FONT_KEY_GOTHIC_18_BOLD, FONT_KEY_GOTHIC_24_BOLD, FONT_KEY_GOTHIC_28_BOLD
+  };
+  const uint8_t ns_size = notification_style_text_size();
+  const AttributeList *attributes = layout->layout.attributes;
+  const char *header = attribute_get_string(attributes, AttributeIdTitle, "");
+  if (PBL_IS_EMPTY_STRING(header)) {
+    header = attribute_get_string(attributes, AttributeIdAppName, "");
+  }
+  const bool header_is_fallback = PBL_IS_EMPTY_STRING(header);
+  if (header_is_fallback) {
+    header = pbl_i18n_noop("Notification");
+  }
+  const char *body =
+      notification_style_body_text(header, attribute_get_string(attributes, AttributeIdBody, ""));
+  const LayoutNodeTextBufferConfig header_config = {
+    .text.extent.node.type = LayoutNodeType_TextBuffer,
+    .str = header,
+    .use_i18n = header_is_fallback,
+    .text.font_key = s_header_fonts[ns_size],
+    .text.extent.offset.y = CARD_HEADER_GAP,
+    .text.extent.margin.h = CARD_HEADER_GAP + 3,
+  };
+  const LayoutNodeTextBufferConfig notification_body_config = {
+    .text.extent.node.type = LayoutNodeType_TextBuffer,
+    .str = body,
+    .text.font_key = s_body_fonts[ns_size],
+    .text.extent.margin.h = 3,
   };
   const LayoutNodeTextDynamicConfig notification_timestamp_config = {
     .text.extent.node.type = LayoutNodeType_TextDynamic,
     .update = prv_notification_timestamp_update,
     .buffer_size = TIME_STRING_REQUIRED_LENGTH,
-    .text.style = text_size,
-    .text.style_font = PBL_IF_RECT_ELSE(TextStyleFont_Footer, TextStyleFont_Caption),
-    .text.extent.offset.y = style->timestamp_upper_padding,
-    .text.extent.margin.h = style->timestamp_upper_padding + style->timestamp_lower_padding,
+    .text.font_key = (ns_size == 0) ? FONT_KEY_GOTHIC_14 : FONT_KEY_GOTHIC_18,
   };
   const LayoutNodeTextDynamicConfig reminder_timestamp_config = {
     .text.extent.node.type = LayoutNodeType_TextDynamic,
@@ -363,7 +392,8 @@ static PBL_NOINLINE GTextNode *prv_create_view(NotificationLayout *layout, bool 
     .text.extent.margin.h = style->header_padding,
   };
   const LayoutNodeTextAttributeConfig title_config = {
-    .attr_id = is_reminder ? AttributeIdUnused : AttributeIdTitle,
+    // The header shows a notification's title.
+    .attr_id = AttributeIdUnused,
     .text.style = text_size,
     .text.style_font = TextStyleFont_Header,
     .text.line_spacing_delta = style->title_line_delta,
@@ -446,7 +476,9 @@ static PBL_NOINLINE GTextNode *prv_create_view(NotificationLayout *layout, bool 
     &title_config.text.extent.node,
     &subtitle_config.text.extent.node,
     &location_config.text.extent.node,
-    use_body_icon ? &body_icon_config.extent.node : &body_config.text.extent.node,
+    use_body_icon ? &body_icon_config.extent.node
+    : is_reminder ? &body_config.text.extent.node
+                  : &notification_body_config.text.extent.node,
     &headings_paragraphs_node.extent.node,
 #if NOTIFICATION_IMAGE_SUPPORTED
     &image_config.extent.node,
@@ -595,22 +627,14 @@ static PBL_NOINLINE void prv_card_render_internal(NotificationLayout *layout, GC
 #if PBL_ROUND
     prv_hide_or_show_banner_icon(&layout->icon_layer, notification_layout_frame);
     prv_draw_banner_round(layout, ctx, notification_layout_frame, *colors);
-    // work around the clip box and smaller layout_height for circular text paging
-    ctx->draw_state.clip_box.size.h = PBL_MIN(ctx->draw_state.clip_box.size.h, LAYOUT_HEIGHT);
 #else
     static const GRect banner_box = {.size = {PBL_DISPLAY_WIDTH, LAYOUT_BANNER_HEIGHT_RECT}};
     graphics_fill_rect(ctx, &banner_box);
 #endif
   }
 
-#if PBL_ROUND
-  const bool text_visible =
-      (render && PBL_IN_RANGE(notification_layout_frame->origin.y,
-                              TEXT_VISIBLE_LOWER_THRESHOLD(notification_layout_frame->size.h),
-                              TEXT_VISIBLE_UPPER_THRESHOLD));
-#else
+  // Text stays drawn while the card moves, in a fixed column, also on round watches.
   const bool text_visible = render;
-#endif
   static const GRect box = {
     .origin = {CARD_MARGIN, LAYOUT_TOP_BANNER_HEIGHT},
     .size = {PBL_DISPLAY_WIDTH - 2 * CARD_MARGIN, LAYOUT_MAX_HEIGHT},
@@ -623,8 +647,8 @@ static PBL_NOINLINE void prv_card_render_internal(NotificationLayout *layout, GC
     .page_frame = &page_frame_on_screen,
     .origin_on_screen = &page_frame_on_screen.origin,
     .content_inset = 8, // text flow inset
-    .text_flow = PBL_IF_ROUND_ELSE(true, false),
-    .paging = PBL_IF_ROUND_ELSE(true, false),
+    .text_flow = false,
+    .paging = false,
   };
   graphics_context_set_text_color(ctx, system_theme_get_fg_color());
   (text_visible ? graphics_text_node_draw : graphics_text_node_get_size)(
@@ -639,14 +663,9 @@ static PBL_NOINLINE void prv_card_render_internal(NotificationLayout *layout, GC
 
   layout->view_size.h += LAYOUT_TOP_BANNER_HEIGHT;
 
-#if PBL_ROUND
-  // Notification text is paged by LAYOUT_HEIGHT, so make full page height
-  layout->view_size.h = PBL_ROUNDUP(layout->view_size.h, LAYOUT_HEIGHT);
-  // Notifications are swapped using frame height, so last page includes additional arrow height
-  layout->view_size.h += LAYOUT_ARROW_HEIGHT;
-#else
-  layout->view_size.h += CARD_BOTTOM_PADDING;
-#endif
+  // Room at the bottom for the arrow to the next card, and never shorter than the screen.
+  layout->view_size.h += CARD_BOTTOM_PADDING + LAYOUT_ARROW_HEIGHT;
+  layout->view_size.h = PBL_MAX(layout->view_size.h, PBL_DISPLAY_HEIGHT - STATUS_BAR_LAYER_HEIGHT);
 }
 
 static void prv_card_render(NotificationLayout *layout, GContext *ctx, bool render) {
