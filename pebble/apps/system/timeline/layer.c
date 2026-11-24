@@ -1207,6 +1207,7 @@ static void prv_list_turn_icons(TimelineLayer *layer, TimelineListPinView **old,
 static void prv_list_move(TimelineLayer *layer) {
   TimelineList *list = &layer->list;
   prv_list_start_from_current(layer);
+  const int16_t folding_scroll = list->scroll;
   list->scroll = 0;
   list->scroll_from = 0;
   list->selection_changed = true;
@@ -1243,9 +1244,10 @@ static void prv_list_move(TimelineLayer *layer) {
   for (int i = 0; i < list->num_pins; i++) {
     TimelineListPinView *pin = list->pins[i];
     if (pin->from_selected && i != list->selected) {
-      // The pin that was selected keeps its text while its frame folds over it, and takes its
-      // resting mode once the pins stop
+      // The pin that was selected keeps its text, scrolled as it was, while its frame folds over
+      // it, and takes its resting mode once the pins stop
       layout_set_mode((LayoutLayer *)pin->layout, prv_list_mode(true));
+      timeline_layout_set_page_scroll(pin->layout, folding_scroll);
     } else {
       // The others are laid out for where they rest from the start
       pin->from.origin.x = pin->frame.origin.x;
