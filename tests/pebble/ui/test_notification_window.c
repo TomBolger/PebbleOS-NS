@@ -9,10 +9,12 @@
 
 #include <applib/preferred_content_size.h>
 #include <applib/ui/window_private.h>
+#include <apps/system/notifications_shade.h>
 #include <apps/system/settings/notifications_private.h>
 #include <clar.h>
 #include <popups/notifications/notification_window.h>
 #include <popups/notifications/notification_window_private.h>
+#include <popups/notifications/notifications_presented_list.h>
 #include <resource/timeline_resource_ids.auto.h>
 
 // Stubs
@@ -48,6 +50,22 @@ bool alerts_preferences_get_notification_alternative_design(void) {
 
 DndNotificationMode alerts_preferences_dnd_get_show_notifications(void) {
   return DndNotificationModeShow;
+}
+
+// The popup pages on into the notifications app's list: none here.
+void notification_shade_init_with_prefs(NotificationShade *shade) {
+  *shade = (NotificationShade){};
+}
+void notification_shade_load_storage(NotificationShade *shade) {
+}
+uint16_t notification_shade_count(const NotificationShade *shade) {
+  return 0;
+}
+const NotificationShadeEntry *notification_shade_item(const NotificationShade *shade,
+                                                      uint16_t index) {
+  return nullptr;
+}
+void notification_shade_deinit(NotificationShade *shade) {
 }
 
 bool alerts_preferences_dnd_get_auto_dismiss(void) {
@@ -560,4 +578,23 @@ void test_notification_window__banner_round_geometry(void) {
                         NOTIFICATION_TINY_RESOURCE_HEIGHT / 2,
                     center.y);
 #endif
+}
+
+void test_notification_window__presented_list_append(void) {
+  notifications_presented_list_init();
+  Uuid a = {1}, b = {2}, c = {3};
+  notifications_presented_list_add(&a, NotificationMobile);
+  // The rest of the list goes after what is presented, once each.
+  notifications_presented_list_append(&b, NotificationMobile);
+  notifications_presented_list_append(&a, NotificationMobile);
+  notifications_presented_list_append(&c, NotificationMobile);
+  cl_assert_equal_i(notifications_presented_list_count(), 3);
+  cl_assert(uuid_equal(notifications_presented_list_first(), &a));
+  cl_assert(uuid_equal(notifications_presented_list_relative(&a, 1), &b));
+  cl_assert(uuid_equal(notifications_presented_list_last(), &c));
+  // A notification arriving again moves to the front.
+  notifications_presented_list_add(&c, NotificationMobile);
+  cl_assert(uuid_equal(notifications_presented_list_first(), &c));
+  cl_assert_equal_i(notifications_presented_list_count(), 3);
+  notifications_presented_list_deinit(nullptr, nullptr);
 }
