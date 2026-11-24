@@ -21,6 +21,12 @@ pbl_clar_test(test_action_bar_layer
   DEFINES CONFIG_ORIENTATION_MANAGER
 )
 
+pbl_clar_test(test_menu_layer_round
+  SOURCES
+    pebble/applib/graphics/gtypes.c
+    pebble/applib/ui/menu_layer_round.c
+)
+
 pbl_clar_test(test_layer_rect
   SOURCES
     pebble/applib/graphics/graphics_private_raw.c
@@ -203,6 +209,7 @@ pbl_clar_test(test_menu_layer
     pebble/applib/ui/layer.c
     pebble/applib/ui/scroll_layer.c
     pebble/applib/ui/menu_layer.c
+    pebble/applib/ui/menu_layer_round.c
     pebble/applib/ui/menu_text_scroll.c
     pebble/applib/ui/shadows.c
     pebble/applib/ui/animation_interpolate.c
@@ -225,6 +232,7 @@ pbl_clar_test(test_action_menu_layer
     pebble/applib/ui/layer.c
     pebble/applib/ui/scroll_layer.c
     pebble/applib/ui/menu_layer.c
+    pebble/applib/ui/menu_layer_round.c
     pebble/applib/ui/menu_text_scroll.c
     pebble/applib/ui/shadows.c
     pebble/applib/ui/animation_interpolate.c

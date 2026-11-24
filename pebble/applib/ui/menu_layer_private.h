@@ -31,6 +31,11 @@ typedef struct MenuRenderIterator {
 } MenuRenderIterator;
 
 #if PBL_ROUND
+#include "menu_layer_round.h"
+
+//! How long the highlight takes to morph between the header bubble and a pill
+#define MENU_ROUND_MORPH_MS 320
+
 //! Gap between a right-aligned cell icon and the bezel on round displays, keeping the icon well
 //! inside the end of the highlight pill
 #define MENU_CELL_ROUND_BEZEL_MARGIN 11
@@ -42,22 +47,6 @@ int16_t menu_cell_round_chord_inset(const GContext *ctx, GRect frame);
 //! Moves \a frame, an icon on the right of the cell being drawn, so it sits
 //! MENU_CELL_ROUND_BEZEL_MARGIN in from the bezel at its row, following the curve of the display.
 GRect menu_cell_round_follow_bezel(const GContext *ctx, GRect frame);
-
-//! Gap between the ends of the highlight pill and the bezel on round displays
-#define MENU_ROUND_PILL_BEZEL_MARGIN 4
-//! Gap between the highlight pill and the top and bottom of its row on round displays
-#define MENU_ROUND_PILL_INSET_Y 3
-
-//! Radius of the bubble that highlights the first row of a menu with a round top bubble
-#define MENU_ROUND_BUBBLE_RADIUS 150
-//! A morph's progress from the bubble to the pill when it reaches the pill
-#define MENU_ROUND_MORPH_PILL 1000
-//! How long the highlight takes to morph between the bubble and a pill
-#define MENU_ROUND_MORPH_MS 320
-//! How far, per whole morph past its end, the shape carries on before settling
-#define MENU_ROUND_MORPH_OVERSHOOT_PX 60
-//! How far a morph is from the bubble when the pill starts spreading out from the circle's bottom
-#define MENU_ROUND_MORPH_PILL_GROWS 500
 
 //! Highlights the first row with a bubble hanging from above the screen instead of a pill, the
 //! first row being laid out as a header at the top of the screen. Moving the selection to or from
