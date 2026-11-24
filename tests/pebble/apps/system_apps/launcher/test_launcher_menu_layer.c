@@ -435,6 +435,42 @@ void test_launcher_menu_layer__round_header_layout(void) {
 #endif
 }
 
+//! Round: moving the selection between rows on screen moves only the highlight; the rows keep
+//! their heights and places, and the row under the header rests in the middle.
+void test_launcher_menu_layer__round_rows_stay_in_place(void) {
+#if PBL_ROUND
+  AppMenuDataSource data_source = {};
+  app_menu_data_source_init(&data_source, nullptr, nullptr);
+  app_menu_data_source_enable_icons(&data_source, RESOURCE_ID_MENU_LAYER_GENERIC_WATCHAPP_ICON);
+  LauncherMenuLayer launcher_menu_layer = {};
+  launcher_menu_layer_init(&launcher_menu_layer, &data_source);
+  ScrollLayer *scroll_layer = &launcher_menu_layer.menu_layer.scroll_layer;
+
+  prv_launcher_menu_layer_set_selection_index(&launcher_menu_layer, 0, MenuRowAlignCenter, false);
+  const int16_t offset = scroll_layer_get_content_offset(scroll_layer).y;
+  GRangeVertical header;
+  launcher_menu_layer_get_selection_vertical_range(&launcher_menu_layer, &header);
+  cl_assert_equal_i(header.origin_y, 0);
+
+  prv_launcher_menu_layer_set_selection_index(&launcher_menu_layer, 1, MenuRowAlignCenter, false);
+  cl_assert_equal_i(scroll_layer_get_content_offset(scroll_layer).y, offset);
+  GRangeVertical second;
+  launcher_menu_layer_get_selection_vertical_range(&launcher_menu_layer, &second);
+  cl_assert_equal_i(second.origin_y, header.origin_y + header.size_h);
+  cl_assert_equal_i(second.origin_y + second.size_h / 2, PBL_DISPLAY_HEIGHT / 2);
+
+  // The next step scrolls the list by one row, which keeps its height
+  prv_launcher_menu_layer_set_selection_index(&launcher_menu_layer, 2, MenuRowAlignCenter, false);
+  cl_assert_equal_i(scroll_layer_get_content_offset(scroll_layer).y, offset - second.size_h);
+  GRangeVertical third;
+  launcher_menu_layer_get_selection_vertical_range(&launcher_menu_layer, &third);
+  cl_assert_equal_i(third.size_h, second.size_h);
+
+  launcher_menu_layer_deinit(&launcher_menu_layer);
+  app_menu_data_source_deinit(&data_source);
+#endif
+}
+
 void test_launcher_menu_layer__content_size_change_keeps_selection(void) {
   AppMenuDataSource data_source = {};
   app_menu_data_source_init(&data_source, nullptr, nullptr);
