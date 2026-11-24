@@ -319,7 +319,8 @@ static void prv_alarm_list_select_callback(MenuLayer *menu_layer, MenuIndex *cel
   // Minus 1 because of the "add alarm" cell
   AlarmNode *node =
       (AlarmNode *)list_get_at((ListNode *)data->alarm_list_head, cell_index->row - 1);
-  alarm_detail_window_push(node->id, &node->info, prv_handle_alarm_editor_complete, data);
+  alarm_detail_window_push(node->id, &node->info, &data->menu_layer,
+                           prv_handle_alarm_editor_complete, data);
 }
 
 static void prv_alarm_list_selection_changed_callback(MenuLayer *menu_layer, MenuIndex new_index,
