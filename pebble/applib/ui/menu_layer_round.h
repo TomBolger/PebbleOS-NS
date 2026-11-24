@@ -31,3 +31,15 @@ typedef struct {
 //! @return false if there is no room for a pill
 bool menu_round_pill(GSize display, GRect bounds, GRect frame, int16_t rest_h, int16_t left_margin,
                      MenuRoundShape *pill);
+
+//! How far past one end a round list may rest so that, with the row at that end, \a end_h tall,
+//! selected, its neighbour, \a next_h tall, is in the middle of a frame \a frame_h tall. Resting
+//! no further out keeps the selection within a row of the middle, where the screen is wide.
+int16_t menu_round_end_space(int16_t frame_h, int16_t end_h, int16_t next_h);
+
+//! Where a round centre-focused list rests, as the content offset, with the row at \a span_y,
+//! \a span_h tall, selected: centred, but stopping \a top_space above the content's top and
+//! \a bottom_space below its bottom, the content being \a content_h tall in a frame \a frame_h
+//! tall. Content that fits with that space is centred as a whole.
+int16_t menu_round_rest_offset(int16_t frame_h, int16_t content_h, int16_t span_y, int16_t span_h,
+                               int16_t top_space, int16_t bottom_space);
