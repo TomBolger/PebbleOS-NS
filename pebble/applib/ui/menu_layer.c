@@ -505,17 +505,19 @@ static inline int16_t prv_menu_layer_get_header_height(MenuLayer *menu_layer,
 }
 
 #if PBL_ROUND
-//! Height of \a index as if it were selected
+//! Height of \a index in a round list with the pill, whatever is selected: its height as if it
+//! were selected, at most as tall as fits MENU_ROUND_VISIBLE_ROWS rows in the frame
 static int16_t prv_round_focused_height(MenuLayer *menu_layer, MenuIndex index) {
+  const int16_t frame_h = menu_layer->scroll_layer.layer.frame.size.h;
   if (!menu_layer->callbacks.get_cell_height) {
-    return menu_cell_basic_cell_height();
+    return menu_round_row_height(frame_h, menu_cell_basic_cell_height());
   }
   const MenuIndex selected_index = menu_layer->selection.index;
   menu_layer->selection.index = index;
   const int16_t result =
       menu_layer->callbacks.get_cell_height(menu_layer, &index, menu_layer->callback_context);
   menu_layer->selection.index = selected_index;
-  return result;
+  return menu_round_row_height(frame_h, result);
 }
 
 static bool prv_draws_round_pill(const MenuLayer *menu_layer);

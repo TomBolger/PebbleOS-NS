@@ -95,6 +95,14 @@ void test_menu_layer_round__end_space(void) {
   cl_assert_equal_i(menu_round_end_space(260, 200, ROW_H), 0);
 }
 
+//! Rows keep one height whatever is selected, as many fitting as on a stock round menu
+void test_menu_layer_round__row_height_fits_five_rows(void) {
+  cl_assert_equal_i(menu_round_row_height(260, 68), 52);
+  cl_assert(MENU_ROUND_VISIBLE_ROWS * menu_round_row_height(244, 84) <= 244);
+  // A row shorter than that keeps its height
+  cl_assert_equal_i(menu_round_row_height(260, 40), 40);
+}
+
 void test_menu_layer_round__rest_offset_centres_the_middle(void) {
   cl_assert_equal_i(prv_rest(4, SPACE), 130 - 4 * ROW_H - ROW_H / 2);
 }

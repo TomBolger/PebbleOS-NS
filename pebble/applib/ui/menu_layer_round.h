@@ -37,6 +37,14 @@ bool menu_round_pill(GSize display, GRect bounds, GRect frame, int16_t rest_h, i
 //! no further out keeps the selection within a row of the middle, where the screen is wide.
 int16_t menu_round_end_space(int16_t frame_h, int16_t end_h, int16_t next_h);
 
+//! How many rows of a round list with the pill fit in its frame
+#define MENU_ROUND_VISIBLE_ROWS 5
+
+//! The height of a row of a round list with the pill, \a focused_h tall when selected, in a frame
+//! \a frame_h tall: every row is as tall whatever is selected, so that MENU_ROUND_VISIBLE_ROWS of
+//! them fit, or less if the row is shorter when selected.
+int16_t menu_round_row_height(int16_t frame_h, int16_t focused_h);
+
 //! Where a round centre-focused list rests, as the content offset, with the row at \a span_y,
 //! \a span_h tall, selected: centred, but stopping \a top_space above the content's top and
 //! \a bottom_space below its bottom, the content being \a content_h tall in a frame \a frame_h

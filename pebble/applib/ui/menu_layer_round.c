@@ -45,6 +45,10 @@ int16_t menu_round_end_space(int16_t frame_h, int16_t end_h, int16_t next_h) {
   return PBL_MAX((int16_t)((frame_h / 2) - end_h - (next_h / 2)), 0);
 }
 
+int16_t menu_round_row_height(int16_t frame_h, int16_t focused_h) {
+  return PBL_MIN(focused_h, (int16_t)(frame_h / MENU_ROUND_VISIBLE_ROWS));
+}
+
 int16_t menu_round_rest_offset(int16_t frame_h, int16_t content_h, int16_t span_y, int16_t span_h,
                                int16_t top_space, int16_t bottom_space) {
   // The content may have been measured before the selected row took its height
