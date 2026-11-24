@@ -30,6 +30,8 @@ typedef struct NotificationRoundActionsBanner {
   int16_t bottom;
   //! Centre of the icon in the banner.
   int16_t icon_center_y;
+  //! The card, slid out to the left as the actions come in from the right; may be NULL.
+  Layer *card;
 } NotificationRoundActionsBanner;
 
 //! Called once the menu has closed and its layer is gone.

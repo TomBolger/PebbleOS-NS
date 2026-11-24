@@ -90,6 +90,8 @@ typedef struct {
   int32_t start_radius;
   int32_t start_icon_inset;
   int16_t banner_cover_bottom; // rows 0..this are the old banner, covered as the motion starts
+  Layer *card;                 // slid left in step with the actions' edge
+  int16_t card_x;              // the card's resting x
 
   Animation *motion;
   int32_t progress; // 0..1000, linear in time; eased when drawing
@@ -396,9 +398,26 @@ static void prv_unschedule(Animation **animation) {
   }
 }
 
+//! Moves the card left in step with the edge the actions come in behind, so its text slides
+//! out instead of being covered.
+static void prv_slide_card(void) {
+  if (!s_menu.card) {
+    return;
+  }
+  const int32_t e = notification_round_actions_ease(s_menu.progress);
+  GRect frame = s_menu.card->frame;
+  frame.origin.x = s_menu.card_x - (int16_t)(PBL_DISPLAY_WIDTH * e / 1000);
+  layer_set_frame(s_menu.card, &frame);
+}
+
 static void prv_destroy(void) {
   prv_unschedule(&s_menu.glide);
   prv_unschedule(&s_menu.motion);
+  if (s_menu.card) {
+    GRect frame = s_menu.card->frame;
+    frame.origin.x = s_menu.card_x;
+    layer_set_frame(s_menu.card, &frame);
+  }
   prv_touch_deregister();
   layer_remove_from_parent(&s_menu.layer);
   layer_deinit(&s_menu.layer);
@@ -417,6 +436,7 @@ static void prv_motion_update(Animation *animation, const AnimationProgress p) {
   s_menu.progress =
       s_menu.motion_from + (s_menu.motion_to - s_menu.motion_from) * (int32_t)p /
                                ANIMATION_NORMALIZED_MAX;
+  prv_slide_card();
   layer_mark_dirty(&s_menu.layer);
 }
 
@@ -426,6 +446,7 @@ static void prv_motion_stopped(Animation *animation, bool finished, void *contex
   }
   s_menu.motion = nullptr;
   s_menu.progress = s_menu.motion_to;
+  prv_slide_card();
   if (s_menu.closing) {
     prv_destroy();
   } else {
@@ -459,6 +480,7 @@ static void prv_run_motion(int32_t to) {
   }
   // No animation: jump to the end
   s_menu.progress = to;
+  prv_slide_card();
   if (s_menu.closing) {
     prv_destroy();
   }
@@ -616,6 +638,8 @@ bool notification_round_actions_open(Window *window, ActionMenu *action_menu,
     .window = window,
     .open = true,
     .color = banner->color,
+    .card = banner->card,
+    .card_x = banner->card ? banner->card->frame.origin.x : 0,
   };
   prv_load_icon(&banner->icon);
   s_menu.levels[0] = root;
