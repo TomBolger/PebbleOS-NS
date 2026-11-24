@@ -83,6 +83,18 @@ void notifications_presented_list_add(Uuid *id, NotificationType type) {
       (NotifList *)list_prepend(&s_presented_notifs->list_node, &new_entry->list_node);
 }
 
+void notifications_presented_list_append(Uuid *id, NotificationType type) {
+  if (prv_find_listnode_for_notif(id)) {
+    return;
+  }
+  NotifList *new_entry = prv_add_notification_common(id, type);
+  if (s_presented_notifs) {
+    list_append(&s_presented_notifs->list_node, &new_entry->list_node);
+  } else {
+    s_presented_notifs = new_entry;
+  }
+}
+
 void notifications_presented_list_add_sorted(Uuid *id, NotificationType type, Comparator comparator,
                                              bool ascending) {
   NotifList *new_entry = prv_add_notification_common(id, type);
