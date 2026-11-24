@@ -202,6 +202,20 @@ bool notification_layout_verify(bool existing_attributes[]);
  */
 bool notification_layout_get_image_size(const LayoutLayer *layout, GSize *size_out);
 
+#if PBL_ROUND
+/**
+ * @brief Get where a card draws its round banner circle.
+ *
+ * The circle grows from a dot at the top of the card while the card rises from the bottom of the
+ * screen to its resting place.
+ *
+ * @param origin_y The card's vertical origin in its swap layer.
+ * @param[out] center Center of the circle, relative to the card.
+ * @param[out] radius Radius of the circle.
+ */
+void notification_layout_get_banner_circle(int16_t origin_y, GPoint *center, int16_t *radius);
+#endif
+
 /**
  * @brief Get the icon used when an item has none.
  *
