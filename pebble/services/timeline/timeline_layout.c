@@ -100,12 +100,11 @@ static const TimelineLayoutStyle *prv_get_style(void) {
 }
 
 // Pin text (time, title, subtitle) is left-aligned on rect and right-aligned on round with the
-// right-hand strip; mirror it when the sidebar sits on the left. The round compact list aligns it
-// to the display's edge instead, which it follows.
-static GTextAlignment prv_get_pin_text_alignment(const TimelineLayout *layout) {
+// right-hand strip; mirror it when the sidebar sits on the left.
+static GTextAlignment prv_get_pin_text_alignment(void) {
   const bool on_right = timeline_layer_sidebar_is_on_right();
-  const bool toward_sidebar = PBL_IF_ROUND_ELSE(!layout->info->compact, false);
-  return (on_right == toward_sidebar) ? GTextAlignmentRight : GTextAlignmentLeft;
+  return PBL_IF_RECT_ELSE(on_right ? GTextAlignmentLeft : GTextAlignmentRight,
+                          on_right ? GTextAlignmentRight : GTextAlignmentLeft);
 }
 
 TimelineResourceId timeline_layout_get_icon_resource_id(LayoutLayerMode mode,
@@ -398,31 +397,33 @@ int16_t timeline_layout_get_title_center_y(TimelineLayout *layout) {
   return time_node->cached_size.h + title->node.offset.y + title_center;
 }
 
-int16_t timeline_layout_get_title_bottom_y(TimelineLayout *layout) {
+//! Width of text as it would be on one line as wide as the display, wherever it is laid out
+static int16_t prv_natural_width(const GTextNode *node) {
+  if (node->type == GTextNodeType_Horizontal) {
+    const GTextNodeContainer *container = (const GTextNodeContainer *)node;
+    int16_t width = 0;
+    for (size_t i = 0; i < container->num_nodes; i++) {
+      width += prv_natural_width(container->nodes[i]) + container->nodes[i]->margin.w;
+    }
+    return width;
+  }
+  if (node->type != GTextNodeType_Text && node->type != GTextNodeType_TextDynamic) {
+    return node->cached_size.w - node->margin.w;
+  }
+  const GTextNodeText *text = (const GTextNodeText *)node;
+  const GRect box = {.size = {PBL_DISPLAY_WIDTH, fonts_get_font_height(text->font)}};
+  return graphics_text_layout_get_max_used_size(graphics_context_get_current_context(), text->text,
+                                                text->font, box, GTextOverflowModeTrailingEllipsis,
+                                                GTextAlignmentLeft, nullptr)
+      .w;
+}
+
+int16_t timeline_layout_get_head_width(TimelineLayout *layout) {
   GTextNodeContainer *container = (GTextNodeContainer *)layout->view_node;
-  GTextNode *title = container->nodes[1];
-  return container->nodes[0]->cached_size.h + title->offset.y + title->cached_size.h;
+  return PBL_MAX(prv_natural_width(container->nodes[0]), prv_natural_width(container->nodes[1]));
 }
 
-//! Whether the pin is the selected one of the compact list, laid out in pages where it rests
-static bool prv_is_page_pin(const TimelineLayout *layout) {
-  return (layout->info->compact && layout->layout_layer.mode == LayoutLayerModePinnedFat);
-}
-
-void timeline_layout_get_head_rows(TimelineLayout *layout, int16_t *top_out, int16_t *bottom_out) {
-  GTextNodeContainer *container = (GTextNodeContainer *)layout->view_node;
-  const int16_t time_height = container->nodes[0]->cached_size.h;
-  const GTextNodeText *title = (GTextNodeText *)container->nodes[1];
-  const int16_t font_height = fonts_get_font_height(title->font);
-  const int16_t title_top = time_height + title->node.offset.y;
-  // A pin laid out in pages keeps its time inside the display on its own
-  *top_out = prv_is_page_pin(layout) ? (title_top + font_height / 2) : (time_height / 2);
-  *bottom_out = title_top + font_height;
-}
-
-#if PBL_ROUND
 static void prv_flow_time(TimelineLayout *layout);
-#endif
 
 void timeline_layout_init_view(TimelineLayout *layout, LayoutLayerMode mode) {
   GTextNode *view_node = nullptr;
@@ -447,8 +448,8 @@ void timeline_layout_init_view(TimelineLayout *layout, LayoutLayerMode mode) {
     GTextNodeContainer *container = (GTextNodeContainer *)layout->view_node;
     container->node.offset.y = -timeline_layout_get_title_center_y(layout);
   }
-  prv_flow_time(layout);
 #endif
+  prv_flow_time(layout);
 }
 
 void timeline_layout_deinit_view(TimelineLayout *layout) {
@@ -482,7 +483,7 @@ static GTextNode *prv_create_all_day_text_node(const TimelineLayout *layout) {
   };
   GTextNodeText *text_node = (GTextNodeText *)layout_create_text_node_from_config(
       &layout->layout_layer, &s_all_day_config.text.extent.node);
-  text_node->alignment = prv_get_pin_text_alignment(layout);
+  text_node->alignment = prv_get_pin_text_alignment();
   if (layout->info->compact) {
     // A compact pin's pages start at its top, so its padding holds all of what rises above
     text_node->node.offset.y =
@@ -548,7 +549,7 @@ static GTextNode *prv_create_hour_text_node(const TimelineLayout *layout) {
 
   GTextNodeHorizontal *horizontal_node = (GTextNodeHorizontal *)layout_create_text_node_from_config(
       &layout->layout_layer, &s_horizontal_config.container.extent.node);
-  horizontal_node->horizontal_alignment = prv_get_pin_text_alignment(layout);
+  horizontal_node->horizontal_alignment = prv_get_pin_text_alignment();
   return &horizontal_node->container.node;
 }
 
@@ -650,7 +651,7 @@ static GTextNode *prv_create_pin_view_node(TimelineLayout *layout) {
             ?: attribute_get_string(attributes, AttributeIdShortTitle, nullptr)
             ?: attribute_get_string(attributes, layout->impl->attributes.primary_id, "");
     if (!is_peek) {
-      primary_node->alignment = prv_get_pin_text_alignment(layout);
+      primary_node->alignment = prv_get_pin_text_alignment();
     }
     primary_node->line_spacing_delta = style->primary_line_spacing_delta;
     int num_primary_lines = is_fat ? 2 : 1;
@@ -695,7 +696,7 @@ static GTextNode *prv_create_pin_view_node(TimelineLayout *layout) {
       secondary_node->text = secondary_text;
     }
     if (!is_peek) {
-      secondary_node->alignment = prv_get_pin_text_alignment(layout);
+      secondary_node->alignment = prv_get_pin_text_alignment();
     }
     secondary_node->overflow = is_whole ? GTextOverflowModeWordWrap : overflow;
     graphics_text_node_container_add_child(&vertical_node->container, &secondary_node->node);
@@ -719,7 +720,7 @@ static GTextNode *prv_create_pin_view_node(TimelineLayout *layout) {
     GTextNodeText *body_node = (GTextNodeText *)layout_create_text_node_from_config(
         &layout->layout_layer, &s_body_config.extent.node);
     body_node->text = body_text;
-    body_node->alignment = prv_get_pin_text_alignment(layout);
+    body_node->alignment = prv_get_pin_text_alignment();
     body_node->overflow = GTextOverflowModeWordWrap;
     graphics_text_node_container_add_child(&vertical_node->container, &body_node->node);
   }
@@ -780,12 +781,15 @@ static void prv_get_pin_view_bounds(TimelineLayout *layout, GRect *box_out) {
     box_out->size.h -= concurrent_height;
     return;
   }
-  box_out->size.w -= timeline_layer_get_ideal_sidebar_width();
-  box_out->origin.x += timeline_layer_get_pin_text_origin_x();
+  // On round, text flowing inside a perimeter runs where it lets it, beside the sidebar
+  if (!PBL_IF_ROUND_ELSE(layout->flow_perimeter, nullptr)) {
+    box_out->size.w -= timeline_layer_get_ideal_sidebar_width();
+    box_out->origin.x += timeline_layer_get_pin_text_origin_x();
+  }
   if (layout->info->compact) {
-    // The compact list sizes the pin to its content, so the content has no height limit
+    // The compact list sizes the pin to its content, cut off where the list sets it
     box_out->origin.y = TIMELINE_LAYOUT_COMPACT_PADDING_TOP;
-    box_out->size.h = TIMELINE_MAX_BOX_HEIGHT;
+    box_out->size.h = layout->flow_max_height ? layout->flow_max_height : TIMELINE_MAX_BOX_HEIGHT;
     return;
   }
   if (PBL_IF_ROUND_ELSE(layout->layout_layer.mode == LayoutLayerModePinnedThin, false)) {
@@ -824,10 +828,6 @@ static void prv_get_card_view_bounds(TimelineLayout *layout, GRect *box_out) {
                    TIMELINE_MAX_BOX_HEIGHT);
 }
 
-static bool prv_is_paged_pin(const TimelineLayout *layout) {
-  return (prv_is_page_pin(layout) && layout->page_frame.size.h > 0);
-}
-
 static void prv_render_view(TimelineLayout *layout, GContext *ctx, bool render, GSize *size_out) {
   const bool is_card = (layout->layout_layer.mode == LayoutLayerModeCard);
   const bool is_peek = (layout->layout_layer.mode == LayoutLayerModePeek);
@@ -848,17 +848,19 @@ static void prv_render_view(TimelineLayout *layout, GContext *ctx, bool render, 
     .text_flow = PBL_IF_ROUND_ELSE(paging, false),
     .paging = PBL_IF_ROUND_ELSE(paging, false),
   };
-  GPoint page_origin = layout->page_origin;
-  if (prv_is_paged_pin(layout)) {
-    // Lay the text out where the pin rests, not where it is drawn while it moves or scrolls
-    if (render) {
-      box.origin.y -= layout->page_scroll;
-      page_origin.y += layout->page_scroll;
-    }
-    config.page_frame = &layout->page_frame;
-    config.origin_on_screen = &page_origin;
-    config.text_flow = PBL_IF_ROUND_ELSE(true, false);
+  // A page long enough for no line to break across it, as it only maps the pin to the screen
+  static const GRect flow_page = {{0, INT16_MIN / 2}, {PBL_DISPLAY_WIDTH, INT16_MAX}};
+  if (layout->flow_perimeter) {
+    // Lay the text out where the pin rests, not where it is drawn while it moves
+    config.page_frame = &flow_page;
+    config.origin_on_screen = &layout->flow_origin;
+    config.text_flow = true;
+    config.perimeter = layout->flow_perimeter;
     config.paging = true;
+  }
+  if (render) {
+    // The perimeter can move the lines where the pin is drawn, so the time moves along with them
+    prv_flow_time(layout);
   }
   (render ? graphics_text_node_draw : graphics_text_node_get_size)(layout->view_node, ctx, &box,
                                                                    &config, size_out);
@@ -874,54 +876,47 @@ void timeline_layout_get_size(TimelineLayout *layout, GContext *ctx, GSize *size
   prv_render_view(layout, ctx, render, size_out);
 }
 
-#if PBL_ROUND
-//! Text flow keeps each text node inside the display on its own, and the time is two side by side,
-//! so flowing would push the first onto the second: move them together to inside the display,
-//! where text flow would start them
+//! Text flow keeps each text node inside its perimeter on its own, and the time is two side by
+//! side, so flowing would push one onto the other: move them together to where text flow would put
+//! them
 static void prv_flow_time(TimelineLayout *layout) {
-  if (!prv_is_paged_pin(layout)) {
+  // Rect text runs straight, from where it starts
+  if (!PBL_IF_ROUND_ELSE(layout->flow_perimeter, nullptr)) {
     return;
   }
   GRect box;
   prv_get_pin_view_bounds(layout, &box);
   GTextNode *time_node = ((GTextNodeContainer *)layout->view_node)->nodes[0];
-  const int16_t time_height = time_node->cached_size.h;
-  const GPoint origin = gpoint_add(layout->page_origin, box.origin);
+  // Its margin pulls what follows closer, but its glyphs still take its whole height
+  const int16_t time_height = time_node->cached_size.h - time_node->margin.h;
+  const GPoint origin = gpoint_add(layout->flow_origin, gpoint_add(box.origin, time_node->offset));
   const GSize display_size = {PBL_DISPLAY_WIDTH, PBL_DISPLAY_HEIGHT};
-  // Its glyphs may rise into the padding above it
-  const GRangeVertical rows = {
-    .origin_y = origin.y - TIMELINE_LAYOUT_COMPACT_PADDING_TOP,
-    .size_h = TIMELINE_LAYOUT_COMPACT_PADDING_TOP + time_height,
-  };
-  const GRangeHorizontal inside = g_perimeter_for_display->callback(
-      g_perimeter_for_display, &display_size, rows, TIMELINE_LAYOUT_TEXT_FLOW_INSET);
+  // Across all of it, so each of its parts fits where text flow puts it
+  const GRangeVertical rows = {.origin_y = origin.y, .size_h = time_height};
+  const GRangeHorizontal inside = layout->flow_perimeter->callback(
+      layout->flow_perimeter, &display_size, rows, TIMELINE_LAYOUT_TEXT_FLOW_INSET);
   if (inside.size_w == 0) {
     return;
   }
-  if (prv_get_pin_text_alignment(layout) == GTextAlignmentLeft) {
-    time_node->offset.x += PBL_MAX(inside.origin_x - origin.x, 0);
+  if (prv_get_pin_text_alignment() == GTextAlignmentLeft) {
+    time_node->offset.x += inside.origin_x - origin.x;
   } else {
-    time_node->offset.x -= PBL_MAX(origin.x + box.size.w - (inside.origin_x + inside.size_w), 0);
+    time_node->offset.x -= origin.x + box.size.w - (inside.origin_x + inside.size_w);
   }
 }
-#endif
 
-void timeline_layout_set_page(TimelineLayout *layout, GPoint origin, const GRect *page_frame) {
-  if (gpoint_equal(&layout->page_origin, &origin) && grect_equal(&layout->page_frame, page_frame)) {
+void timeline_layout_set_flow(TimelineLayout *layout, GPoint origin, const GPerimeter *perimeter,
+                              int16_t max_height) {
+  if (gpoint_equal(&layout->flow_origin, &origin) && layout->flow_perimeter == perimeter &&
+      layout->flow_max_height == max_height) {
     return;
   }
-  layout->page_origin = origin;
-  layout->page_frame = *page_frame;
+  layout->flow_origin = origin;
+  layout->flow_perimeter = perimeter;
+  layout->flow_max_height = max_height;
   // The view caches the sizes of its text, so it is built again
   timeline_layout_deinit_view(layout);
   timeline_layout_init_view(layout, layout->layout_layer.mode);
-}
-
-void timeline_layout_set_page_scroll(TimelineLayout *layout, int16_t scroll) {
-  if (layout->page_scroll != scroll) {
-    layout->page_scroll = scroll;
-    layer_mark_dirty((Layer *)layout);
-  }
 }
 
 /////////////////////////
