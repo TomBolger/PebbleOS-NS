@@ -43,3 +43,10 @@ void PBL_WEAK timeline_actions_invoke_action(const TimelineItemAction *action,
 
 void PBL_WEAK timeline_actions_set_dismissed_handler(TimelineActionsDismissedHandler handler) {
 }
+
+ActionMenu *PBL_WEAK timeline_actions_open_hosted_action_menu(ActionMenuConfig *base_config,
+                                                              WindowStack *window_stack,
+                                                              const struct ActionMenuHost *host,
+                                                              void *host_context) {
+  return nullptr;
+}
