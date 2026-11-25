@@ -168,17 +168,19 @@ PBL_T_STATIC void prv_handle_down_click(ClickRecognizerRef recognizer, void *con
 
 static void prv_handle_select_click(ClickRecognizerRef recognizer, void *context) {
   TimelineItemLayer *item_layer = context;
-  TimelineItemActionGroup *action_group = &item_layer->item->action_group;
-  const uint8_t num_actions = action_group->num_actions;
-  ActionMenuLevel *root_level = timeline_actions_create_action_menu_root_level(
-      num_actions, 0, TimelineItemActionSourceTimeline);
-  for (int i = 0; i < num_actions; i++) {
-    timeline_actions_add_action_to_root_level(&action_group->actions[i], root_level);
+  TimelineItem *item = item_layer->item;
+  if (!item || timeline_actions_perform_sole_action(item)) {
+    return;
+  }
+  ActionMenuLevel *root_level =
+      timeline_actions_create_item_root_level(item, TimelineItemActionSourceTimeline);
+  if (!root_level) {
+    return;
   }
   const LayoutColors *colors = layout_get_colors((LayoutLayer *)item_layer->timeline_layout);
   ActionMenuConfig config = {
     .root_level = root_level,
-    .context = item_layer->item,
+    .context = item,
     .colors.background = colors->bg_color,
     .colors.foreground = colors->primary_color,
   };
