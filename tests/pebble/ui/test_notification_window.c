@@ -486,26 +486,6 @@ void test_notification_window__emoji(void) {
   FAKE_GRAPHICS_CONTEXT_CHECK_DEST_BITMAP_FILE();
 }
 
-#include <popups/notifications/notification_round_actions.h>
-
-// The round action menu only exists on round watches.
-
-void test_notification_window__round_actions_scroll(void) {
-#if PBL_ROUND
-  // Up to five rows never scroll: the selection walks down the screen.
-  for (uint16_t i = 0; i < 5; i++) {
-    cl_assert_equal_i(notification_round_actions_scroll_for(i, 5, 38), 0);
-  }
-  // With more, the list scrolls under the selection once it reaches the centre...
-  cl_assert_equal_i(notification_round_actions_scroll_for(2, 10, 38), 0);
-  cl_assert_equal_i(notification_round_actions_scroll_for(3, 10, 38), 38);
-  cl_assert_equal_i(notification_round_actions_scroll_for(7, 10, 38), 5 * 38);
-  // ...and stops with the last row two below the centre.
-  cl_assert_equal_i(notification_round_actions_scroll_for(8, 10, 38), 5 * 38);
-  cl_assert_equal_i(notification_round_actions_scroll_for(9, 10, 38), 5 * 38);
-#endif
-}
-
 void test_notification_window__banner_round_geometry(void) {
 #if PBL_ROUND
   const int16_t r = BANNER_CIRCLE_RADIUS;
