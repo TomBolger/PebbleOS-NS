@@ -41,7 +41,7 @@ void timeline_item_layer_set_item(TimelineItemLayer *item_layer, TimelineItem *i
                                   TimelineLayoutInfo *info);
 
 //! Convenience function to set the \ref ClickConfigProvider callback on the
-//! given window to menu layer's internal click config provider. This internal
-//! click configuration provider, will set up the default UP & DOWN handlers
+//! given window to the item layer's click config provider: the swap layer's UP & DOWN
+//! scrolling, SELECT for the item's actions and, in the timeline app, BACK to its pin
 void timeline_item_layer_set_click_config_onto_window(TimelineItemLayer *item_layer,
                                                       struct Window *window);
