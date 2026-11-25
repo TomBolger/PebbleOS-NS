@@ -216,17 +216,40 @@ static void prv_fill_swept_row(GContext *ctx, GSize display, int16_t y, int16_t 
   }
 }
 
+//! Fills the sidebar's circle turned by \a turn as the sweep has it: the new color in the half of
+//! it on the new color's side of the line, turned with it, the old in the other, both halves filled
+//! alike for their edges to meet the circle's
+static void prv_fill_swept_circle(GContext *ctx, GSize display, int32_t turn,
+                                  const SidebarSweep *sweep) {
+  const GPoint center = health_orbit_center(display, turn);
+  if (gcolor_equal(sweep->from, sweep->to)) {
+    graphics_context_set_fill_color(ctx, sweep->to);
+    graphics_fill_circle(ctx, center, HEALTH_ORBIT_RADIUS);
+    return;
+  }
+  // Clockwise from the top: the line points left at no angle, and is above it as it turns up
+  const int32_t half = TRIG_MAX_ANGLE / 2;
+  const int32_t line =
+      positive_modulo(3 * TRIG_MAX_ANGLE / 4 - sweep->angle + turn, TRIG_MAX_ANGLE);
+  const int32_t start = sweep->from_above ? line : (line + half);
+  graphics_context_set_fill_color(ctx, sweep->to);
+  graphics_fill_radial_internal(ctx, center, 0, HEALTH_ORBIT_RADIUS, start, start + half);
+  graphics_context_set_fill_color(ctx, sweep->from);
+  graphics_fill_radial_internal(ctx, center, 0, HEALTH_ORBIT_RADIUS, start + half,
+                                start + TRIG_MAX_ANGLE);
+}
+
 //! Fills the sidebar turned by \a turn. At rest on the right and at the top it is filled as the
 //! timeline fills it, a row or a column at a time, notched on the right, where the section's color
-//! can sweep in; on the way, its circle with the notch, closing as it turns up, cut out in the
-//! background color.
+//! can sweep in; on the way, its circle, the color sweeping in over it as well, with the notch,
+//! closing as it turns up, cut out in the background color.
 static void prv_fill_sidebar(GContext *ctx, GSize display, int32_t turn, const SidebarSweep *sweep,
                              GColor bg) {
   graphics_context_set_fill_color(ctx, sweep->to);
   const int16_t notch_width = health_orbit_notch_width(turn);
-  if (turn == 0 || turn == -QUARTER_TURN) {
+  const bool swept = !gcolor_equal(sweep->from, sweep->to);
+  if (turn == 0 || (turn == -QUARTER_TURN && !swept)) {
     const TimelineListSidebar sidebar = health_orbit_sidebar(display, notch_width);
-    const bool swept = (turn == 0) && !gcolor_equal(sweep->from, sweep->to);
     for (int16_t i = 0; i < display.h; i++) {
       const int16_t depth = timeline_list_sidebar_depth(&sidebar, i);
       if (depth <= 0) {
@@ -242,7 +265,7 @@ static void prv_fill_sidebar(GContext *ctx, GSize display, int32_t turn, const S
     }
     return;
   }
-  graphics_fill_circle(ctx, health_orbit_center(display, turn), HEALTH_ORBIT_RADIUS);
+  prv_fill_swept_circle(ctx, display, turn, sweep);
   if (notch_width <= 0) {
     return;
   }
@@ -409,12 +432,17 @@ static SidebarSweep prv_get_sidebar_sweep(HealthOrbitView *view, GSize display) 
                                ? PBL_CLAMP((travel - remaining) * ANIMATION_NORMALIZED_MAX / travel,
                                            0, ANIMATION_NORMALIZED_MAX)
                                : ANIMATION_NORMALIZED_MAX;
+  // Once it has swept all of the sidebar, the sidebar is in the section's color
+  const GColor to = health_orbit_section_color(view->section);
+  if (progress == ANIMATION_NORMALIZED_MAX) {
+    return (SidebarSweep){.from = to, .to = to};
+  }
   // The line starts and ends a little past where the sidebar leaves the display
   const int32_t reach = health_orbit_sidebar_reach(display) + TRIG_MAX_ANGLE / 64;
   const int32_t angle = -reach + (2 * reach * progress) / ANIMATION_NORMALIZED_MAX;
   return (SidebarSweep){
     .from = health_orbit_section_color(view->sidebar_from),
-    .to = health_orbit_section_color(view->section),
+    .to = to,
     .angle = view->orbit_down ? -angle : angle,
     .from_above = !view->orbit_down,
   };
