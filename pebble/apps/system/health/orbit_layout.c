@@ -65,11 +65,24 @@ GPoint health_orbit_notch_tip(GSize display, int32_t turn) {
 
 GPoint health_orbit_bubble_center(GSize display, int16_t offset, int32_t turn) {
   const TimelineListArc arc = prv_arc(display, 0);
-  const int16_t distance = HEALTH_ORBIT_BUBBLE_DISTANCE;
-  const int32_t angle = timeline_list_arc_row_angle(&arc, distance, display.h / 2 + offset);
+  // Rounded down, so a full turn along lands on the same angle
+  const int32_t turned = (int32_t)offset * TRIG_MAX_ANGLE;
+  const int32_t angle = (turned >= 0)
+                            ? (turned / HEALTH_ORBIT_LENGTH)
+                            : -((-turned + HEALTH_ORBIT_LENGTH - 1) / HEALTH_ORBIT_LENGTH);
   int16_t y;
-  const int16_t inset = timeline_list_arc_icon_inset(&arc, distance, angle, &y);
+  const int16_t inset = timeline_list_arc_icon_inset(&arc, HEALTH_ORBIT_BUBBLE_DISTANCE, angle, &y);
   return health_orbit_turn(display, GPoint(display.w - 1 - inset, y), turn);
+}
+
+int16_t health_orbit_wrap_offset(int16_t offset) {
+  int16_t wrapped = offset % HEALTH_ORBIT_LENGTH;
+  if (wrapped > HEALTH_ORBIT_LENGTH / 2) {
+    wrapped -= HEALTH_ORBIT_LENGTH;
+  } else if (wrapped <= -HEALTH_ORBIT_LENGTH / 2) {
+    wrapped += HEALTH_ORBIT_LENGTH;
+  }
+  return wrapped;
 }
 
 GRangeHorizontal health_orbit_text_range(GSize display, int16_t inner_radius, int16_t top,
