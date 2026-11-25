@@ -948,7 +948,7 @@ static void prv_hold_release(SwapLayer *swap_layer) {
 // CLICK HANDLERS
 ///////////////////////
 
-ScrollDirection prv_direction_for_recognizer(ClickRecognizerRef recognizer) {
+static ScrollDirection prv_direction_for_recognizer(ClickRecognizerRef recognizer) {
   ButtonId button_id = click_recognizer_get_button_id(recognizer);
   return (button_id == BUTTON_ID_UP) ? ScrollDirectionUp : ScrollDirectionDown;
 }
