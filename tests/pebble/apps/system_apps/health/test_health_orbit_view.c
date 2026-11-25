@@ -151,6 +151,36 @@ void test_health_orbit_view__render_sleep(void) {
   cl_check(gbitmap_pbi_eq(&s_ctx.dest_bitmap, TEST_PBI_FILE));
 }
 
+void test_health_orbit_view__render_sleep_no_data(void) {
+  s_data = (HealthData){};
+  prv_render(&s_data, HealthOrbitSectionSleep);
+  cl_check(gbitmap_pbi_eq(&s_ctx.dest_bitmap, TEST_PBI_FILE));
+}
+
+void test_health_orbit_view__render_sleep_long(void) {
+  // A long night, longer than typical, fits its lines, pill and bubbles
+  s_data = prv_sample_data();
+  s_data.sleep_data[0] = HOURS(11, 58);
+  s_data.deep_sleep = HOURS(10, 59);
+  s_data.typical_sleep = HOURS(8, 59);
+  s_data.monthly_sleep_average = HOURS(10, 48);
+  s_data.sleep_start = HOURS(20, 58);
+  s_data.sleep_end = HOURS(8, 56);
+  prv_render(&s_data, HealthOrbitSectionSleep);
+  cl_check(gbitmap_pbi_eq(&s_ctx.dest_bitmap, TEST_PBI_FILE));
+}
+
+void test_health_orbit_view__render_sleep_nap(void) {
+  // Under an hour, only the minutes
+  s_data = prv_sample_data();
+  s_data.sleep_data[0] = HOURS(0, 42);
+  s_data.deep_sleep = HOURS(0, 9);
+  s_data.sleep_start = HOURS(13, 5);
+  s_data.sleep_end = HOURS(13, 47);
+  prv_render(&s_data, HealthOrbitSectionSleep);
+  cl_check(gbitmap_pbi_eq(&s_ctx.dest_bitmap, TEST_PBI_FILE));
+}
+
 void test_health_orbit_view__launch_on_sleep(void) {
   s_launch_args = HealthCardType_Sleep;
   HealthOrbitView *view = health_orbit_view_create(&(HealthData){});

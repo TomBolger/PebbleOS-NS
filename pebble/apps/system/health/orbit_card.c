@@ -11,6 +11,7 @@
 
 #include <pbl/i18n/i18n.h>
 #include <pbl/services/activity/health_util.h>
+#include <pbl/services/clock.h>
 #include <pbl/util/math.h>
 #include <pbl/util/size.h>
 #include <pbl/util/trig.h>
@@ -42,6 +43,11 @@
 //! Space between the text and the ends of a pill
 #define PILL_PADDING 6
 
+//! Space between a bubble's text and its edge, and the rows of its value and unit from its middle
+#define BUBBLE_PADDING 3
+#define BUBBLE_VALUE_Y (-5)
+#define BUBBLE_UNIT_Y  11
+
 //! The typical tick across a ring
 #define TICK_WIDTH 3
 
@@ -53,6 +59,10 @@ static const GPoint s_bubble_offsets[HEALTH_ORBIT_CARD_MAX_BUBBLES] = {
 };
 
 #define TYPICAL_COLOR GColorYellow
+
+//! PebbleOS has no sleep goal, so the Sleep ring fills toward the typical sleep, or toward this
+//! much sleep until there is a typical night
+#define SLEEP_RING_FALLBACK_TARGET (8 * PBL_SEC_PER_HOUR)
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 // Text
@@ -67,6 +77,7 @@ typedef struct OrbitFont {
 static const OrbitFont s_gothic_14 = {FONT_KEY_GOTHIC_14, 5, 14};
 static const OrbitFont s_gothic_14_bold = {FONT_KEY_GOTHIC_14_BOLD, 5, 14};
 static const OrbitFont s_gothic_18_bold = {FONT_KEY_GOTHIC_18_BOLD, 7, 18};
+static const OrbitFont s_gothic_24_bold = {FONT_KEY_GOTHIC_24_BOLD, 10, 24};
 static const OrbitFont s_leco_38_bold = {FONT_KEY_LECO_38_BOLD_NUMBERS, 11, 38};
 
 //! A run of text in one font and color
@@ -138,6 +149,40 @@ static void prv_format_count_delta(char *buffer, size_t size, int32_t delta) {
   prv_format_count(buffer + 1, size - 1, PBL_ABS(delta));
 }
 
+//! A duration in hours and minutes, as "7h 25m", or "25m" under an hour
+static void prv_format_duration(char *buffer, size_t size, int32_t seconds, void *i18n_owner) {
+  const int32_t minutes = PBL_ABS(seconds) / PBL_SEC_PER_MIN;
+  if (minutes >= PBL_MIN_PER_HOUR) {
+    /// A duration in hours and minutes, as "7h 25m"
+    snprintf(buffer, size, pbl_i18n_get("%dh %dm", i18n_owner), (int)(minutes / PBL_MIN_PER_HOUR),
+             (int)(minutes % PBL_MIN_PER_HOUR));
+  } else {
+    /// A duration in minutes, as "25m"
+    snprintf(buffer, size, pbl_i18n_get("%dm", i18n_owner), (int)minutes);
+  }
+}
+
+//! A duration in hours and minutes as short as fits a bubble, as "1h40", or "40m" under an hour
+static void prv_format_short_duration(char *buffer, size_t size, int32_t seconds,
+                                      void *i18n_owner) {
+  const int32_t minutes = PBL_MAX(seconds, 0) / PBL_SEC_PER_MIN;
+  if (minutes >= PBL_MIN_PER_HOUR) {
+    /// A duration in hours and minutes in a bubble, as "1h40"
+    snprintf(buffer, size, pbl_i18n_get("%dh%02d", i18n_owner), (int)(minutes / PBL_MIN_PER_HOUR),
+             (int)(minutes % PBL_MIN_PER_HOUR));
+  } else {
+    prv_format_duration(buffer, size, seconds, i18n_owner);
+  }
+}
+
+//! A time of day in seconds from midnight, before midnight if negative, as "11:48 PM"
+static void prv_format_time_of_day(char *buffer, size_t size, int32_t seconds) {
+  const int32_t minute =
+      ((seconds / PBL_SEC_PER_MIN) % PBL_MIN_PER_DAY + PBL_MIN_PER_DAY) % PBL_MIN_PER_DAY;
+  clock_format_time(buffer, size, minute / PBL_MIN_PER_HOUR, minute % PBL_MIN_PER_HOUR,
+                    true /* add_space */);
+}
+
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 // Shapes
 
@@ -183,8 +228,15 @@ static void prv_draw_bubble(GContext *ctx, GPoint center, int16_t radius,
   clip.origin = gpoint_add(clip.origin, state.drawing_box.origin);
   grect_clip(&clip, &state.clip_box);
   ctx->draw_state.clip_box = clip;
-  prv_draw_text(ctx, bubble->value, &s_gothic_18_bold, GColorWhite, center.x, center.y - 5);
-  prv_draw_text(ctx, bubble->unit, &s_gothic_14, bubble->unit_color, center.x, center.y + 11);
+  // A value too wide for the bubble across the top of its capitals takes the smaller font
+  const OrbitRun value = {bubble->value, &s_gothic_18_bold, GColorWhite};
+  const int32_t r = HEALTH_ORBIT_CARD_BUBBLE_RADIUS;
+  const int32_t cap_top = BUBBLE_VALUE_Y - (value.font->baseline - value.font->cap_top + 1) / 2;
+  const int16_t room = 2 * (integer_sqrt(r * r - cap_top * cap_top) - BUBBLE_PADDING);
+  const OrbitFont *font = (prv_run_width(ctx, &value) <= room) ? value.font : &s_gothic_14_bold;
+  prv_draw_text(ctx, bubble->value, font, GColorWhite, center.x, center.y + BUBBLE_VALUE_Y);
+  prv_draw_text(ctx, bubble->unit, &s_gothic_14, bubble->unit_color, center.x,
+                center.y + BUBBLE_UNIT_Y);
   graphics_context_set_drawing_state(ctx, state);
 }
 
@@ -230,14 +282,37 @@ static OrbitRing prv_steps_ring(HealthData *health_data, int16_t outer_radius, i
   };
 }
 
+//! The Sleep ring: last night's sleep toward the typical sleep, which it has a tick at, with the
+//! deep sleep from its start
+static OrbitRing prv_sleep_ring(HealthData *health_data, int16_t outer_radius, int16_t thickness,
+                                bool typical_tick) {
+  const int32_t sleep = health_data_current_sleep_get(health_data);
+  const int32_t typical = health_data_sleep_get_cur_wday_average(health_data);
+  const int32_t target = (typical > 0) ? typical : SLEEP_RING_FALLBACK_TARGET;
+  return (OrbitRing){
+    .outer_radius = outer_radius,
+    .thickness = thickness,
+    .color = GColorVividCerulean,
+    .track_color = GColorDukeBlue,
+    .value = sleep,
+    .full = PBL_MAX(target, sleep),
+    .typical = typical_tick ? typical : 0,
+    .inner_value = health_data_current_deep_sleep_get(health_data),
+    .inner_color = GColorVeryLightBlue,
+  };
+}
+
 static int prv_get_rings(HealthOrbitSection section, HealthData *health_data,
                          OrbitRing rings_out[HEALTH_ORBIT_CARD_MAX_RINGS]) {
   switch (section) {
     case HealthOrbitSectionSteps:
       rings_out[0] = prv_steps_ring(health_data, CARD_RING_OUTER, CARD_RING_THICKNESS);
       return 1;
-    case HealthOrbitSectionToday:
     case HealthOrbitSectionSleep:
+      rings_out[0] = prv_sleep_ring(health_data, CARD_RING_OUTER, CARD_RING_THICKNESS,
+                                    true /* typical_tick */);
+      return 1;
+    case HealthOrbitSectionToday:
     case HealthOrbitSectionCount:
       break;
   }
@@ -326,7 +401,7 @@ static void prv_draw_steps(GContext *ctx, GSize display, const HealthOrbitCard *
   prv_format_count(typical_text, sizeof(typical_text), typical_now);
   prv_format_count_delta(delta_text, sizeof(delta_text), steps - typical_now);
   const OrbitRun pill_runs[] = {
-    /// Short for typical, before the typical steps by now
+    /// Short for typical, before the typical steps or sleep
     {pbl_i18n_get("TYP", i18n_owner), &s_gothic_14_bold, TYPICAL_COLOR},
     {(typical_now > 0) ? typical_text : EM_DASH, &s_gothic_14_bold, GColorWhite},
     {delta_text, &s_gothic_14_bold, (steps >= typical_now) ? GColorScreaminGreen : GColorMelon},
@@ -371,6 +446,114 @@ static void prv_draw_steps(GContext *ctx, GSize display, const HealthOrbitCard *
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
+// Sleep
+
+//! Last night's sleep in large numbers, as "6h52m"
+static void prv_draw_sleep_duration(GContext *ctx, int32_t seconds, int16_t center_x, int16_t y,
+                                    void *i18n_owner) {
+  const GColor color = GColorVividCerulean;
+  if (seconds <= 0) {
+    prv_draw_text(ctx, EM_DASH, &s_gothic_24_bold, color, center_x, y);
+    return;
+  }
+  const int32_t minutes = seconds / PBL_SEC_PER_MIN;
+  char hours_text[12];
+  char minutes_text[12];
+  snprintf(hours_text, sizeof(hours_text), "%d", (int)(minutes / PBL_MIN_PER_HOUR));
+  snprintf(minutes_text, sizeof(minutes_text), (minutes >= PBL_MIN_PER_HOUR) ? "%02d" : "%d",
+           (int)(minutes % PBL_MIN_PER_HOUR));
+  const OrbitRun runs[] = {
+    {hours_text, &s_leco_38_bold, color},
+    /// Short for hours, after the hours of sleep in large numbers
+    {pbl_i18n_get("h", i18n_owner), &s_gothic_24_bold, color},
+    {minutes_text, &s_leco_38_bold, color},
+    /// Short for minutes, after the minutes of sleep in large numbers
+    {pbl_i18n_get("m", i18n_owner), &s_gothic_24_bold, color},
+  };
+  // Under an hour, only the minutes
+  const int first = (minutes >= PBL_MIN_PER_HOUR) ? 0 : 2;
+  prv_draw_runs(ctx, &runs[first], PBL_ARRAY_SIZE(runs) - first, 1, center_x, y);
+}
+
+static void prv_draw_sleep(GContext *ctx, GSize display, const HealthOrbitCard *card,
+                           HealthData *health_data, void *i18n_owner) {
+  const int16_t middle = display.h / 2;
+  const int16_t dy = card->offset_y;
+  const int32_t sleep = health_data_current_sleep_get(health_data);
+  const int32_t typical = health_data_sleep_get_cur_wday_average(health_data);
+  const int32_t deep = health_data_current_deep_sleep_get(health_data);
+
+  /// The title of the Sleep card of the round Health app
+  prv_draw_text(ctx, pbl_i18n_get("LAST NIGHT", i18n_owner), &s_gothic_14_bold, GColorBabyBlueEyes,
+                prv_line_center_x(display, CARD_INNER_RADIUS, middle + CARD_TITLE_Y, 12),
+                middle + CARD_TITLE_Y + dy);
+
+  prv_draw_sleep_duration(ctx, sleep,
+                          prv_line_center_x(display, CARD_INNER_RADIUS, middle + CARD_VALUE_Y, 28),
+                          middle + CARD_VALUE_Y + dy, i18n_owner);
+
+  const int32_t start = health_data_sleep_get_start_time(health_data);
+  const int32_t end = health_data_sleep_get_end_time(health_data);
+  if (sleep > 0 && (start || end)) {
+    char start_text[16];
+    char end_text[16];
+    prv_format_time_of_day(start_text, sizeof(start_text), start);
+    prv_format_time_of_day(end_text, sizeof(end_text), end);
+    char span[40];
+    snprintf(span, sizeof(span), "%s " EN_DASH " %s", start_text, end_text);
+    prv_draw_text(ctx, span, &s_gothic_18_bold, GColorBabyBlueEyes,
+                  prv_line_center_x(display, CARD_INNER_RADIUS, middle + CARD_SUB_Y, 14),
+                  middle + CARD_SUB_Y + dy);
+  }
+
+  char typical_text[16];
+  prv_format_duration(typical_text, sizeof(typical_text), typical, i18n_owner);
+  char delta_text[16];
+  delta_text[0] = (sleep < typical) ? '-' : '+';
+  prv_format_duration(delta_text + 1, sizeof(delta_text) - 1, sleep - typical, i18n_owner);
+  const OrbitRun pill_runs[] = {
+    {pbl_i18n_get("TYP", i18n_owner), &s_gothic_14_bold, TYPICAL_COLOR},
+    {(typical > 0) ? typical_text : EM_DASH, &s_gothic_14_bold, GColorWhite},
+    {delta_text, &s_gothic_14_bold, (sleep < typical) ? GColorMelon : GColorScreaminGreen},
+  };
+  const int num_pill_runs = (typical > 0 && sleep > 0) ? 3 : 2;
+  const GPoint pill_center =
+      GPoint(prv_line_center_x(display, CARD_INNER_RADIUS, middle + CARD_PILL_Y, CARD_PILL_H),
+             middle + CARD_PILL_Y + dy);
+  prv_draw_pill(ctx, pill_center, CARD_PILL_W, CARD_PILL_H, GColorLiberty, pill_runs, num_pill_runs,
+                5);
+
+  char deep_text[16];
+  char share_text[16];
+  char average_text[16];
+  if (deep > 0) {
+    prv_format_short_duration(deep_text, sizeof(deep_text), deep, i18n_owner);
+  } else {
+    strncpy(deep_text, EN_DASH, sizeof(deep_text));
+  }
+  if (deep > 0 && sleep > 0) {
+    snprintf(share_text, sizeof(share_text), "%d%%", (int)(PBL_MIN(deep, sleep) * 100 / sleep));
+  } else {
+    strncpy(share_text, EN_DASH, sizeof(share_text));
+  }
+  const int32_t average = health_data_sleep_get_monthly_average(health_data);
+  if (average > 0) {
+    prv_format_short_duration(average_text, sizeof(average_text), average, i18n_owner);
+  } else {
+    strncpy(average_text, EN_DASH, sizeof(average_text));
+  }
+  /// Below the deep sleep in a bubble of the round Health app
+  const char *deep_unit = pbl_i18n_get("deep", i18n_owner);
+  const OrbitBubble bubbles[] = {
+    {GColorVeryLightBlue, deep_text, deep_unit, GColorWhite},
+    {GColorDukeBlue, share_text, deep_unit, GColorBabyBlueEyes},
+    /// Below the 30 day average sleep in a bubble of the round Health app
+    {GColorDukeBlue, average_text, pbl_i18n_get("30d", i18n_owner), GColorBabyBlueEyes},
+  };
+  prv_draw_bubbles(ctx, display, card, bubbles, PBL_ARRAY_SIZE(bubbles));
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
 // API Functions
 
 GColor health_orbit_section_color(HealthOrbitSection section) {
@@ -391,7 +574,7 @@ GColor health_orbit_section_bg_color(HealthOrbitSection section) {
 }
 
 int health_orbit_card_get_num_bubbles(HealthOrbitSection section) {
-  return (section == HealthOrbitSectionSteps) ? HEALTH_ORBIT_CARD_MAX_BUBBLES : 0;
+  return (section == HealthOrbitSectionToday) ? 0 : HEALTH_ORBIT_CARD_MAX_BUBBLES;
 }
 
 void health_orbit_card_init(HealthOrbitCard *card, HealthOrbitSection section) {
@@ -426,8 +609,10 @@ void health_orbit_card_draw_content(GContext *ctx, const HealthOrbitCard *card,
     case HealthOrbitSectionSteps:
       prv_draw_steps(ctx, display, card, health_data, i18n_owner);
       break;
-    case HealthOrbitSectionToday:
     case HealthOrbitSectionSleep:
+      prv_draw_sleep(ctx, display, card, health_data, i18n_owner);
+      break;
+    case HealthOrbitSectionToday:
     case HealthOrbitSectionCount:
       break;
   }
