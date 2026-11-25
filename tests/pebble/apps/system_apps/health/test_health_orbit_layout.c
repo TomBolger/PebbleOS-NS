@@ -98,11 +98,11 @@ void test_health_orbit_layout__bubbles_orbit_the_sidebar(void) {
   cl_assert_equal_i(
       selected.x - HEALTH_ORBIT_SELECTED_RADIUS - health_orbit_notch_tip(DISPLAY, 0).x,
       HEALTH_ORBIT_NOTCH_GAP);
-  // Neighbours a step above and below, on the same circle, further right as the circle curves
+  // Neighbours a step along above and below, on the same circle, further right as it curves
   const GPoint above = health_orbit_bubble_center(DISPLAY, -HEALTH_ORBIT_STEP, 0);
   const GPoint below = health_orbit_bubble_center(DISPLAY, HEALTH_ORBIT_STEP, 0);
-  cl_assert_equal_i(above.y, MID_Y - HEALTH_ORBIT_STEP);
-  cl_assert_equal_i(below.y, MID_Y + HEALTH_ORBIT_STEP);
+  cl_assert_equal_i(above.y, MID_Y - 42);
+  cl_assert_equal_i(below.y - MID_Y, MID_Y - above.y);
   cl_assert_equal_i(above.x, below.x);
   cl_assert(below.x > selected.x);
   for (int16_t offset = -2 * HEALTH_ORBIT_STEP; offset <= 2 * HEALTH_ORBIT_STEP; offset += 7) {
@@ -117,6 +117,28 @@ void test_health_orbit_layout__bubbles_orbit_the_sidebar(void) {
   const GPoint top = health_orbit_bubble_center(DISPLAY, 0, -QUARTER);
   cl_assert_equal_i(top.x, PBL_DISPLAY_WIDTH / 2);
   cl_assert_equal_i(top.y, PBL_DISPLAY_WIDTH - 1 - selected.x);
+}
+
+void test_health_orbit_layout__orbit_goes_all_the_way_round(void) {
+  // A full turn round the sidebar's center is the orbit's length
+  cl_assert(PBL_ABS(prv_distance(health_orbit_bubble_center(DISPLAY, 0, 0),
+                                 health_orbit_bubble_center(DISPLAY, HEALTH_ORBIT_LENGTH / 2, 0)) -
+                    2 * HEALTH_ORBIT_BUBBLE_DISTANCE) <= 1);
+  for (int16_t offset = -HEALTH_ORBIT_STEP; offset <= HEALTH_ORBIT_STEP; offset += 5) {
+    cl_assert_equal_gpoint(health_orbit_bubble_center(DISPLAY, offset + HEALTH_ORBIT_LENGTH, 0),
+                           health_orbit_bubble_center(DISPLAY, offset, 0));
+    cl_assert_equal_gpoint(health_orbit_bubble_center(DISPLAY, offset - HEALTH_ORBIT_LENGTH, 0),
+                           health_orbit_bubble_center(DISPLAY, offset, 0));
+  }
+  // Half way round, behind the sidebar, off the display
+  cl_assert(health_orbit_bubble_center(DISPLAY, HEALTH_ORBIT_LENGTH / 2, 0).x >= PBL_DISPLAY_WIDTH);
+  // Offsets the shorter way round
+  cl_assert_equal_i(health_orbit_wrap_offset(HEALTH_ORBIT_STEP), HEALTH_ORBIT_STEP);
+  cl_assert_equal_i(health_orbit_wrap_offset(-HEALTH_ORBIT_STEP), -HEALTH_ORBIT_STEP);
+  cl_assert_equal_i(health_orbit_wrap_offset(HEALTH_ORBIT_LENGTH - HEALTH_ORBIT_STEP),
+                    -HEALTH_ORBIT_STEP);
+  cl_assert_equal_i(health_orbit_wrap_offset(2 * HEALTH_ORBIT_STEP - HEALTH_ORBIT_LENGTH),
+                    2 * HEALTH_ORBIT_STEP);
 }
 
 void test_health_orbit_layout__banner_bubble_is_centered_in_the_banner(void) {
