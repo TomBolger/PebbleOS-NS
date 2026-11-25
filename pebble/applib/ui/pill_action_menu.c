@@ -86,8 +86,6 @@ typedef struct PillActionMenu {
   GColor text_color;
   GColor background;
   GColor foreground;
-  GColor menu_highlight[MenuLayerColor_Count];
-  bool menu_highlight_follows_theme;
   ClickConfigProvider window_click_config;
   void *window_click_context;
   bool window_overrides_back;
@@ -172,22 +170,6 @@ static void prv_capture_row(PillActionMenu *menu) {
     };
   }
   root->bounds = slid;
-}
-
-//! The menu's own highlight would show a second pill under the one that morphs: hide it while
-//! the action menu is open by highlighting with the normal colours
-static void prv_hide_menu_highlight(PillActionMenu *menu, bool hide) {
-  MenuLayer *menu_layer = menu->menu_layer;
-  if (hide) {
-    memcpy(menu->menu_highlight, menu_layer->highlight_colors, sizeof(menu->menu_highlight));
-    menu->menu_highlight_follows_theme = menu_layer->highlight_colors_follow_theme;
-    memcpy(menu_layer->highlight_colors, menu_layer->normal_colors, sizeof(menu->menu_highlight));
-    menu_layer->highlight_colors_follow_theme = menu_layer->normal_colors_follow_theme;
-  } else {
-    memcpy(menu_layer->highlight_colors, menu->menu_highlight, sizeof(menu->menu_highlight));
-    menu_layer->highlight_colors_follow_theme = menu->menu_highlight_follows_theme;
-  }
-  layer_mark_dirty(menu_layer_get_layer(menu_layer));
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -282,9 +264,9 @@ static void prv_draw_row_content(PillActionMenu *menu, GContext *ctx, GRect clip
   clip.origin = gpoint_add(clip.origin, prev_state.drawing_box.origin);
   grect_clip(&clip, &prev_state.clip_box);
   ctx->draw_state.clip_box = clip;
-  ctx->draw_state.text_color = menu->menu_highlight[MenuLayerColorForeground];
-  ctx->draw_state.tint_color = menu->menu_highlight[MenuLayerColorForeground];
-  ctx->draw_state.fill_color = menu->menu_highlight[MenuLayerColorBackground];
+  ctx->draw_state.text_color = menu->text_color;
+  ctx->draw_state.tint_color = menu->text_color;
+  ctx->draw_state.fill_color = menu->color;
   MenuIndex index = menu_layer->selection.index;
   menu_layer->callbacks.draw_row(ctx, &cell, &index, menu_layer->callback_context);
   graphics_context_set_drawing_state(ctx, prev_state);
@@ -536,7 +518,7 @@ static void prv_destroy(PillActionMenu *menu) {
   prv_unschedule(&menu->motion);
   menu->progress = 0;
   prv_slide_window(menu);
-  prv_hide_menu_highlight(menu, false);
+  menu_layer_set_round_pill_hidden(menu->menu_layer, false);
   prv_touch_deregister(menu);
   layer_remove_from_parent(&menu->layer);
   layer_deinit(&menu->layer);
@@ -748,10 +730,7 @@ static void prv_host_close(ActionMenu *action_menu, bool animated, void *context
     prv_destroy(menu);
     return;
   }
-  // The highlight shows the row as the menu has it now
-  prv_hide_menu_highlight(menu, false);
   prv_capture_row(menu);
-  prv_hide_menu_highlight(menu, true);
   prv_run_motion(menu, 0);
 }
 
@@ -802,7 +781,8 @@ ActionMenu *pill_action_menu_open(const PillActionMenuConfig *config,
       menu_round_list_scroll(prv_selected(menu), prv_count(menu), ROW_HEIGHT, EDGE_ROWS);
 
   prv_capture_row(menu);
-  prv_hide_menu_highlight(menu, true);
+  // The menu's own pill would show under the one that morphs
+  menu_layer_set_round_pill_hidden(menu_layer, true);
 
   Layer *root_layer = window_get_root_layer(window);
   layer_init(&menu->layer, &GRect(0, 0, root_layer->frame.size.w, root_layer->frame.size.h));
