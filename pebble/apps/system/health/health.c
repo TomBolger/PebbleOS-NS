@@ -5,6 +5,7 @@
 
 #include "card_view.h"
 #include "data.h"
+#include "orbit_view.h"
 
 #include <pbl/services/activity/activity.h>
 #include <pbl/services/timeline/timeline.h>
@@ -31,9 +32,21 @@
 
 //! Main structure for application
 typedef struct HealthAppData {
+#if PBL_ROUND
+  HealthOrbitView *orbit_view;
+#else
   HealthCardView *health_card_view;
+#endif
   HealthData *health_data;
 } HealthAppData;
+
+static void prv_mark_dirty(HealthAppData *health_app_data) {
+#if PBL_ROUND
+  health_orbit_view_mark_dirty(health_app_data->orbit_view);
+#else
+  health_card_view_mark_dirty(health_app_data->health_card_view);
+#endif
+}
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 // Callbacks
@@ -45,7 +58,7 @@ typedef struct HealthAppData {
 static void prv_tick_timer_handler(struct pbl_tm *tick_time, TimeUnits units_changed) {
   HealthAppData *health_app_data = app_state_get_user_data();
   health_data_update_step_derived_metrics(health_app_data->health_data);
-  health_card_view_mark_dirty(health_app_data->health_card_view);
+  prv_mark_dirty(health_app_data);
 }
 
 // Activity change callback
@@ -65,7 +78,7 @@ static void prv_health_service_event_handler(HealthEventType event, void *contex
   } else {
     health_data_update(health_app_data->health_data);
   }
-  health_card_view_mark_dirty(health_app_data->health_card_view);
+  prv_mark_dirty(health_app_data);
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -133,9 +146,14 @@ static void prv_initialize(void) {
   health_app_data->health_data = health_data_create();
   health_data_update_quick(health_app_data->health_data);
 
+#if PBL_ROUND
+  health_app_data->orbit_view = health_orbit_view_create(health_app_data->health_data);
+  health_orbit_view_push(health_app_data->orbit_view);
+#else
   health_app_data->health_card_view = health_card_view_create(health_app_data->health_data);
 
   health_card_view_push(health_app_data->health_card_view);
+#endif
 
   // Show insights onboarding if user hasn't seen it yet and doesn't have insights enabled
   const bool insights_enabled =
@@ -158,7 +176,11 @@ static void prv_terminate(void) {
   health_service_set_heart_rate_sample_period(0 /* interval_s */);
 
   if (health_app_data) {
+#if PBL_ROUND
+    health_orbit_view_destroy(health_app_data->orbit_view);
+#else
     health_card_view_destroy(health_app_data->health_card_view);
+#endif
 
     health_data_destroy(health_app_data->health_data);
 
