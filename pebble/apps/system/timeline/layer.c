@@ -1628,7 +1628,8 @@ Animation *timeline_layer_create_up_down_animation(TimelineLayer *layer, uint32_
                          layer);
 
   if (layer->compact) {
-    // Compact pins change mode as the move starts; wrap so the caller's handlers keep this one
+    // Compact pins never change mode, so there is nothing to run beside the move; wrap it so the
+    // caller's handlers keep this one
     return animation_spawn_create_from_array(&animation, 1);
   }
 
