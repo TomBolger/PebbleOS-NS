@@ -75,10 +75,12 @@ GPoint health_orbit_bubble_center(GSize display, int16_t offset, int32_t turn);
 GRangeHorizontal health_orbit_text_range(GSize display, int16_t inner_radius, int16_t top,
                                          int16_t bottom);
 
-//! Middle of where text runs across the rows from \a top to \a bottom, see
-//! health_orbit_text_range().
-int16_t health_orbit_text_center_x(GSize display, int16_t inner_radius, int16_t top,
-                                   int16_t bottom);
+//! The middle of the usable part of the display, between the inside of a ring \a inner_radius from
+//! the middle of the \a display and the sidebar's edge: an arc of the circle centered midway
+//! between the middle of the display and the sidebar's center, its radius midway between the ring's
+//! inside and the sidebar's. Text and the shapes beside it are centered on it, row by row.
+//! @return The arc's column on \a row
+int16_t health_orbit_middle_x(GSize display, int16_t inner_radius, int16_t row);
 
 //! Angles a ring round the bezel, \a outer_radius from the middle of the \a display and
 //! \a thickness thick, ends at for its round ends to keep HEALTH_RING_GAP from the sidebar. It runs
