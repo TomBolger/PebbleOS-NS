@@ -146,6 +146,16 @@ void timeline_actions_dismiss_all(NotificationInfo *notif_list, int num_notifica
                                   void *dismiss_all_cb_data);
 
 /**
+ * @brief Dismiss every stored notification on the phone, then remove it from the watch.
+ *
+ * Runs on KernelMain without any UI, one notification at a time as
+ * timeline_actions_dismiss_all() does, so the phone gets one dismissal at a time. Notifications
+ * already dismissed, or whose phone isn't connected, are only removed from the watch.
+ * Notifications arriving meanwhile are kept.
+ */
+void timeline_actions_dismiss_all_stored(void);
+
+/**
  * @brief Invoke an action without an action menu.
  *
  * @param action Action to perform.
