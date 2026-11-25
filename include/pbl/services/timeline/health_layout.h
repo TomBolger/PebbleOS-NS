@@ -25,6 +25,8 @@ typedef enum HealthCardType {
   HealthCardType_Activity = 0,
   /** Sleep summary. */
   HealthCardType_Sleep,
+  /** Workout, on round where the Health app has it. */
+  HealthCardType_Workout,
   /** Number of card types. */
   HealthCardTypeCount
 } HealthCardType;
@@ -37,6 +39,8 @@ typedef struct PBL_PACKED HealthLaunchArgs {
     struct {
       /** Card to open. */
       HealthCardType card_type : 8;
+      /** With @ref HealthCardType_Workout, end the workout going on and show its summary. */
+      bool end_workout : 1;
     };
     /** Raw launch argument value. */
     uint32_t args;

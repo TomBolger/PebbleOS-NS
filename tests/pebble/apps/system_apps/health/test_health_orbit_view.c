@@ -936,6 +936,31 @@ void test_health_orbit_view__detected_workout_is_taken_over(void) {
   cl_assert_equal_i(s_view->workout.workout.steps, 1874);
 }
 
+void test_health_orbit_view__workout_app_opens_the_workout_section(void) {
+  // Nothing going on: the Workout card
+  s_launch_args = ((HealthLaunchArgs){.card_type = HealthCardType_Workout}).args;
+  HealthOrbitView *view = health_orbit_view_create(&s_data);
+  cl_assert_equal_i(view->section, HealthOrbitSectionWorkout);
+  cl_assert(!view->week);
+  health_orbit_view_destroy(view);
+  // A workout going on: straight to it
+  s_data = (HealthData){};
+  prv_set_run();
+  view = health_orbit_view_create(&s_data);
+  cl_assert(view->week);
+  cl_assert_equal_i(view->list, HealthOrbitListWorkout);
+  cl_assert_equal_i(view->workout.status, HealthOrbitWorkoutStatusRunning);
+  health_orbit_view_destroy(view);
+  // Asked to end it: ended, its summary shown
+  s_launch_args =
+      ((HealthLaunchArgs){.card_type = HealthCardType_Workout, .end_workout = true}).args;
+  view = health_orbit_view_create(&s_data);
+  cl_assert(!s_workout.ongoing);
+  cl_assert_equal_i(view->workout.status, HealthOrbitWorkoutStatusComplete);
+  cl_assert_equal_i(view->workout.workout.steps, 3912);
+  health_orbit_view_destroy(view);
+}
+
 void test_health_orbit_view__workout_card_follows_the_workout_every_second(void) {
   prv_render_workout();
   cl_assert_equal_i(health_data_workout_get(&s_data)->state, HealthWorkoutStateNone);
