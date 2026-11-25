@@ -383,9 +383,8 @@ static void prv_draw_steps(GContext *ctx, GSize display, const HealthOrbitCard *
 
 //! The date \a days_ago days before today, as "WED 25 NOV"
 static void prv_format_date(char *buffer, size_t size, int days_ago) {
-  const time_t time = pbl_realtime() - days_ago * PBL_SEC_PER_DAY;
   struct pbl_tm local_tm;
-  pbl_localtime_r(&time, &local_tm);
+  health_orbit_day_time(days_ago, &local_tm);
   char weekday[8];
   char month[8];
   pbl_strftime_r(weekday, sizeof(weekday), "%a", &local_tm);

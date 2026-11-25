@@ -10,6 +10,8 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include <pbl/services/time.h>
+
 #include <applib/graphics/graphics.h>
 
 //! A font with the rows of its cap tops and baselines in its line, to line text up by its capitals
@@ -66,6 +68,12 @@ void health_orbit_format_short_duration(char *buffer, size_t size, int32_t secon
 
 //! A time of day in seconds from midnight, before midnight if negative, as "11:48 PM"
 void health_orbit_format_time_of_day(char *buffer, size_t size, int32_t seconds);
+
+//! The local time \a days_ago days before now
+void health_orbit_day_time(int days_ago, struct pbl_tm *tm_out);
+
+//! A weekday, 0 for Sunday, in the two letters that fit a bubble, as "Mo"
+const char *health_orbit_short_weekday(int wday, void *i18n_owner);
 
 //! Clips drawing to \a box, in the drawing box's coordinates, within the current clip
 //! @return The drawing state to restore with graphics_context_set_drawing_state()

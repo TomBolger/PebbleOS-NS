@@ -298,11 +298,22 @@ void test_health_orbit_view__render_steps_week_selected(void) {
 }
 
 void test_health_orbit_view__render_day(void) {
-  // Select on Monday in the week of steps opens Monday's overview, laid out as the Today card
+  // Select on Monday in the week of steps opens the days on Monday: its overview, laid out as the
+  // Today card, and the orbit of days with Monday's bubble at the notch
   s_data = prv_sample_data();
   prv_render(&s_data, HealthOrbitSectionSteps);
   prv_show_week(s_view);
   s_view->week_selection = 2;
+  prv_select_click_handler(nullptr, s_view);
+  prv_rest(s_view);
+  window_render(&s_view->window, &s_ctx);
+  cl_check(gbitmap_pbi_eq(&s_ctx.dest_bitmap, TEST_PBI_FILE));
+}
+
+void test_health_orbit_view__render_days_today(void) {
+  // Select on the Today card keeps the card and swaps the sections for the days, today's a dot
+  s_data = prv_sample_data();
+  prv_render(&s_data, HealthOrbitSectionToday);
   prv_select_click_handler(nullptr, s_view);
   prv_rest(s_view);
   window_render(&s_view->window, &s_ctx);
@@ -331,39 +342,197 @@ void test_health_orbit_view__week_selection_stops_at_the_ends(void) {
   cl_assert_equal_i(s_view->selection_travel, 0);
 }
 
+//! Presses a button and lets what it does finish
+static void prv_press(void (*handler)(ClickRecognizerRef, void *), int times) {
+  for (int i = 0; i < times; i++) {
+    handler(nullptr, s_view);
+    prv_rest(s_view);
+  }
+}
+
+static void prv_down(ClickRecognizerRef recognizer, void *context) {
+  HealthOrbitView *view = context;
+  prv_move_day(view, true /* down */);
+}
+
+static void prv_up(ClickRecognizerRef recognizer, void *context) {
+  HealthOrbitView *view = context;
+  prv_move_day(view, false /* down */);
+}
+
+void test_health_orbit_view__days_open_from_today_and_back(void) {
+  s_data = prv_sample_data();
+  prv_render(&s_data, HealthOrbitSectionToday);
+  prv_press(prv_select_click_handler, 1);
+  cl_assert(s_view->days);
+  cl_assert_equal_i(s_view->day, 0);
+  cl_assert_equal_i(s_view->swap, HEALTH_ORBIT_SWAP);
+  // Today is the Today card itself
+  cl_assert(s_view->card.day == nullptr);
+  cl_assert_equal_i(s_view->card.section, HealthOrbitSectionToday);
+  // Down goes back a day, the orbit of days turning a step
+  prv_press(prv_down, 1);
+  cl_assert_equal_i(s_view->day, 1);
+  cl_assert_equal_i(s_view->day_offset, HEALTH_ORBIT_STEP);
+  cl_assert(s_view->card.day == &s_view->day_data[s_view->day_slot]);
+  cl_assert_equal_i(s_view->card.day->days_ago, 1);
+  cl_assert_equal_i(s_view->card.day->steps, s_data.step_data[1]);
+  // Select does nothing on a day
+  prv_press(prv_select_click_handler, 1);
+  cl_assert(s_view->days);
+  cl_assert_equal_i(s_view->day, 1);
+  // Up comes forward a day, and stops at today
+  prv_press(prv_up, 3);
+  cl_assert_equal_i(s_view->day, 0);
+  cl_assert_equal_i(s_view->day_offset, 0);
+  // Back swaps the days for the sections again, on the Today card
+  prv_press(prv_back_click_handler, 1);
+  cl_assert(!s_view->days);
+  cl_assert_equal_i(s_view->section, HealthOrbitSectionToday);
+  cl_assert_equal_i(s_view->swap, 0);
+  cl_assert_equal_i(s_view->neighbour_radius, NEIGHBOUR_BUBBLE_RADIUS);
+  cl_assert(s_view->card.day == nullptr);
+}
+
+void test_health_orbit_view__days_swap_turns_as_the_buttons_say(void) {
+  s_data = prv_sample_data();
+  prv_render(&s_data, HealthOrbitSectionToday);
+  // In, clockwise, the days coming up from below with Today's colors
+  prv_select_click_handler(nullptr, s_view);
+  cl_assert(s_view->orbit_motion == &s_view->swap);
+  cl_assert(s_view->orbit_down);
+  cl_assert_equal_i(s_view->orbit_target, HEALTH_ORBIT_SWAP);
+  // The card stays today's, so nothing slides
+  cl_assert(!s_view->leaving_shown);
+  prv_rest(s_view);
+  // Down and Up turn the days as the sections turn
+  prv_move_day(s_view, true /* down */);
+  cl_assert(s_view->orbit_motion == &s_view->day_offset);
+  cl_assert(s_view->orbit_down);
+  cl_assert(s_view->leaving_shown);
+  cl_assert(s_view->leaving.day == nullptr);
+  prv_rest(s_view);
+  prv_move_day(s_view, true /* down */);
+  // The leaving card keeps its day as the next one is read
+  cl_assert(s_view->leaving.day != s_view->card.day);
+  cl_assert_equal_i(s_view->leaving.day->days_ago, 1);
+  cl_assert_equal_i(s_view->card.day->days_ago, 2);
+  prv_rest(s_view);
+  // Back out, counterclockwise, the Today card sliding in from above as for Up
+  prv_back_click_handler(nullptr, s_view);
+  cl_assert(s_view->orbit_motion == &s_view->swap);
+  cl_assert(!s_view->orbit_down);
+  cl_assert_equal_i(s_view->orbit_target, 0);
+  cl_assert(s_view->leaving_shown);
+  cl_assert(s_view->card.offset_y < 0);
+}
+
+void test_health_orbit_view__days_stop_at_the_oldest_day_kept(void) {
+  s_data = prv_sample_data();
+  s_data.step_data[HEALTH_DATA_NUM_DAYS - 1] = 4321;
+  s_data.sleep_data[HEALTH_DATA_NUM_DAYS - 1] = HOURS(6, 30);
+  prv_render(&s_data, HealthOrbitSectionToday);
+  prv_press(prv_select_click_handler, 1);
+  prv_press(prv_down, HEALTH_DATA_NUM_DAYS + 5);
+  cl_assert_equal_i(s_view->day, HEALTH_DATA_NUM_DAYS - 1);
+  cl_assert_equal_i(HEALTH_DATA_NUM_DAYS, ACTIVITY_HISTORY_DAYS);
+  // The oldest day has all its overview
+  const HealthDayData *day = s_view->card.day;
+  cl_assert_equal_i(day->days_ago, HEALTH_DATA_NUM_DAYS - 1);
+  cl_assert_equal_i(day->steps, 4321);
+  cl_assert_equal_i(day->sleep, HOURS(6, 30));
+  cl_assert_equal_i(day->distance_meters, prv_distance_on(HEALTH_DATA_NUM_DAYS - 1));
+  cl_assert_equal_i(day->active_seconds, prv_active_seconds_on(HEALTH_DATA_NUM_DAYS - 1));
+  cl_assert_equal_i(day->typical_steps, 9120);
+  // Down there turns nothing
+  prv_move_day(s_view, true /* down */);
+  cl_assert(s_view->animation == nullptr);
+  // Up on today neither
+  prv_press(prv_up, HEALTH_DATA_NUM_DAYS + 5);
+  cl_assert_equal_i(s_view->day, 0);
+  prv_move_day(s_view, false /* down */);
+  cl_assert(s_view->animation == nullptr);
+}
+
 void test_health_orbit_view__day_opens_from_the_week_and_back(void) {
   s_data = prv_sample_data();
   prv_render(&s_data, HealthOrbitSectionSteps);
-  prv_select_click_handler(nullptr, s_view);
-  prv_rest(s_view);
+  prv_press(prv_select_click_handler, 1);
   s_view->week_selection = 4;
-  // Select opens the day selected
-  prv_select_click_handler(nullptr, s_view);
-  prv_rest(s_view);
+  // Select opens the days on the day selected, with Today's colors
+  prv_press(prv_select_click_handler, 1);
   cl_assert(!s_view->week);
-  cl_assert(s_view->day);
-  cl_assert(s_view->card.day == &s_view->day_data);
-  cl_assert_equal_i(s_view->day_data.days_ago, 4);
-  cl_assert_equal_i(s_view->day_data.steps, s_data.step_data[4]);
-  cl_assert_equal_i(s_view->day_data.distance_meters, prv_distance_on(4));
-  cl_assert_equal_i(s_view->day_data.active_seconds, prv_active_seconds_on(4));
-  cl_assert_equal_i(s_view->day_data.typical_steps, 9120);
-  // Up and Down and Select do nothing on a day
-  prv_select_click_handler(nullptr, s_view);
-  cl_assert(s_view->day);
-  // Back goes back to the week with the day selected
-  prv_back_click_handler(nullptr, s_view);
-  prv_rest(s_view);
+  cl_assert(s_view->days);
+  cl_assert_equal_i(s_view->day, 4);
+  cl_assert_equal_i(s_view->swap, HEALTH_ORBIT_SWAP);
+  cl_assert_equal_i(s_view->color_section, HealthOrbitSectionToday);
+  cl_assert(s_view->card.day == &s_view->day_data[s_view->day_slot]);
+  cl_assert_equal_i(s_view->card.day->days_ago, 4);
+  cl_assert_equal_i(s_view->card.day->steps, s_data.step_data[4]);
+  cl_assert_equal_i(s_view->card.day->distance_meters, prv_distance_on(4));
+  cl_assert_equal_i(s_view->card.day->active_seconds, prv_active_seconds_on(4));
+  cl_assert_equal_i(s_view->card.day->typical_steps, 9120);
+  // The same days as from the Today card
+  prv_press(prv_down, 1);
+  cl_assert_equal_i(s_view->day, 5);
+  // Back goes back to the week with the day shown selected
+  prv_press(prv_back_click_handler, 1);
   cl_assert(s_view->week);
-  cl_assert(!s_view->day);
-  cl_assert_equal_i(s_view->week_selection, 4);
+  cl_assert(!s_view->days);
+  cl_assert_equal_i(s_view->swap, 0);
+  cl_assert_equal_i(s_view->color_section, HealthOrbitSectionSteps);
+  cl_assert_equal_i(s_view->week_selection, 5);
+  cl_assert_equal_i(s_view->neighbour_radius, 0);
   // And Back again to the section's card, the week starting on today the next time
-  prv_back_click_handler(nullptr, s_view);
-  prv_rest(s_view);
+  prv_press(prv_back_click_handler, 1);
   cl_assert(!s_view->week);
   cl_assert(s_view->card.day == nullptr);
+  cl_assert_equal_i(s_view->card.section, HealthOrbitSectionSteps);
   prv_select_click_handler(nullptr, s_view);
   cl_assert_equal_i(s_view->week_selection, 0);
+}
+
+void test_health_orbit_view__back_from_a_day_before_the_week_selects_its_oldest_day(void) {
+  s_data = prv_sample_data();
+  prv_render(&s_data, HealthOrbitSectionSteps);
+  prv_press(prv_select_click_handler, 1);
+  s_view->week_selection = HEALTH_ORBIT_WEEK_NUM_ROWS - 1;
+  prv_press(prv_select_click_handler, 1);
+  prv_press(prv_down, 3);
+  cl_assert_equal_i(s_view->day, HEALTH_ORBIT_WEEK_NUM_ROWS + 2);
+  prv_press(prv_back_click_handler, 1);
+  cl_assert(s_view->week);
+  cl_assert_equal_i(s_view->week_selection, HEALTH_ORBIT_WEEK_NUM_ROWS - 1);
+  // Today's row for today
+  prv_press(prv_select_click_handler, 1);
+  prv_press(prv_up, HEALTH_DATA_NUM_DAYS);
+  prv_press(prv_back_click_handler, 1);
+  cl_assert_equal_i(s_view->week_selection, 0);
+}
+
+void test_health_orbit_view__sleep_week_opens_the_day_the_night_ended(void) {
+  // Row 2 of the Sleep week is the night that started on the evening three days ago, Sunday, and
+  // ended on Monday morning: it opens Monday, its sleep that night's
+  s_data = prv_sample_data();
+  prv_render(&s_data, HealthOrbitSectionSleep);
+  prv_press(prv_select_click_handler, 1);
+  s_view->week_selection = 2;
+  struct pbl_tm evening;
+  health_orbit_day_time(2 + 1, &evening);
+  cl_assert_equal_i(evening.tm_wday, PBL_SUNDAY);
+  prv_press(prv_select_click_handler, 1);
+  cl_assert(s_view->days);
+  cl_assert_equal_i(s_view->day, 2);
+  struct pbl_tm morning;
+  health_orbit_day_time(s_view->day, &morning);
+  cl_assert_equal_i(morning.tm_wday, PBL_MONDAY);
+  cl_assert_equal_i(s_view->card.day->sleep, s_data.sleep_data[2]);
+  cl_assert_equal_i(s_view->card.day->deep_sleep, s_data.deep_sleep_data[2]);
+  // And back on the same row, in the Sleep week's colors
+  prv_press(prv_back_click_handler, 1);
+  cl_assert(s_view->week);
+  cl_assert_equal_i(s_view->week_selection, 2);
+  cl_assert_equal_i(s_view->color_section, HealthOrbitSectionSleep);
 }
 
 void test_health_orbit_view__day_reads_all_the_history_kept(void) {
@@ -401,14 +570,6 @@ void test_health_orbit_view__wrap_keeps_turning_the_same_way(void) {
   cl_assert_equal_i(s_view->orbit_target - HEALTH_ORBIT_LENGTH, 0);
   prv_rest(s_view);
   cl_assert_equal_i(s_view->orbit_offset, 0);
-}
-
-void test_health_orbit_view__select_on_today_keeps_the_card(void) {
-  s_data = prv_sample_data();
-  prv_render(&s_data, HealthOrbitSectionToday);
-  prv_select_click_handler(nullptr, s_view);
-  cl_assert(!s_view->week);
-  prv_render(&s_data, HealthOrbitSectionSteps);
 }
 
 void test_health_orbit_view__launch_on_sleep(void) {

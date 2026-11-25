@@ -41,6 +41,13 @@
 //! rows apart
 #define HEALTH_ORBIT_STEP 43
 
+//! Days further along the orbit than this from the one it is on have no bubble, being out of sight
+#define HEALTH_ORBIT_DAY_REACH (2 * HEALTH_ORBIT_STEP)
+//! How far the orbit turns to swap the sections' bubbles for the days' and back: as little as keeps
+//! each set out of sight while the other shows, the days in reach coming a step after the last of
+//! the three sections, as if on one string, so they pass the notch as quickly as the sections do
+#define HEALTH_ORBIT_SWAP (2 * HEALTH_ORBIT_STEP + HEALTH_ORBIT_STEP + HEALTH_ORBIT_DAY_REACH)
+
 //! Space kept between the round end of a ring and the sidebar
 #define HEALTH_RING_GAP 4
 

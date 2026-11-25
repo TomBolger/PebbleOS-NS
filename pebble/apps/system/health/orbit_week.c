@@ -69,9 +69,8 @@ typedef struct HealthOrbitWeek {
 
 //! The weekday \a days_ago days before today, as "Mon"
 static void prv_format_weekday(char *buffer, size_t size, int days_ago) {
-  const time_t day = pbl_realtime() - days_ago * PBL_SEC_PER_DAY;
   struct pbl_tm local_tm;
-  pbl_localtime_r(&day, &local_tm);
+  health_orbit_day_time(days_ago, &local_tm);
   pbl_strftime_r(buffer, size, "%a", &local_tm);
 }
 
