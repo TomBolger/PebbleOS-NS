@@ -27,7 +27,7 @@ typedef struct {
 //! Draws and drives an action menu in place of its window (see action_menu_open_hosted).
 typedef struct ActionMenuHost {
   //! The menu is closing. Remove its view, animated or not, then call
-  //! action_menu_hosted_did_close.
+  //! action_menu_hosted_did_close. Called again not animated while that plays, end it at once.
   void (*close)(ActionMenu *action_menu, bool animated, void *context);
 } ActionMenuHost;
 

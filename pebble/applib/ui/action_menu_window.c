@@ -39,6 +39,10 @@ static void prv_action_window_pop(bool animated, ActionMenu *action_menu) {
   ActionMenuHosting *hosting = data->hosting;
   if (hosting) {
     if (hosting->closing) {
+      // Closed again without animation, e.g. as its window goes: the host ends what it plays
+      if (!animated && !hosting->closed_while_performing) {
+        hosting->host->close(action_menu, false /* animated */, hosting->context);
+      }
       return;
     }
     hosting->closing = true;
