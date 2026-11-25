@@ -7,8 +7,10 @@
 
 #include <string.h>
 
+#include <pbl/i18n/i18n.h>
 #include <pbl/services/notifications/notification_style.h>
 #include <pbl/services/timeline/notification_layout.h>
+#include <pbl/services/timeline/timeline_actions.h>
 #include <pbl/util/math.h>
 #include <pbl/util/trig.h>
 
@@ -18,6 +20,7 @@
 #include <applib/graphics/graphics.h>
 #include <applib/graphics/graphics_circle.h>
 #include <applib/graphics/text.h>
+#include <applib/ui/action_menu_hierarchy.h>
 #include <applib/ui/action_menu_window_private.h>
 #include <applib/ui/animation.h>
 #include <applib/ui/layer.h>
@@ -671,6 +674,41 @@ bool notification_round_actions_open(Window *window, ActionMenu *action_menu,
   prv_touch_register();
   prv_run_motion(1000);
   return true;
+}
+
+static void prv_timeline_menu_host_close(ActionMenu *action_menu, bool animated, void *context) {
+  // Only the menu shown: one that could not open must not close another's
+  if (s_menu.action_menu == action_menu) {
+    notification_round_actions_close(animated);
+  }
+}
+
+static const ActionMenuHost s_timeline_menu_host = {
+  .close = prv_timeline_menu_host_close,
+};
+
+static void prv_timeline_menu_closed(ActionMenu *action_menu, void *context) {
+  action_menu_hosted_did_close(action_menu);
+}
+
+ActionMenu *notification_round_actions_open_timeline_menu(
+    Window *window, ActionMenuConfig *config, WindowStack *window_stack,
+    const NotificationRoundActionsBanner *banner) {
+  ActionMenu *action_menu = timeline_actions_open_hosted_action_menu(
+      config, window_stack, &s_timeline_menu_host, nullptr);
+  if (!action_menu) {
+    action_menu_hierarchy_destroy(config->root_level, nullptr, nullptr);
+    pbl_i18n_free_all(config->root_level);
+    return nullptr;
+  }
+  if (!notification_round_actions_open(window, action_menu, banner, prv_timeline_menu_closed,
+                                       nullptr)) {
+    // Nothing on screen to close: finish it off right away
+    action_menu_close(action_menu, false);
+    action_menu_hosted_did_close(action_menu);
+    return nullptr;
+  }
+  return action_menu;
 }
 
 void notification_round_actions_close(bool animated) {
