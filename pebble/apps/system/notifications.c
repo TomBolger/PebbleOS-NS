@@ -4,6 +4,7 @@
 #include "notifications.h"
 
 #include "notifications_history.h"
+#include "notifications_round_path.h"
 #include "notifications_shade.h"
 
 #include <stdio.h>
@@ -362,40 +363,13 @@ static int16_t prv_header_depth(const NotificationShadeRow *row) {
 }
 
 #if PBL_ROUND
-static int32_t prv_isqrt(int32_t value) {
-  if (value <= 0) {
-    return 0;
-  }
-  int32_t root = 0;
-  int32_t bit = 1 << 14;
-  int32_t rest = value;
-  while (bit > rest) {
-    bit >>= 2;
-  }
-  while (bit != 0) {
-    if (rest >= root + bit) {
-      rest -= root + bit;
-      root = (root >> 1) + bit;
-    } else {
-      root >>= 1;
-    }
-    bit >>= 2;
-  }
-  return root;
-}
-
 //! Distance from the left edge to the rim for a row at this height on screen, at its end nearer
-//! the rim. Past the screen's edge the path goes on to the right, so a row leaving the screen
-//! travels along it until it is gone instead of sliding off straight.
+//! the rim. Near the top and bottom the path eases off the rim and goes on past the screen's
+//! edge, so a row leaving the screen travels along it until it is gone.
 static int16_t prv_rim_for_screen_row(int16_t screen_top, int16_t height) {
-  const int32_t radius = PBL_DISPLAY_WIDTH / 2;
-  int32_t dy = screen_top + height / 2 - PBL_DISPLAY_HEIGHT / 2;
+  int16_t dy = screen_top + height / 2 - PBL_DISPLAY_HEIGHT / 2;
   dy += (dy > 0) ? height / 2 : -height / 2;
-  const int32_t past = ((dy > 0) ? dy : -dy) - radius;
-  if (past >= 0) {
-    return radius + (past * 2 * radius) / ((height > 0) ? height : 1);
-  }
-  return radius - prv_isqrt(radius * radius - dy * dy);
+  return notifications_round_path_x(PBL_DISPLAY_WIDTH / 2, dy);
 }
 
 //! A round row is laid out with its inset from the rim, at most this much: nearer the ends the
@@ -438,15 +412,18 @@ static int16_t prv_round_rim_at_row(const Layer *cell_layer, GRect bounds) {
   return prv_rim_for_screen_row(on_screen.y, bounds.size.h);
 }
 
+//! An open stack's arc keeps this far in from the rim, eased off it near the ends like the rows.
+static int16_t prv_stack_arc_x(int16_t inset, int16_t dy) {
+  const int16_t radius = PBL_DISPLAY_WIDTH / 2;
+  return inset + notifications_round_path_x(radius - inset, dy);
+}
+
 //! Where an open stack's arc ends beside this row's icon (centred, about 26 px tall).
 static int16_t prv_stack_arc_clearance(const Layer *cell_layer, GRect bounds) {
   const GPoint on_screen = layer_convert_point_to_screen(cell_layer, bounds.origin);
-  const int32_t radius = PBL_DISPLAY_WIDTH / 2;
-  const int32_t inner = radius - STACK_LINE_EDGE - STACK_LINE_WIDTH;
-  int32_t dy = on_screen.y + bounds.size.h / 2 - PBL_DISPLAY_HEIGHT / 2;
+  int16_t dy = on_screen.y + bounds.size.h / 2 - PBL_DISPLAY_HEIGHT / 2;
   dy += (dy > 0) ? 13 : -13;
-  const int32_t span_sq = inner * inner - dy * dy;
-  return radius - ((span_sq > 0) ? prv_isqrt(span_sq) : 0) + STACK_LINE_GAP;
+  return prv_stack_arc_x(STACK_LINE_EDGE + STACK_LINE_WIDTH, dy) + STACK_LINE_GAP;
 }
 
 // Round lists slide like rectangular ones and stop the first and last rows one row from the
@@ -556,18 +533,12 @@ static void prv_draw_stack_line(GContext *ctx, const Layer *cell_layer, GRect bo
                                            ? notification_style_bg()
                                            : notification_style_fg());
 #endif
-  // A ring concentric with the screen, filled one pixel row at a time.
-  const int32_t radius = PBL_DISPLAY_WIDTH / 2;
-  const int32_t outer = radius - STACK_LINE_EDGE;
-  const int32_t inner = outer - STACK_LINE_WIDTH;
+  // A ring concentric with the screen in the middle, filled one pixel row at a time.
   const int16_t screen_y = layer_convert_point_to_screen(cell_layer, GPointZero).y;
   for (int16_t y = top; y < bottom; y++) {
-    const int32_t dy = screen_y + y - PBL_DISPLAY_HEIGHT / 2;
-    if (dy * dy >= outer * outer) {
-      continue;
-    }
-    const int16_t from = radius - prv_isqrt(outer * outer - dy * dy);
-    int16_t to = (dy * dy < inner * inner) ? radius - prv_isqrt(inner * inner - dy * dy) : radius;
+    const int16_t dy = screen_y + y - PBL_DISPLAY_HEIGHT / 2;
+    const int16_t from = prv_stack_arc_x(STACK_LINE_EDGE, dy);
+    int16_t to = prv_stack_arc_x(STACK_LINE_EDGE + STACK_LINE_WIDTH, dy);
     if (to <= from) {
       to = from + 1;
     }
@@ -608,23 +579,14 @@ static void prv_draw_item_row(GContext *ctx, const Layer *cell_layer, GRect boun
   }
 
 #if PBL_ROUND
-  // Keep the icon and text clear of the rim: rows away from the centre start further in, and
-  // near the ends move on along the rim.
-  const int16_t rim = prv_round_rim_at_row(cell_layer, bounds) + 4;
-  int16_t inset = prv_round_inset(rim);
-  bounds.origin.x += prv_round_shift(rim);
+  // Keep the icon and text clear of the rim, and inside an open stack of its arc: rows away from
+  // the centre start further in, and near the ends move on along the rim.
+  int16_t left = prv_round_rim_at_row(cell_layer, bounds) + 4;
   if (row->in_stack) {
-    inset += 7;
-    const int16_t clear = prv_stack_arc_clearance(cell_layer, bounds);
-    if (clear > inset) {
-      inset = clear;
-    }
-    if (inset > 80) {
-      // Almost past the top or bottom: no room beside the arc, so just the arc.
-      prv_draw_stack_line(ctx, cell_layer, bounds, row_index);
-      return;
-    }
+    left = PBL_MAX(left + 7, prv_stack_arc_clearance(cell_layer, bounds));
   }
+  const int16_t inset = prv_round_inset(left);
+  bounds.origin.x += prv_round_shift(left);
 #else
   const int16_t inset = row->in_stack ? 12 : 5;
 #endif
