@@ -7,6 +7,7 @@
 
 #include <pbl/kernel/compiler.h>
 #include <pbl/kernel/time.h>
+#include <pbl/services/notifications/notification_sync.h>
 
 #include <applib/app.h>
 #include <applib/app_focus_service.h>
@@ -178,6 +179,8 @@ static void prv_main(void) {
   }
 
   prv_launcher_menu_window_push();
+  // Opening the launcher often leads to the Notifications app: check before it opens.
+  notification_sync_check();
 
   app_idle_timeout_start(APP_IDLE_TIMEOUT_LAUNCHER_MS);
 
