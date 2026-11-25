@@ -18,6 +18,7 @@
 #include <applib/graphics/text.h>
 #include <applib/ui/action_menu_window_private.h>
 #include <applib/ui/animation.h>
+#include <applib/ui/animation_interpolate.h>
 #include <applib/ui/layer.h>
 #include <applib/ui/menu_layer_private.h>
 #include <shell/prefs.h>
@@ -30,16 +31,6 @@
 #endif
 
 #if PBL_ROUND
-
-//! An ease out with a small overshoot, as the round notification action menu opens, for time
-//! \a t in thousandths; played backwards for closing
-static int32_t prv_ease(int32_t t) {
-  // 1 + (s + 1)(t - 1)^3 + s (t - 1)^2 with s = 1.2, in thousandths
-  const int64_t u = t - 1000;
-  const int64_t u2 = u * u / 1000;
-  const int64_t u3 = u2 * u / 1000;
-  return (int32_t)(1000 + (2200 * u3) / 1000 + (1200 * u2) / 1000);
-}
 
 #define CENTER_X      (PBL_DISPLAY_WIDTH / 2)
 #define CENTER_Y      (PBL_DISPLAY_HEIGHT / 2)
@@ -340,7 +331,7 @@ static void prv_fill_shape(GContext *ctx, const MenuRoundShape *shape) {
 static void prv_update_proc(Layer *layer, GContext *ctx) {
   PillActionMenu *menu = (PillActionMenu *)((uint8_t *)layer - offsetof(PillActionMenu, layer));
   const GRect bounds = layer->bounds;
-  const int32_t e = prv_ease(menu->progress);
+  const int32_t e = interpolate_ease_out_overshoot(menu->progress);
 
   // The actions come in from the right behind a sweeping edge, as the menu slides out to the left
   graphics_context_set_fill_color(ctx, menu->background);
@@ -518,7 +509,7 @@ static void prv_unschedule(Animation **animation) {
 //! Slides the window's content, the menu among it, left in step with the edge the actions come in
 //! behind, keeping the action menu's own layer in place
 static void prv_slide_window(PillActionMenu *menu) {
-  const int32_t e = prv_ease(menu->progress);
+  const int32_t e = interpolate_ease_out_overshoot(menu->progress);
   const int16_t offset = (int16_t)(PBL_DISPLAY_WIDTH * e / 1000);
   Layer *root = window_get_root_layer(menu->window);
   GRect bounds = root->bounds;

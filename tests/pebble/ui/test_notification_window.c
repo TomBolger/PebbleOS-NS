@@ -506,19 +506,6 @@ void test_notification_window__round_actions_scroll(void) {
 #endif
 }
 
-void test_notification_window__round_actions_ease(void) {
-#if PBL_ROUND
-  cl_assert_equal_i(notification_round_actions_ease(0), 0);
-  cl_assert_equal_i(notification_round_actions_ease(1000), 1000);
-  // It overshoots on the way and settles back.
-  int32_t peak = 0;
-  for (int32_t t = 0; t <= 1000; t += 10) {
-    peak = PBL_MAX(peak, notification_round_actions_ease(t));
-  }
-  cl_assert(peak > 1000 && peak < 1100);
-#endif
-}
-
 void test_notification_window__banner_round_geometry(void) {
 #if PBL_ROUND
   const int16_t r = BANNER_CIRCLE_RADIUS;

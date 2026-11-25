@@ -61,6 +61,16 @@ GSize interpolate_gsize(int32_t normalized, GSize from, GSize to);
 //! See \ref interpolate_int64() for special cases.
 GPoint interpolate_gpoint(int32_t normalized, GPoint from, GPoint to);
 
+//! An ease out that overshoots a little and settles back, for time \a t in thousandths: how far
+//! it has gone, in thousandths, peaking at 1055 about two thirds of the way. Played backwards,
+//! it pulls back first. 1 + (s + 1)(t - 1)^3 + s (t - 1)^2 with s = 1.2.
+static inline int32_t interpolate_ease_out_overshoot(int32_t t) {
+  const int64_t u = t - 1000;
+  const int64_t u2 = u * u / 1000;
+  const int64_t u3 = u2 * u / 1000;
+  return (int32_t)(1000 + (2200 * u3) / 1000 + (1200 * u2) / 1000);
+}
+
 //! linear scale a int16_t between two int16_t lengths
 int16_t scale_int16(int16_t value, int16_t from, int16_t to);
 
