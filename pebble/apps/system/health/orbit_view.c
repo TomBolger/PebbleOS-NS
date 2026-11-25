@@ -137,12 +137,13 @@ static GDrawCommandImage *prv_create_icon(HealthOrbitSection section, int16_t si
 }
 
 //! Fills the sidebar turned by \a turn. At rest on the right and at the top it is filled as the
-//! timeline fills it, a row or a column at a time with its notch; on the way, its circle with the
-//! notch cut out in the background color.
+//! timeline fills it, a row or a column at a time, notched on the right; on the way, its circle with
+//! the notch, closing as it turns up, cut out in the background color.
 static void prv_fill_sidebar(GContext *ctx, GSize display, int32_t turn, GColor color, GColor bg) {
   graphics_context_set_fill_color(ctx, color);
+  const int16_t notch_width = health_orbit_notch_width(turn);
   if (turn == 0 || turn == -QUARTER_TURN) {
-    const TimelineListSidebar sidebar = health_orbit_sidebar(display, HEALTH_ORBIT_NOTCH_WIDTH);
+    const TimelineListSidebar sidebar = health_orbit_sidebar(display, notch_width);
     for (int16_t i = 0; i < display.h; i++) {
       const int16_t depth = timeline_list_sidebar_depth(&sidebar, i);
       if (depth <= 0) {
@@ -155,6 +156,9 @@ static void prv_fill_sidebar(GContext *ctx, GSize display, int32_t turn, GColor 
     return;
   }
   graphics_fill_circle(ctx, health_orbit_center(display, turn), HEALTH_ORBIT_RADIUS);
+  if (notch_width <= 0) {
+    return;
+  }
   // The notch as it is at rest, its sides from where they meet the circle's edge to its tip, and
   // out past where the edge bulges between them
   const TimelineListSidebar plain = health_orbit_sidebar(display, 0);

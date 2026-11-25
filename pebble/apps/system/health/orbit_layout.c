@@ -32,6 +32,12 @@ TimelineListSidebar health_orbit_sidebar(GSize display, int16_t notch_width) {
   };
 }
 
+int16_t health_orbit_notch_width(int32_t turn) {
+  const int32_t quarter = TRIG_MAX_ANGLE / 4;
+  const int32_t left = quarter - PBL_MIN(PBL_ABS(turn), quarter);
+  return prv_round_div((int64_t)HEALTH_ORBIT_NOTCH_WIDTH * left, quarter);
+}
+
 GPoint health_orbit_turn(GSize display, GPoint point, int32_t angle) {
   // In half pixels, about the middle of the display
   const int32_t mid_x = display.w - 1;
@@ -52,7 +58,7 @@ GPoint health_orbit_center(GSize display, int32_t turn) {
 }
 
 GPoint health_orbit_notch_tip(GSize display, int32_t turn) {
-  const TimelineListSidebar sidebar = health_orbit_sidebar(display, HEALTH_ORBIT_NOTCH_WIDTH);
+  const TimelineListSidebar sidebar = health_orbit_sidebar(display, health_orbit_notch_width(turn));
   const int16_t depth = timeline_list_sidebar_depth(&sidebar, display.h / 2);
   return health_orbit_turn(display, GPoint(display.w - depth, display.h / 2), turn);
 }
