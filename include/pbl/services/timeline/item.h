@@ -123,7 +123,7 @@ typedef enum {
   TimelineItemActionTypeOpenWatchApp = 0x07,
   /** Placeholder with no effect. */
   TimelineItemActionTypeEmpty = 0x08,
-  /** Remove the pin; done locally for pins added by the watch. */
+  /** Remove the pin; done locally for pins added by the watch, or without a phone action id. */
   TimelineItemActionTypeRemove = 0x09,
   /** Open the parent pin. */
   TimelineItemActionTypeOpenPin = 0x0A,
