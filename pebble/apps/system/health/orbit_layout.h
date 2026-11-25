@@ -18,16 +18,22 @@
 #include <apps/system/timeline/list_layout.h>
 
 //! The orbit sidebar is the round timeline's sidebar: the notification banner's circle hanging off
-//! the right of the display as deep as the banner hangs off the top, with a notch in its edge
+//! the right of the display as deep as the banner hangs off the top, with the timeline's notch in
+//! its edge, as the timeline cuts it at the display's default text size
 #define HEALTH_ORBIT_RADIUS       BANNER_CIRCLE_RADIUS
 #define HEALTH_ORBIT_CENTER_INSET LAYOUT_TOP_BANNER_CENTER_Y_ROUND
-#define HEALTH_ORBIT_NOTCH_WIDTH  7
-#define HEALTH_ORBIT_NOTCH_HEIGHT 16
+#define HEALTH_ORBIT_NOTCH_WIDTH  10
+#define HEALTH_ORBIT_NOTCH_HEIGHT 40
 
-//! The section bubbles orbit the sidebar's center where the banner has its icon, as the timeline's
-//! pin icons do
-#define HEALTH_ORBIT_BUBBLE_DISTANCE \
-  (LAYOUT_TOP_BANNER_ICON_CENTER_Y_ROUND - HEALTH_ORBIT_CENTER_INSET)
+//! Radius of the selected section's bubble, at the notch
+#define HEALTH_ORBIT_SELECTED_RADIUS 17
+//! Space between the tip of the notch and the selected section's bubble
+#define HEALTH_ORBIT_NOTCH_GAP 3
+
+//! The section bubbles orbit the sidebar's center, the selected one the gap clear of the notch
+#define HEALTH_ORBIT_BUBBLE_DISTANCE                                         \
+  (HEALTH_ORBIT_RADIUS - HEALTH_ORBIT_NOTCH_WIDTH - HEALTH_ORBIT_NOTCH_GAP - \
+   HEALTH_ORBIT_SELECTED_RADIUS)
 //! Rows between the bubbles of neighbouring sections
 #define HEALTH_ORBIT_STEP 42
 
@@ -39,10 +45,10 @@
 #define HEALTH_WEEK_ROW_PITCH  23
 #define HEALTH_WEEK_ROW_HEIGHT 20
 
-//! The sidebar, notched or not, as the round timeline fills it a row at a time on the right of the
-//! \a display. Turned a quarter round, the same circle is the banner at the top, filled a column at
-//! a time.
-TimelineListSidebar health_orbit_sidebar(GSize display, bool notched);
+//! The sidebar with a notch \a notch_width deep, as the round timeline fills it a row at a time on
+//! the right of the \a display. Turned a quarter round, the same circle is the banner at the top,
+//! filled a column at a time.
+TimelineListSidebar health_orbit_sidebar(GSize display, int16_t notch_width);
 
 //! Center of the sidebar's circle with the sidebar turned by \a turn about the middle of the
 //! \a display, clockwise, a negative quarter turn taking it to the top.

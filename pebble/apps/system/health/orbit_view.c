@@ -30,9 +30,8 @@
 
 #if PBL_ROUND
 
-//! The section bubbles: the selected one at the notch, white with the section's icon in its
-//! color, the others black with their icon in their color
-#define SELECTED_BUBBLE_RADIUS  17
+//! The section bubbles: the selected one at the notch, HEALTH_ORBIT_SELECTED_RADIUS big and white
+//! with the section's icon in its color, the others black with their icon in their color
 #define NEIGHBOUR_BUBBLE_RADIUS 12
 #define SELECTED_ICON_SIZE      21
 #define NEIGHBOUR_ICON_SIZE     13
@@ -143,7 +142,7 @@ static GDrawCommandImage *prv_create_icon(HealthOrbitSection section, int16_t si
 static void prv_fill_sidebar(GContext *ctx, GSize display, int32_t turn, GColor color, GColor bg) {
   graphics_context_set_fill_color(ctx, color);
   if (turn == 0 || turn == -QUARTER_TURN) {
-    const TimelineListSidebar sidebar = health_orbit_sidebar(display, true);
+    const TimelineListSidebar sidebar = health_orbit_sidebar(display, HEALTH_ORBIT_NOTCH_WIDTH);
     for (int16_t i = 0; i < display.h; i++) {
       const int16_t depth = timeline_list_sidebar_depth(&sidebar, i);
       if (depth <= 0) {
@@ -156,15 +155,19 @@ static void prv_fill_sidebar(GContext *ctx, GSize display, int32_t turn, GColor 
     return;
   }
   graphics_fill_circle(ctx, health_orbit_center(display, turn), HEALTH_ORBIT_RADIUS);
-  // The notch from a little outside the circle's edge to its tip, as it is at rest
-  const TimelineListSidebar plain = health_orbit_sidebar(display, false);
+  // The notch as it is at rest, its sides from where they meet the circle's edge to its tip, and
+  // out past where the edge bulges between them
+  const TimelineListSidebar plain = health_orbit_sidebar(display, 0);
   const int16_t half = HEALTH_ORBIT_NOTCH_HEIGHT / 2;
   const int16_t middle = display.h / 2;
-  const int16_t base_x = display.w - timeline_list_sidebar_depth(&plain, middle + half) - 1;
+  const int16_t base_x = display.w - timeline_list_sidebar_depth(&plain, middle + half);
+  const int16_t out_x = display.w - timeline_list_sidebar_depth(&plain, middle) - 2;
   GPoint points[] = {
+    health_orbit_turn(display, GPoint(out_x, middle - half), turn),
     health_orbit_turn(display, GPoint(base_x, middle - half), turn),
     health_orbit_notch_tip(display, turn),
     health_orbit_turn(display, GPoint(base_x, middle + half), turn),
+    health_orbit_turn(display, GPoint(out_x, middle + half), turn),
   };
   GPath notch = {.num_points = PBL_ARRAY_SIZE(points), .points = points};
   graphics_context_set_fill_color(ctx, bg);
@@ -220,7 +223,7 @@ static void prv_draw_orbit(GContext *ctx, HealthOrbitView *view, GSize display) 
     const int16_t closeness = PBL_MAX(HEALTH_ORBIT_STEP - PBL_ABS(offset), 0);
     const int16_t radius =
         view->neighbour_radius +
-        (SELECTED_BUBBLE_RADIUS - view->neighbour_radius) * closeness / HEALTH_ORBIT_STEP;
+        (HEALTH_ORBIT_SELECTED_RADIUS - view->neighbour_radius) * closeness / HEALTH_ORBIT_STEP;
     const GPoint center = health_orbit_bubble_center(display, offset, view->turn);
     prv_draw_bubble(ctx, view, i, center, radius, 2 * closeness > HEALTH_ORBIT_STEP);
   }

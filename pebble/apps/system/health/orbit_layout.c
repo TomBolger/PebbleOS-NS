@@ -22,12 +22,12 @@ static int32_t prv_round_div(int64_t num, int64_t den) {
   return (int32_t)((num >= 0) ? ((num + den / 2) / den) : -((-num + den / 2) / den));
 }
 
-TimelineListSidebar health_orbit_sidebar(GSize display, bool notched) {
+TimelineListSidebar health_orbit_sidebar(GSize display, int16_t notch_width) {
   return (TimelineListSidebar){
     .height = display.h,
     .center_inset = HEALTH_ORBIT_CENTER_INSET,
     .radius = HEALTH_ORBIT_RADIUS,
-    .notch_width = notched ? HEALTH_ORBIT_NOTCH_WIDTH : 0,
+    .notch_width = notch_width,
     .notch_height = HEALTH_ORBIT_NOTCH_HEIGHT,
   };
 }
@@ -52,7 +52,7 @@ GPoint health_orbit_center(GSize display, int32_t turn) {
 }
 
 GPoint health_orbit_notch_tip(GSize display, int32_t turn) {
-  const TimelineListSidebar sidebar = health_orbit_sidebar(display, true);
+  const TimelineListSidebar sidebar = health_orbit_sidebar(display, HEALTH_ORBIT_NOTCH_WIDTH);
   const int16_t depth = timeline_list_sidebar_depth(&sidebar, display.h / 2);
   return health_orbit_turn(display, GPoint(display.w - depth, display.h / 2), turn);
 }
