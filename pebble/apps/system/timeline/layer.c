@@ -1369,37 +1369,44 @@ static void prv_list_reset(TimelineLayer *layer) {
   prv_list_place_indicators(layer);
 }
 
+//! Number of pins on screen or scrolling out
+static int prv_list_num_moving(const TimelineList *list) {
+  return list->num_pins + list->num_leaving;
+}
+
+//! Pin `index` of those on screen or scrolling out: the pins on screen, then those leaving
+static TimelineListPinView *prv_list_moving_pin(TimelineList *list, int index) {
+  return (index < list->num_pins) ? list->pins[index] : list->leaving[index - list->num_pins];
+}
+
 //! Calls a function for each pin on screen or scrolling out
 static void prv_list_each_pin(TimelineLayer *layer,
                               void (*callback)(TimelineLayer *layer, TimelineListPinView *pin)) {
   TimelineList *list = &layer->list;
-  for (int i = 0; i < list->num_pins + list->num_leaving; i++) {
-    callback(layer, (i < list->num_pins) ? list->pins[i] : list->leaving[i - list->num_pins]);
+  for (int i = 0; i < prv_list_num_moving(list); i++) {
+    callback(layer, prv_list_moving_pin(list, i));
   }
 }
 
-//! Where a pin is part way through the up/down animation: each of its edges moves from where it
-//! was to where it rests, keeping the width its text is laid out in
+//! Where a pin is part way through the up/down animation: it slides from where it was to where it
+//! rests, as wide and as tall as its text is laid out
 static GRect prv_list_frame_at(const TimelineListPinView *pin, AnimationProgress progress,
                                InterpolateInt64Function interpolate) {
-  GRect frame = pin->from;
+  GRect frame = pin->frame;
   frame.origin.y = interpolate(progress, pin->from.origin.y, pin->frame.origin.y);
-  frame.size.h = interpolate(progress, grect_get_max_y(&pin->from), grect_get_max_y(&pin->frame)) -
-                 frame.origin.y;
   return frame;
 }
 
 //! Moves the pins, each from where it was to where it rests. Pins next to each other at both ends
-//! stay together, as their edges move alike, and pins pushed off screen part from the others.
+//! stay together, as they slide alike, and pins pushed off screen part from the others.
 //! Pins keep their width, so their text does not reflow, and the indicators move with the pins
 //! they follow. On round, the arc and its icons turn with the pins.
 static void prv_list_frames_update(Animation *animation, AnimationProgress progress) {
   TimelineLayer *layer = animation_get_context(animation);
   TimelineList *list = &layer->list;
   const InterpolateInt64Function interpolate = list->interpolate;
-  for (int i = 0; i < list->num_pins + list->num_leaving; i++) {
-    TimelineListPinView *pin =
-        (i < list->num_pins) ? list->pins[i] : list->leaving[i - list->num_pins];
+  for (int i = 0; i < prv_list_num_moving(list); i++) {
+    TimelineListPinView *pin = prv_list_moving_pin(list, i);
     GRect frame = prv_list_frame_at(pin, progress, interpolate);
 #if PBL_ROUND
     // Pins' text follows the arc, their icons turn on it from one spoke to the next
@@ -1460,9 +1467,8 @@ static Animation *prv_list_create_up_down_animation(TimelineLayer *layer, uint32
   animation_set_handlers(frames, (AnimationHandlers){}, layer);
   animation_set_duration(frames, duration);
   prv_list_add_animation(animations, &num_animations, frames);
-  for (int i = 0; i < list->num_pins + list->num_leaving; i++) {
-    TimelineListPinView *pin =
-        (i < list->num_pins) ? list->pins[i] : list->leaving[i - list->num_pins];
+  for (int i = 0; i < prv_list_num_moving(list); i++) {
+    TimelineListPinView *pin = prv_list_moving_pin(list, i);
     prv_list_start_pin_move(layer, pin, duration);
     prv_list_add_animation(
         animations, &num_animations,
@@ -1487,9 +1493,8 @@ static void prv_list_up_down_stopped(TimelineLayer *layer) {
 
 static void prv_list_set_hidden(TimelineLayer *layer, bool hidden) {
   TimelineList *list = &layer->list;
-  for (int i = 0; i < list->num_pins + list->num_leaving; i++) {
-    TimelineListPinView *pin =
-        (i < list->num_pins) ? list->pins[i] : list->leaving[i - list->num_pins];
+  for (int i = 0; i < prv_list_num_moving(list); i++) {
+    TimelineListPinView *pin = prv_list_moving_pin(list, i);
     prv_set_layout_hidden(pin->layout, hidden);
   }
 }
