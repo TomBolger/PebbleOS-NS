@@ -20,6 +20,23 @@ typedef struct {
 //! Health data model
 typedef struct HealthData HealthData;
 
+//! What the overview of a day shows
+typedef struct HealthDayData {
+  //! How many days before today the day is
+  int days_ago;
+  int32_t steps;
+  //! Typical steps of the day's weekday: by now for today, over the whole day before it
+  int32_t typical_steps_by_now;
+  int32_t typical_steps;
+  int32_t distance_meters;
+  int32_t active_seconds;
+  //! Sleep of the night that ended on the day, and its deep sleep
+  int32_t sleep;
+  int32_t deep_sleep;
+  //! Typical sleep of a night ending on the day's weekday
+  int32_t typical_sleep;
+} HealthDayData;
+
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 // API Functions
 //
@@ -127,6 +144,13 @@ int32_t health_data_sleep_get_cur_wday_average(HealthData *health_data);
 //! @param health_data A pointer to the health data to use
 //! @return the current deep sleep length
 int32_t health_data_current_deep_sleep_get(HealthData *health_data);
+
+//! Get what the overview of a day shows, from today to PBL_DAY_PER_WEEK - 1 days before it. Today's
+//! is what the health data has; a day before it reads its history and typical values.
+//! @param health_data A pointer to the health data to use
+//! @param days_ago How many days before today the day is
+//! @param[out] day_out What the overview of the day shows
+void health_data_day_get(HealthData *health_data, int days_ago, HealthDayData *day_out);
 
 //! Get the historical deep sleep data
 //! @param health_data A pointer to the health data to use

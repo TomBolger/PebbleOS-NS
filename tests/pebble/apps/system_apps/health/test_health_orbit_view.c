@@ -22,6 +22,41 @@ bool clock_is_24h_style(void) {
   return false;
 }
 
+//! A week of what the health data does not keep, from today back
+static const int32_t s_distance_history[] = {5600, 5100, 5750, 3540, 8200, 4430, 7020};
+static const int32_t s_active_minutes_history[] = {47, 38, 52, 21, 74, 33, 61};
+
+bool activity_get_metric(ActivityMetric metric, uint32_t history_len, int32_t *history) {
+  for (uint32_t i = 0; i < history_len; i++) {
+    switch (metric) {
+      case ActivityMetricDistanceMeters:
+        history[i] = s_distance_history[i];
+        break;
+      case ActivityMetricActiveSeconds:
+        history[i] = s_active_minutes_history[i] * PBL_SEC_PER_MIN;
+        break;
+      default:
+        history[i] = 0;
+        break;
+    }
+  }
+  return true;
+}
+
+//! 9,120 steps on a typical day, 95 every quarter hour
+bool activity_get_step_averages(enum pbl_weekday day_of_week, ActivityMetricAverages *averages) {
+  for (int i = 0; i < ACTIVITY_NUM_METRIC_AVERAGES; i++) {
+    averages->average[i] = 95;
+  }
+  return true;
+}
+
+bool activity_get_metric_typical(ActivityMetric metric, enum pbl_weekday day, int32_t *value_out) {
+  // 7h 25m of sleep on a typical night
+  *value_out = (metric == ActivityMetricSleepTotalSeconds) ? (7 * 60 + 25) * PBL_SEC_PER_MIN : 0;
+  return true;
+}
+
 // Setup and Teardown
 ////////////////////////////////////
 
@@ -239,6 +274,87 @@ void test_health_orbit_view__render_sleep_week_long(void) {
   prv_show_week(s_view);
   window_render(&s_view->window, &s_ctx);
   cl_check(gbitmap_pbi_eq(&s_ctx.dest_bitmap, TEST_PBI_FILE));
+}
+
+void test_health_orbit_view__render_steps_week_selected(void) {
+  // Down moves the outline from today to the day before, then to the one before that
+  s_data = prv_sample_data();
+  prv_render(&s_data, HealthOrbitSectionSteps);
+  prv_show_week(s_view);
+  prv_move_selection(s_view, true /* down */);
+  prv_move_selection(s_view, true /* down */);
+  prv_rest(s_view);
+  window_render(&s_view->window, &s_ctx);
+  cl_check(gbitmap_pbi_eq(&s_ctx.dest_bitmap, TEST_PBI_FILE));
+}
+
+void test_health_orbit_view__render_day(void) {
+  // Select on Monday in the week of steps opens Monday's overview, laid out as the Today card
+  s_data = prv_sample_data();
+  prv_render(&s_data, HealthOrbitSectionSteps);
+  prv_show_week(s_view);
+  s_view->week_selection = 2;
+  prv_select_click_handler(nullptr, s_view);
+  prv_rest(s_view);
+  window_render(&s_view->window, &s_ctx);
+  cl_check(gbitmap_pbi_eq(&s_ctx.dest_bitmap, TEST_PBI_FILE));
+}
+
+void test_health_orbit_view__week_selection_stops_at_the_ends(void) {
+  s_data = prv_sample_data();
+  prv_render(&s_data, HealthOrbitSectionSleep);
+  prv_select_click_handler(nullptr, s_view);
+  prv_rest(s_view);
+  cl_assert(s_view->week);
+  cl_assert_equal_i(s_view->week_selection, 0);
+  // Up on today stays there
+  prv_move_selection(s_view, false /* down */);
+  cl_assert_equal_i(s_view->week_selection, 0);
+  for (int i = 0; i < 2 * HEALTH_ORBIT_WEEK_NUM_ROWS; i++) {
+    prv_move_selection(s_view, true /* down */);
+  }
+  cl_assert_equal_i(s_view->week_selection, HEALTH_ORBIT_WEEK_NUM_ROWS - 1);
+  // The outline moves from the row it was on
+  prv_rest(s_view);
+  prv_move_selection(s_view, false /* down */);
+  cl_assert_equal_i(s_view->selection_from, HEALTH_ORBIT_WEEK_NUM_ROWS - 1);
+  cl_assert_equal_i(s_view->week_selection, HEALTH_ORBIT_WEEK_NUM_ROWS - 2);
+  cl_assert_equal_i(s_view->selection_travel, 0);
+}
+
+void test_health_orbit_view__day_opens_from_the_week_and_back(void) {
+  s_data = prv_sample_data();
+  prv_render(&s_data, HealthOrbitSectionSteps);
+  prv_select_click_handler(nullptr, s_view);
+  prv_rest(s_view);
+  s_view->week_selection = 4;
+  // Select opens the day selected
+  prv_select_click_handler(nullptr, s_view);
+  prv_rest(s_view);
+  cl_assert(!s_view->week);
+  cl_assert(s_view->day);
+  cl_assert(s_view->card.day == &s_view->day_data);
+  cl_assert_equal_i(s_view->day_data.days_ago, 4);
+  cl_assert_equal_i(s_view->day_data.steps, s_data.step_data[4]);
+  cl_assert_equal_i(s_view->day_data.distance_meters, s_distance_history[4]);
+  cl_assert_equal_i(s_view->day_data.active_seconds, s_active_minutes_history[4] * PBL_SEC_PER_MIN);
+  cl_assert_equal_i(s_view->day_data.typical_steps, 9120);
+  // Up and Down and Select do nothing on a day
+  prv_select_click_handler(nullptr, s_view);
+  cl_assert(s_view->day);
+  // Back goes back to the week with the day selected
+  prv_back_click_handler(nullptr, s_view);
+  prv_rest(s_view);
+  cl_assert(s_view->week);
+  cl_assert(!s_view->day);
+  cl_assert_equal_i(s_view->week_selection, 4);
+  // And Back again to the section's card, the week starting on today the next time
+  prv_back_click_handler(nullptr, s_view);
+  prv_rest(s_view);
+  cl_assert(!s_view->week);
+  cl_assert(s_view->card.day == nullptr);
+  prv_select_click_handler(nullptr, s_view);
+  cl_assert_equal_i(s_view->week_selection, 0);
 }
 
 void test_health_orbit_view__wrap_keeps_turning_the_same_way(void) {

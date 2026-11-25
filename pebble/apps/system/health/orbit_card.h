@@ -31,6 +31,9 @@ typedef enum HealthOrbitSection {
 //! How a card is drawn
 typedef struct HealthOrbitCard {
   HealthOrbitSection section;
+  //! The day whose overview the card is in place of the section's own, as the Today card has
+  //! today's, or nullptr
+  const HealthDayData *day;
   //! How far down its numbers and bubbles are moved from where they rest
   int16_t offset_y;
   //! Angle each ring sweeps from its start, or HEALTH_ORBIT_CARD_SWEEP_REST
@@ -47,19 +50,20 @@ GColor health_orbit_section_color(HealthOrbitSection section);
 //! Background color of a section's card
 GColor health_orbit_section_bg_color(HealthOrbitSection section);
 
-//! A section's card at rest
-void health_orbit_card_init(HealthOrbitCard *card, HealthOrbitSection section);
+//! A section's card at rest, or the overview of \a day in its place if not nullptr
+void health_orbit_card_init(HealthOrbitCard *card, HealthOrbitSection section,
+                            const HealthDayData *day);
 
-//! How far each of a section's rings sweeps for the data
+//! How far each of a card's rings sweeps for the data
 //! @param[out] sweeps_out Angle swept by each ring
 //! @param[out] spans_out Angle each ring spans, its whole track, or nullptr
 //! @return Number of rings
-int health_orbit_card_get_sweeps(HealthOrbitSection section, HealthData *health_data,
+int health_orbit_card_get_sweeps(const HealthOrbitCard *card, HealthData *health_data,
                                  uint32_t sweeps_out[HEALTH_ORBIT_CARD_MAX_RINGS],
                                  uint32_t spans_out[HEALTH_ORBIT_CARD_MAX_RINGS]);
 
-//! Number of bubbles a section's card has
-int health_orbit_card_get_num_bubbles(HealthOrbitSection section);
+//! Number of bubbles a card has
+int health_orbit_card_get_num_bubbles(const HealthOrbitCard *card);
 
 //! Draws a card's numbers and bubbles
 void health_orbit_card_draw_content(GContext *ctx, const HealthOrbitCard *card,
