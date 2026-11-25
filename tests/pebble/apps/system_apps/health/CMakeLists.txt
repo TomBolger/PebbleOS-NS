@@ -361,3 +361,12 @@ pbl_clar_test(test_health_hr_chart
   DEFINES USE_DISPLAY_PERIMETER_ON_FONT_LAYOUT=1
   OVERRIDES dummy_board
 )
+
+pbl_clar_test(test_health_orbit_layout
+  SOURCES
+    pebble/applib/graphics/gtypes.c
+    pebble/applib/ui/menu_layer_round.c
+    pebble/apps/system/health/orbit_layout.c
+    pebble/apps/system/timeline/list_layout.c
+  PLATFORMS gabbro
+)
