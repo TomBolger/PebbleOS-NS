@@ -144,12 +144,15 @@ static void prv_initialize(void) {
   app_state_set_user_data(health_app_data);
 
   health_app_data->health_data = health_data_create();
-  health_data_update_quick(health_app_data->health_data);
 
 #if PBL_ROUND
+  // The round view shows sleep and averages from its first frame, while it opens, so it reads them
+  // all before it is drawn rather than filling them in once it is open
+  health_data_update(health_app_data->health_data);
   health_app_data->orbit_view = health_orbit_view_create(health_app_data->health_data);
   health_orbit_view_push(health_app_data->orbit_view);
 #else
+  health_data_update_quick(health_app_data->health_data);
   health_app_data->health_card_view = health_card_view_create(health_app_data->health_data);
 
   health_card_view_push(health_app_data->health_card_view);
