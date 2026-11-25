@@ -8,9 +8,11 @@
 #include <string.h>
 #include <time.h>
 
+#include <pbl/kernel/compiler.h>
 #include <pbl/kernel/time.h>
 #include <pbl/logging/logging.h>
 #include <pbl/services/time.h>
+#include <pbl/util/math.h>
 #include <pbl/util/testing.h>
 #include <pbl/util/units.h>
 
@@ -288,6 +290,62 @@ int32_t health_data_current_deep_sleep_get(HealthData *health_data) {
 
 int32_t *health_data_deep_sleep_get(HealthData *health_data) {
   return health_data->deep_sleep_data;
+}
+
+//! A metric's value on the day \a days_ago days before today, 0 if it has none
+static int32_t prv_metric_on_day(ActivityMetric metric, int days_ago) {
+  int32_t history[PBL_DAY_PER_WEEK] = {};
+  if (!activity_get_metric(metric, days_ago + 1, history)) {
+    return 0;
+  }
+  return PBL_MAX(history[days_ago], 0);
+}
+
+//! Reads what a day before today has beyond the week the health data keeps, apart from the drawing
+//! that shows today's, which has it all
+static PBL_NOINLINE void prv_load_past_day(HealthDayData *day) {
+  day->distance_meters = prv_metric_on_day(ActivityMetricDistanceMeters, day->days_ago);
+  day->active_seconds = prv_metric_on_day(ActivityMetricActiveSeconds, day->days_ago);
+
+  const time_t time = pbl_realtime() - day->days_ago * PBL_SEC_PER_DAY;
+  struct pbl_tm local_tm;
+  pbl_localtime_r(&time, &local_tm);
+  ActivityMetricAverages averages;
+  if (activity_get_step_averages(local_tm.tm_wday, &averages)) {
+    for (int i = 0; i < ACTIVITY_NUM_METRIC_AVERAGES; i++) {
+      if (averages.average[i] != ACTIVITY_METRIC_AVERAGES_UNKNOWN) {
+        day->typical_steps += averages.average[i];
+      }
+    }
+  }
+  if (!activity_get_metric_typical(ActivityMetricSleepTotalSeconds, local_tm.tm_wday,
+                                   &day->typical_sleep)) {
+    day->typical_sleep = 0;
+  }
+}
+
+void health_data_day_get(HealthData *health_data, int days_ago, HealthDayData *day_out) {
+  days_ago = PBL_CLAMP(days_ago, 0, PBL_DAY_PER_WEEK - 1);
+  if (days_ago == 0) {
+    *day_out = (HealthDayData){
+      .steps = health_data_current_steps_get(health_data),
+      .typical_steps_by_now = health_data_steps_get_current_average(health_data),
+      .typical_steps = health_data_steps_get_cur_wday_average(health_data),
+      .distance_meters = health_data->current_distance_meters,
+      .active_seconds = health_data->current_active_seconds,
+      .sleep = health_data_current_sleep_get(health_data),
+      .deep_sleep = health_data->deep_sleep,
+      .typical_sleep = health_data->typical_sleep,
+    };
+    return;
+  }
+  *day_out = (HealthDayData){
+    .days_ago = days_ago,
+    .steps = PBL_MAX(health_data->step_data[days_ago], 0),
+    .sleep = PBL_MAX(health_data->sleep_data[days_ago], 0),
+    .deep_sleep = PBL_MAX(health_data->deep_sleep_data[days_ago], 0),
+  };
+  prv_load_past_day(day_out);
 }
 
 int32_t health_data_sleep_get_monthly_average(HealthData *health_data) {

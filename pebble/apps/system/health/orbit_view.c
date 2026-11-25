@@ -81,6 +81,14 @@ struct HealthOrbitView {
 
   //! Whether the week of the section shows, in place of its card, or is coming in
   bool week;
+  //! Whether the overview of the day selected in the week shows in place of the section's card
+  bool day;
+  HealthDayData day_data;
+  //! Row of the week selected, the one it was on as the selection moves, and how far it has
+  //! moved, down the rows from it
+  int16_t week_selection;
+  int16_t selection_from;
+  int16_t selection_travel;
   //! Whether the card and the week are drawn, both as one turns into the other
   bool card_shown;
   bool week_shown;
@@ -425,8 +433,13 @@ static void prv_layer_update_proc(Layer *layer, GContext *ctx) {
   if (view->week_shown) {
     MenuRoundShape rows[HEALTH_ORBIT_WEEK_NUM_ROWS];
     prv_get_week_rows(view, rows);
+    // The selection's outline goes round its row as it comes and goes, and moves between rows
+    const int16_t distance = (view->week_selection - view->selection_from) * HEALTH_WEEK_ROW_PITCH;
+    const int32_t progress = distance ? ((int32_t)view->selection_travel * 1000 / distance) : 1000;
+    const MenuRoundShape highlight =
+        menu_round_morph(&rows[view->selection_from], &rows[view->week_selection], progress);
     health_orbit_week_draw(ctx, view->section, view->health_data, rows, view->week_header_offset_y,
-                           view->crown, view);
+                           &highlight, view->week_selection, view->crown, view);
   }
   const SidebarSweep sweep = prv_get_sidebar_sweep(view, display);
   prv_fill_sidebar(ctx, display, view->turn, &sweep, bg);
@@ -603,18 +616,20 @@ static void prv_rest(HealthOrbitView *view) {
   view->leaving_shown = false;
   view->color_section = view->section;
   view->sidebar_from = view->section;
-  health_orbit_card_init(&view->card, view->section);
+  health_orbit_card_init(&view->card, view->section, view->day ? &view->day_data : nullptr);
   view->orbit_offset = view->section * HEALTH_ORBIT_STEP;
   view->orbit_from = view->orbit_offset;
   view->orbit_target = view->orbit_offset;
   view->turn = view->week ? -QUARTER_TURN : 0;
-  view->neighbour_radius = view->week ? 0 : NEIGHBOUR_BUBBLE_RADIUS;
+  view->neighbour_radius = (view->week || view->day) ? 0 : NEIGHBOUR_BUBBLE_RADIUS;
   view->card_shown = !view->week;
   view->week_shown = view->week;
   for (int i = 0; i < HEALTH_ORBIT_WEEK_NUM_ROWS; i++) {
     view->row_travel[i] = ROW_AT_REST;
   }
   view->week_header_offset_y = 0;
+  view->selection_from = view->week_selection;
+  view->selection_travel = 0;
   layer_mark_dirty(&view->layer);
 }
 
@@ -673,7 +688,7 @@ static void prv_animate_section(HealthOrbitView *view, HealthOrbitSection sectio
   uint32_t sweeps[HEALTH_ORBIT_CARD_MAX_RINGS];
   uint32_t spans[HEALTH_ORBIT_CARD_MAX_RINGS];
   const int num_rings =
-      health_orbit_card_get_sweeps(view->section, view->health_data, sweeps, spans);
+      health_orbit_card_get_sweeps(&view->leaving, view->health_data, sweeps, spans);
   for (int i = 0; i < num_rings; i++) {
     view->leaving.sweep[i] = sweeps[i];
     prv_add_uint32(&transition, &view->leaving.sweep[i], 0, 0,
@@ -683,18 +698,18 @@ static void prv_animate_section(HealthOrbitView *view, HealthOrbitSection sectio
                 timeline_animation_interpolate_moook_soft);
 
   view->section = section;
-  health_orbit_card_init(&view->card, section);
+  health_orbit_card_init(&view->card, section, nullptr);
   view->card.offset_y = down ? height : -height;
   prv_add_int16(&transition, &view->card.offset_y, 0, 0, SLIDE_MS,
                 timeline_animation_interpolate_moook_soft);
   const int num_new_rings =
-      health_orbit_card_get_sweeps(section, view->health_data, sweeps, nullptr);
+      health_orbit_card_get_sweeps(&view->card, view->health_data, sweeps, nullptr);
   for (int i = 0; i < num_new_rings; i++) {
     view->card.sweep[i] = 0;
     prv_add_uint32(&transition, &view->card.sweep[i], sweeps[i], FRAMES(3),
                    interpolate_moook_custom_duration(&s_sweep), prv_sweep_curve);
   }
-  for (int i = 0; i < health_orbit_card_get_num_bubbles(section); i++) {
+  for (int i = 0; i < health_orbit_card_get_num_bubbles(&view->card); i++) {
     view->card.bubble_radius[i] = 0;
     prv_add_int16(&transition, &view->card.bubble_radius[i], HEALTH_ORBIT_CARD_BUBBLE_RADIUS,
                   FRAMES(5 + i), interpolate_moook_duration(), prv_moook_curve);
@@ -728,20 +743,26 @@ static uint32_t prv_row_out_delay(int index) {
   return FRAMES(4 + index / 2);
 }
 
-//! Select: the card's rings snap back and its bubbles pop out as it drops away, the sidebar turns a
-//! quarter round back to the top into the banner, and the week's rows drop out of its notch, the
-//! most recent first, each a ball stretching into its pill
+//! Select, or Back from a day: the card's rings snap back and its bubbles pop out as it drops away,
+//! the sidebar turns a quarter round back to the top into the banner, and the week's rows drop out
+//! of its notch, the most recent first, each a ball stretching into its pill, the selected one's
+//! outline round it
 static void prv_animate_week_in(HealthOrbitView *view) {
   prv_finish(view);
   const GSize display = view->layer.bounds.size;
   Transition transition = {};
+  // Back from a day, the week comes back with the day selected, from the card on today
+  if (!view->day) {
+    view->week_selection = 0;
+    view->selection_from = 0;
+  }
   view->week = true;
+  view->day = false;
   view->week_shown = true;
 
   uint32_t sweeps[HEALTH_ORBIT_CARD_MAX_RINGS];
   uint32_t spans[HEALTH_ORBIT_CARD_MAX_RINGS];
-  const int num_rings =
-      health_orbit_card_get_sweeps(view->section, view->health_data, sweeps, spans);
+  const int num_rings = health_orbit_card_get_sweeps(&view->card, view->health_data, sweeps, spans);
   for (int i = 0; i < num_rings; i++) {
     view->card.sweep[i] = sweeps[i];
     prv_add_uint32(&transition, &view->card.sweep[i], 0, 0,
@@ -751,7 +772,7 @@ static void prv_animate_week_in(HealthOrbitView *view) {
     prv_add_uint32(&transition, &view->card.track[i], 0, 0,
                    interpolate_moook_custom_duration(&s_retract), prv_retract_curve);
   }
-  for (int i = 0; i < health_orbit_card_get_num_bubbles(view->section); i++) {
+  for (int i = 0; i < health_orbit_card_get_num_bubbles(&view->card); i++) {
     prv_add_int16(&transition, &view->card.bubble_radius[i], 0, 0, interpolate_moook_in_duration(),
                   prv_in_only_curve);
   }
@@ -779,14 +800,19 @@ static void prv_animate_week_in(HealthOrbitView *view) {
   prv_play(view, &transition);
 }
 
-//! Back: the rows fold into balls and slip back into the notch, the oldest first, the banner turns
-//! back down into the sidebar, the card comes back up as its rings sweep in and its bubbles pop
-static void prv_animate_week_out(HealthOrbitView *view) {
+//! Back, or Select on a day: the rows fold into balls and slip back into the notch, the oldest
+//! first, the banner turns back down into the sidebar, and the section's card, or the overview of
+//! the day selected, comes back up as its rings sweep in and its bubbles pop
+static void prv_animate_week_out(HealthOrbitView *view, bool to_day) {
   prv_finish(view);
   const GSize display = view->layer.bounds.size;
   Transition transition = {};
   view->week = false;
   view->card_shown = true;
+  view->day = to_day;
+  if (to_day) {
+    health_data_day_get(view->health_data, view->week_selection, &view->day_data);
+  }
 
   const GPoint notch = health_orbit_notch_tip(display, -QUARTER_TURN);
   for (int i = 0; i < HEALTH_ORBIT_WEEK_NUM_ROWS; i++) {
@@ -804,14 +830,13 @@ static void prv_animate_week_out(HealthOrbitView *view) {
   prv_add_int16(&transition, &view->turn, 0, turn_delay,
                 interpolate_moook_custom_duration(&s_turn_back), prv_turn_back_curve);
 
-  health_orbit_card_init(&view->card, view->section);
+  health_orbit_card_init(&view->card, view->section, view->day ? &view->day_data : nullptr);
   view->card.offset_y = display.h;
   prv_add_int16(&transition, &view->card.offset_y, 0, turn_delay,
                 interpolate_moook_soft_duration(CARD_DROP_FRAMES_MID), prv_drop_curve);
   uint32_t sweeps[HEALTH_ORBIT_CARD_MAX_RINGS];
   uint32_t spans[HEALTH_ORBIT_CARD_MAX_RINGS];
-  const int num_rings =
-      health_orbit_card_get_sweeps(view->section, view->health_data, sweeps, spans);
+  const int num_rings = health_orbit_card_get_sweeps(&view->card, view->health_data, sweeps, spans);
   for (int i = 0; i < num_rings; i++) {
     view->card.sweep[i] = 0;
     prv_add_uint32(&transition, &view->card.sweep[i], sweeps[i], FRAMES(5),
@@ -821,13 +846,15 @@ static void prv_animate_week_out(HealthOrbitView *view) {
     prv_add_uint32(&transition, &view->card.track[i], spans[i], FRAMES(5),
                    interpolate_moook_custom_duration(&s_sweep_back), prv_sweep_back_curve);
   }
-  for (int i = 0; i < health_orbit_card_get_num_bubbles(view->section); i++) {
+  for (int i = 0; i < health_orbit_card_get_num_bubbles(&view->card); i++) {
     view->card.bubble_radius[i] = 0;
     prv_add_int16(&transition, &view->card.bubble_radius[i], HEALTH_ORBIT_CARD_BUBBLE_RADIUS,
                   FRAMES(6 + i), interpolate_moook_duration(), prv_moook_curve);
   }
-  prv_add_int16(&transition, &view->neighbour_radius, NEIGHBOUR_BUBBLE_RADIUS, FRAMES(6),
-                interpolate_moook_duration(), prv_moook_curve);
+  if (!view->day) {
+    prv_add_int16(&transition, &view->neighbour_radius, NEIGHBOUR_BUBBLE_RADIUS, FRAMES(6),
+                  interpolate_moook_duration(), prv_moook_curve);
+  }
   prv_play(view, &transition);
 }
 
@@ -837,12 +864,34 @@ static void prv_show_section(HealthOrbitView *view, HealthOrbitSection section) 
   prv_rest(view);
 }
 
-static void prv_up_down_click_handler(ClickRecognizerRef recognizer, void *context) {
-  HealthOrbitView *view = context;
-  if (view->week) {
+//! Up or Down in the week: the outline moves to the day above or below as the timeline's selection
+//! moves, stopping at the ends, where all the days show
+static void prv_move_selection(HealthOrbitView *view, bool down) {
+  const int next = view->week_selection + (down ? 1 : -1);
+  if (next < 0 || next >= HEALTH_ORBIT_WEEK_NUM_ROWS) {
     return;
   }
+  prv_finish(view);
+  Transition transition = {};
+  view->selection_from = view->week_selection;
+  view->week_selection = next;
+  view->selection_travel = 0;
+  prv_add_int16(&transition, &view->selection_travel,
+                down ? HEALTH_WEEK_ROW_PITCH : -HEALTH_WEEK_ROW_PITCH, 0, SLIDE_MS,
+                timeline_animation_interpolate_moook_soft);
+  prv_play(view, &transition);
+}
+
+static void prv_up_down_click_handler(ClickRecognizerRef recognizer, void *context) {
+  HealthOrbitView *view = context;
   const bool down = (click_recognizer_get_button_id(recognizer) == BUTTON_ID_DOWN);
+  if (view->week) {
+    prv_move_selection(view, down);
+    return;
+  }
+  if (view->day) {
+    return;
+  }
   int next = view->section + (down ? 1 : -1);
   if (next < 0 || next >= HealthOrbitSectionCount) {
     if (!view->wrap) {
@@ -858,15 +907,19 @@ static void prv_up_down_click_handler(ClickRecognizerRef recognizer, void *conte
 
 static void prv_select_click_handler(ClickRecognizerRef recognizer, void *context) {
   HealthOrbitView *view = context;
-  if (!view->week && health_orbit_week_has_section(view->section)) {
+  if (view->week) {
+    prv_animate_week_out(view, true /* to_day */);
+  } else if (!view->day && health_orbit_week_has_section(view->section)) {
     prv_animate_week_in(view);
   }
 }
 
 static void prv_back_click_handler(ClickRecognizerRef recognizer, void *context) {
   HealthOrbitView *view = context;
-  if (view->week) {
-    prv_animate_week_out(view);
+  if (view->day) {
+    prv_animate_week_in(view);
+  } else if (view->week) {
+    prv_animate_week_out(view, false /* to_day */);
   } else {
     app_window_stack_pop(true);
   }
