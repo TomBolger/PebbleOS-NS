@@ -758,6 +758,39 @@ uint16_t notification_storage_get_count(void) {
   return count;
 }
 
+void notification_storage_digest_add(NotificationStorageDigest *digest, const Uuid *id) {
+  // FNV-1a
+  uint32_t hash = 2166136261u;
+  const uint8_t *bytes = (const uint8_t *)id;
+  for (size_t i = 0; i < sizeof(Uuid); i++) {
+    hash = (hash ^ bytes[i]) * 16777619u;
+  }
+  digest->count++;
+  digest->hash ^= hash;
+}
+
+typedef struct DigestContext {
+  const Uuid *parent_id;
+  NotificationStorageDigest *digest;
+} DigestContext;
+
+static bool prv_digest_notification(void *data, SerializedTimelineItemHeader *header) {
+  DigestContext *context = data;
+  if (uuid_equal(&header->common.parent_id, context->parent_id)) {
+    notification_storage_digest_add(context->digest, &header->common.id);
+  }
+  return true;
+}
+
+void notification_storage_digest(const Uuid *parent_id, NotificationStorageDigest *digest) {
+  *digest = (NotificationStorageDigest){};
+  DigestContext context = {
+    .parent_id = parent_id,
+    .digest = digest,
+  };
+  notification_storage_iterate(prv_digest_notification, &context);
+}
+
 //! Reads the string attributes requested in attr_list from the payload following the header,
 //! leaving the file positioned after the payload
 // Size of the numeric attributes the list iterator can read, 0 for strings.
