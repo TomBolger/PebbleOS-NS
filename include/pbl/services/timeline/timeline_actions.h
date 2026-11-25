@@ -70,7 +70,20 @@ ActionMenuLevel *timeline_actions_create_action_menu_root_level(uint8_t num_acti
 bool timeline_actions_has_item_menu(const TimelineItem *item);
 
 /**
+ * @brief Perform the item's action without its menu, when that is all the menu would do.
+ *
+ * Applies when the menu would hold a single action that only opens an app or a pin; never to
+ * actions that change anything, such as remove, dismiss or reply.
+ *
+ * @param item Item.
+ * @return true if the action was performed and no menu should open.
+ */
+bool timeline_actions_perform_sole_action(const TimelineItem *item);
+
+/**
  * @brief Create the root level of an item's action menu (see timeline_actions_has_item_menu).
+ *
+ * A menu whose single action opens a submenu, such as replies, starts with that submenu.
  *
  * @param item Item; must outlive the menu.
  * @param source Window or app creating the menu.

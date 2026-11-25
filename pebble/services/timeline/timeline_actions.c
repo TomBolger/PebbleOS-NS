@@ -1218,8 +1218,42 @@ static TimelineItemAction *prv_menu_action(const TimelineItem *item, uint8_t ind
   return prv_watch_action(item);
 }
 
+//! Actions that only take the user somewhere, which Select can do without a menu: open an app or
+//! a pin, or a submenu.
+static bool prv_action_only_opens(const TimelineItemAction *action) {
+  switch (action->type) {
+    case TimelineItemActionTypeOpenWatchApp:
+    case TimelineItemActionTypeOpenPin:
+    case TimelineItemActionTypeResponse:
+    case TimelineItemActionTypePostpone:
+      return true;
+    default:
+      return false;
+  }
+}
+
+//! The only action of the item's menu, if it only opens something.
+static TimelineItemAction *prv_sole_opening_action(const TimelineItem *item) {
+  if (prv_num_menu_actions(item) != 1) {
+    return nullptr;
+  }
+  TimelineItemAction *action = prv_menu_action(item, 0);
+  return prv_action_only_opens(action) ? action : nullptr;
+}
+
 bool timeline_actions_has_item_menu(const TimelineItem *item) {
   return prv_num_menu_actions(item) > 0;
+}
+
+bool timeline_actions_perform_sole_action(const TimelineItem *item) {
+  const TimelineItemAction *action = prv_sole_opening_action(item);
+  if (!action || (action->type != TimelineItemActionTypeOpenWatchApp &&
+                  action->type != TimelineItemActionTypeOpenPin)) {
+    // A submenu opens as the menu itself
+    return false;
+  }
+  timeline_actions_invoke_action(action, item, nullptr, nullptr);
+  return true;
 }
 
 ActionMenuLevel *timeline_actions_create_item_root_level(TimelineItem *item,
@@ -1227,6 +1261,17 @@ ActionMenuLevel *timeline_actions_create_item_root_level(TimelineItem *item,
   const uint8_t num_actions = prv_num_menu_actions(item);
   if (num_actions == 0) {
     return nullptr;
+  }
+  TimelineItemAction *sole = prv_sole_opening_action(item);
+  if (sole && sole->type == TimelineItemActionTypeResponse) {
+    kernel_ui_set_current_timeline_item_action_source(source);
+    prv_request_responsive_session();
+    return prv_create_responses_level(sole, nullptr, true /* standalone_reply */);
+  }
+  if (sole && sole->type == TimelineItemActionTypePostpone) {
+    kernel_ui_set_current_timeline_item_action_source(source);
+    prv_request_responsive_session();
+    return prv_create_postpone_level(sole, nullptr);
   }
   ActionMenuLevel *root_level =
       timeline_actions_create_action_menu_root_level(num_actions, 0, source);
