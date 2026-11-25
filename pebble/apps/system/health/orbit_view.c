@@ -21,8 +21,11 @@
 #include <applib/graphics/gdraw_command_transforms.h>
 #include <applib/graphics/gpath.h>
 #include <applib/graphics/graphics.h>
+#include <applib/ui/animation_interpolate.h>
 #include <applib/ui/app_window_stack.h>
+#include <applib/ui/property_animation.h>
 #include <applib/ui/ui.h>
+#include <apps/system/timeline/animations.h>
 #include <resource/resource_ids.auto.h>
 
 #if PBL_ROUND
@@ -51,9 +54,15 @@ struct HealthOrbitView {
   HealthData *health_data;
   HealthOrbitIcon icons[HealthOrbitSectionCount];
   GDrawCommandImage *crown;
-  //! Section of the card shown
+  //! Section of the card shown, or coming in
   HealthOrbitSection section;
   HealthOrbitCard card;
+  //! The card going out as another comes in
+  HealthOrbitCard leaving;
+  bool leaving_shown;
+  //! Section whose colors the background and the sidebar have
+  HealthOrbitSection color_section;
+  Animation *animation;
   //! Whether Up past the first section and Down past the last one wrap round
   bool wrap;
 
@@ -211,10 +220,23 @@ static void prv_draw_orbit(GContext *ctx, HealthOrbitView *view, GSize display) 
   graphics_context_set_antialiased(ctx, false);
 }
 
+//! Draws the cards, the leaving one's rings with their tracks as long as the colors are still its
+static void prv_draw_cards(GContext *ctx, HealthOrbitView *view) {
+  const bool leaving_tracks = view->leaving_shown && (view->color_section == view->leaving.section);
+  if (view->leaving_shown) {
+    health_orbit_card_draw_content(ctx, &view->leaving, view->health_data, view);
+  }
+  health_orbit_card_draw_content(ctx, &view->card, view->health_data, view);
+  if (view->leaving_shown) {
+    health_orbit_card_draw_rings(ctx, &view->leaving, view->health_data, leaving_tracks);
+  }
+  health_orbit_card_draw_rings(ctx, &view->card, view->health_data, !leaving_tracks);
+}
+
 static void prv_layer_update_proc(Layer *layer, GContext *ctx) {
   HealthOrbitView *view = window_get_user_data(layer_get_window(layer));
   const GSize display = layer->bounds.size;
-  const GColor bg = health_orbit_section_bg_color(view->section);
+  const GColor bg = health_orbit_section_bg_color(view->color_section);
   graphics_context_set_fill_color(ctx, bg);
   graphics_fill_rect(ctx, &layer->bounds);
 
@@ -222,21 +244,226 @@ static void prv_layer_update_proc(Layer *layer, GContext *ctx) {
     health_orbit_week_draw(ctx, view->section, view->health_data, view->week_rows,
                            view->week_header_offset_y, view->crown, view);
   } else {
-    health_orbit_card_draw_content(ctx, &view->card, view->health_data, view);
-    health_orbit_card_draw_rings(ctx, &view->card, view->health_data, true /* tracks */);
+    prv_draw_cards(ctx, view);
   }
-  prv_fill_sidebar(ctx, display, view->turn, health_orbit_section_color(view->section), bg);
+  prv_fill_sidebar(ctx, display, view->turn, health_orbit_section_color(view->color_section), bg);
   prv_draw_orbit(ctx, view, display);
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+// Animations
+
+//! Delays and lengths in frames, as the Moook curves count them
+#define FRAMES(n) ((n) * ANIMATION_TARGET_FRAME_INTERVAL_MS)
+
+//! The orbit turns and the cards slide as the timeline scrolls
+#define SLIDE_MS TIMELINE_UP_DOWN_ANIMATION_DURATION_MS
+
+//! The colors change as the slide bounces back, as the rect cards do
+#define COLOR_SWAP_MS (SLIDE_MS - interpolate_moook_out_duration())
+
+//! A ring sweeps in with a Moook curve in degrees, overshooting by 12
+static const int32_t s_sweep_in[] = {0, PBL_DEG_TO_TRIGANGLE(4), PBL_DEG_TO_TRIGANGLE(30)};
+static const int32_t s_sweep_out[] = {
+  PBL_DEG_TO_TRIGANGLE(12), PBL_DEG_TO_TRIGANGLE(6), PBL_DEG_TO_TRIGANGLE(2), 0
+};
+static const MoookConfig s_sweep = {
+  .frames_in = s_sweep_in,
+  .num_frames_in = PBL_ARRAY_SIZE(s_sweep_in),
+  .frames_out = s_sweep_out,
+  .num_frames_out = PBL_ARRAY_SIZE(s_sweep_out),
+  .num_frames_mid = TIMELINE_NUM_MOOOK_FRAMES_MID,
+};
+
+//! A ring snaps back from the same anticipation, straight to its start
+static const int32_t s_retract_out[] = {0};
+static const MoookConfig s_retract = {
+  .frames_in = s_sweep_in,
+  .num_frames_in = PBL_ARRAY_SIZE(s_sweep_in),
+  .frames_out = s_retract_out,
+  .num_frames_out = PBL_ARRAY_SIZE(s_retract_out),
+  .num_frames_mid = 1,
+};
+
+static int64_t prv_sweep_curve(int32_t normalized, int64_t from, int64_t to) {
+  return interpolate_moook_custom(normalized, from, to, &s_sweep);
+}
+
+static int64_t prv_retract_curve(int32_t normalized, int64_t from, int64_t to) {
+  return interpolate_moook_custom(normalized, from, to, &s_retract);
+}
+
+static int64_t prv_moook_curve(int32_t normalized, int64_t from, int64_t to) {
+  return interpolate_moook(normalized, from, to);
+}
+
+static void prv_set_int16(void *subject, int16_t value) {
+  *(int16_t *)subject = value;
+}
+
+static int16_t prv_get_int16(void *subject) {
+  return *(int16_t *)subject;
+}
+
+static void prv_set_uint32(void *subject, uint32_t value) {
+  *(uint32_t *)subject = value;
+}
+
+static uint32_t prv_get_uint32(void *subject) {
+  return *(uint32_t *)subject;
+}
+
+static const PropertyAnimationImplementation s_int16_implementation = {
+  .base.update = (AnimationUpdateImplementation)property_animation_update_int16,
+  .accessors = {.setter.int16 = prv_set_int16, .getter.int16 = prv_get_int16},
+};
+
+static const PropertyAnimationImplementation s_uint32_implementation = {
+  .base.update = (AnimationUpdateImplementation)property_animation_update_uint32,
+  .accessors = {.setter.uint32 = prv_set_uint32, .getter.uint32 = prv_get_uint32},
+};
+
+//! The animations of a transition, played together
+typedef struct Transition {
+  Animation *animations[24];
+  int count;
+  uint32_t duration;
+} Transition;
+
+static void prv_add(Transition *transition, Animation *animation, uint32_t delay, uint32_t duration,
+                    InterpolateInt64Function curve) {
+  // The last place is the frame animation's
+  if (!animation || transition->count >= (int)PBL_ARRAY_SIZE(transition->animations) - 1) {
+    animation_destroy(animation);
+    return;
+  }
+  animation_set_delay(animation, delay);
+  animation_set_duration(animation, duration);
+  animation_set_custom_interpolation(animation, curve);
+  transition->animations[transition->count++] = animation;
+  transition->duration = PBL_MAX(transition->duration, delay + duration);
+}
+
+//! Animates \a field from what it is to \a to
+static void prv_add_int16(Transition *transition, int16_t *field, int16_t to, uint32_t delay,
+                          uint32_t duration, InterpolateInt64Function curve) {
+  int16_t from = *field;
+  PropertyAnimation *animation =
+      property_animation_create(&s_int16_implementation, field, &from, &to);
+  prv_add(transition, property_animation_get_animation(animation), delay, duration, curve);
+}
+
+static void prv_add_uint32(Transition *transition, uint32_t *field, uint32_t to, uint32_t delay,
+                           uint32_t duration, InterpolateInt64Function curve) {
+  uint32_t from = *field;
+  PropertyAnimation *animation =
+      property_animation_create(&s_uint32_implementation, field, &from, &to);
+  prv_add(transition, property_animation_get_animation(animation), delay, duration, curve);
+}
+
+//! Sets everything where it rests for the section, and the week or its card
+static void prv_rest(HealthOrbitView *view) {
+  view->animation = nullptr;
+  view->leaving_shown = false;
+  view->color_section = view->section;
+  health_orbit_card_init(&view->card, view->section);
+  view->orbit_offset = view->section * HEALTH_ORBIT_STEP;
+  view->turn = view->week ? -QUARTER_TURN : 0;
+  view->neighbour_radius = view->week ? 0 : NEIGHBOUR_BUBBLE_RADIUS;
+  health_orbit_week_get_rest_rows(view->week_rows);
+  view->week_header_offset_y = 0;
+  layer_mark_dirty(&view->layer);
+}
+
+//! Redraws every frame, and changes the colors at their time
+static void prv_frame_update(Animation *animation, AnimationProgress progress) {
+  HealthOrbitView *view = animation_get_context(animation);
+  const uint32_t elapsed = (int64_t)progress * animation_get_duration(animation, false, false) /
+                           ANIMATION_NORMALIZED_MAX;
+  if (elapsed >= COLOR_SWAP_MS) {
+    view->color_section = view->section;
+  }
+  layer_mark_dirty(&view->layer);
+}
+
+static const AnimationImplementation s_frame_implementation = {
+  .update = prv_frame_update,
+};
+
+static void prv_transition_stopped(Animation *animation, bool finished, void *context) {
+  prv_rest(context);
+}
+
+static void prv_play(HealthOrbitView *view, Transition *transition) {
+  Animation *frame = animation_create();
+  animation_set_implementation(frame, &s_frame_implementation);
+  animation_set_handlers(frame, (AnimationHandlers){}, view);
+  animation_set_duration(frame, transition->duration);
+  transition->animations[transition->count++] = frame;
+  view->animation = animation_spawn_create_from_array(transition->animations, transition->count);
+  animation_set_handlers(view->animation, (AnimationHandlers){.stopped = prv_transition_stopped},
+                         view);
+  animation_schedule(view->animation);
+}
+
+//! Ends a transition at once, where it was going
+static void prv_finish(HealthOrbitView *view) {
+  if (view->animation) {
+    animation_unschedule(view->animation);
+  }
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+// Transitions
+
+//! Up or Down: the orbit turns a step, the card slides out the way the button goes as the next
+//! slides in, the old rings snap back, the new ones sweep in and its bubbles pop one after another
+static void prv_animate_section(HealthOrbitView *view, HealthOrbitSection section, bool down) {
+  prv_finish(view);
+  const int16_t height = view->layer.bounds.size.h;
+  Transition transition = {};
+
+  view->leaving = view->card;
+  view->leaving_shown = true;
+  uint32_t sweeps[HEALTH_ORBIT_CARD_MAX_RINGS];
+  const int num_rings = health_orbit_card_get_sweeps(view->section, view->health_data, sweeps);
+  for (int i = 0; i < num_rings; i++) {
+    view->leaving.sweep[i] = sweeps[i];
+    prv_add_uint32(&transition, &view->leaving.sweep[i], 0, 0,
+                   interpolate_moook_custom_duration(&s_retract), prv_retract_curve);
+  }
+  prv_add_int16(&transition, &view->leaving.offset_y, down ? -height : height, 0, SLIDE_MS,
+                timeline_animation_interpolate_moook_soft);
+
+  view->section = section;
+  health_orbit_card_init(&view->card, section);
+  view->card.offset_y = down ? height : -height;
+  prv_add_int16(&transition, &view->card.offset_y, 0, 0, SLIDE_MS,
+                timeline_animation_interpolate_moook_soft);
+  const int num_new_rings = health_orbit_card_get_sweeps(section, view->health_data, sweeps);
+  for (int i = 0; i < num_new_rings; i++) {
+    view->card.sweep[i] = 0;
+    prv_add_uint32(&transition, &view->card.sweep[i], sweeps[i], FRAMES(3),
+                   interpolate_moook_custom_duration(&s_sweep), prv_sweep_curve);
+  }
+  for (int i = 0; i < health_orbit_card_get_num_bubbles(section); i++) {
+    view->card.bubble_radius[i] = 0;
+    prv_add_int16(&transition, &view->card.bubble_radius[i], HEALTH_ORBIT_CARD_BUBBLE_RADIUS,
+                  FRAMES(5 + i), interpolate_moook_duration(), prv_moook_curve);
+  }
+
+  prv_add_int16(&transition, &view->orbit_offset, section * HEALTH_ORBIT_STEP, 0, SLIDE_MS,
+                timeline_animation_interpolate_moook_soft);
+  prv_play(view, &transition);
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 // Navigation
 
 static void prv_show_section(HealthOrbitView *view, HealthOrbitSection section) {
+  prv_finish(view);
   view->section = section;
-  health_orbit_card_init(&view->card, section);
-  view->orbit_offset = section * HEALTH_ORBIT_STEP;
-  layer_mark_dirty(&view->layer);
+  prv_rest(view);
 }
 
 static void prv_up_down_click_handler(ClickRecognizerRef recognizer, void *context) {
@@ -255,17 +482,14 @@ static void prv_up_down_click_handler(ClickRecognizerRef recognizer, void *conte
     }
     next = (next < 0) ? (HealthOrbitSectionCount - 1) : 0;
   }
-  prv_show_section(view, next);
+  prv_animate_section(view, next, down);
 }
 
 //! Shows the week of the section, the sidebar turned back to the top as the banner, or its card
 static void prv_show_week(HealthOrbitView *view, bool week) {
+  prv_finish(view);
   view->week = week;
-  view->turn = week ? -QUARTER_TURN : 0;
-  view->neighbour_radius = week ? 0 : NEIGHBOUR_BUBBLE_RADIUS;
-  health_orbit_week_get_rest_rows(view->week_rows);
-  view->week_header_offset_y = 0;
-  layer_mark_dirty(&view->layer);
+  prv_rest(view);
 }
 
 static void prv_select_click_handler(ClickRecognizerRef recognizer, void *context) {
@@ -338,6 +562,7 @@ HealthOrbitView *health_orbit_view_create(HealthData *health_data) {
 }
 
 void health_orbit_view_destroy(HealthOrbitView *view) {
+  prv_finish(view);
   for (int i = 0; i < HealthOrbitSectionCount; i++) {
     gdraw_command_image_destroy(view->icons[i].selected);
     gdraw_command_image_destroy(view->icons[i].neighbour);
