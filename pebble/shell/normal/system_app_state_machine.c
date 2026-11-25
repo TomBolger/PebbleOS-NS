@@ -58,6 +58,10 @@
 //! launcher stack?
 static bool s_rooted_in_watchface = false;
 
+//! An app that opened another one to come back to when it closes, as the timeline does from a pin
+static AppInstallId s_return_app_id = INSTALL_ID_INVALID;
+static const void *s_return_app_args;
+
 const PebbleProcessMd *system_app_state_machine_system_start(void) {
   // start critical battery app when necessary
   if (battery_monitor_critical_lockout()) {
@@ -80,7 +84,15 @@ static bool prv_current_app_is_watchface(void) {
   return app_install_is_watchface(app_manager_get_current_app_id());
 }
 
+static bool prv_returns_to_app(void) {
+  return (s_return_app_id != INSTALL_ID_INVALID) &&
+         (app_manager_get_current_app_id() != s_return_app_id);
+}
+
 AppInstallId system_app_state_machine_get_last_registered_app(void) {
+  if (prv_returns_to_app()) {
+    return s_return_app_id;
+  }
   // If we're rooted in the watchface but we're not the watchface itself, or the launcher
   // is closing, we should launch the watchface.
   if ((s_rooted_in_watchface && !prv_current_app_is_watchface()) ||
@@ -91,11 +103,27 @@ AppInstallId system_app_state_machine_get_last_registered_app(void) {
   return APP_ID_LAUNCHER_MENU;
 }
 
+const void *system_app_state_machine_get_last_registered_app_args(void) {
+  return prv_returns_to_app() ? s_return_app_args : nullptr;
+}
+
+void system_app_state_machine_return_next_app_to(AppInstallId app_id, const void *args) {
+  s_return_app_id = app_id;
+  s_return_app_args = args;
+}
+
 const PebbleProcessMd *system_app_state_machine_get_default_app(void) {
   return launcher_menu_app_get_app_info();
 }
 
 void system_app_state_machine_register_app_launch(AppInstallId app_id) {
+  // Going back, or to a root, ends the return
+  if ((app_id == s_return_app_id) || (app_id == APP_ID_LAUNCHER_MENU) ||
+      app_install_is_watchface(app_id)) {
+    s_return_app_id = INSTALL_ID_INVALID;
+    s_return_app_args = nullptr;
+  }
+
   if (app_id == APP_ID_LAUNCHER_MENU) {
     s_rooted_in_watchface = false;
   } else if (app_install_is_watchface(app_id)) {
