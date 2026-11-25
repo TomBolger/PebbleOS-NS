@@ -60,13 +60,20 @@ static bool prv_is_newer(const NotificationShadeEntry *a, const NotificationShad
   return a->sequence > b->sequence;
 }
 
-static void prv_grow(NotificationShade *shade) {
+// Out of memory, the shade keeps what it holds.
+static bool prv_grow(NotificationShade *shade) {
   const uint16_t capacity = shade->capacity ? shade->capacity * 2 : 16;
   NotificationShadeEntry *entries = applib_zalloc(capacity * sizeof(*entries));
   uint16_t *order = applib_zalloc(capacity * sizeof(*order));
   // At most one header per group and one stack row per notification.
   NotificationShadeRow *rows =
       applib_zalloc((2 * capacity + NotificationShadeGroupCount) * sizeof(*rows));
+  if (!entries || !order || !rows) {
+    applib_free(entries);
+    applib_free(order);
+    applib_free(rows);
+    return false;
+  }
   if (shade->num_entries) {
     memcpy(entries, shade->entries, shade->num_entries * sizeof(*entries));
   }
@@ -77,12 +84,13 @@ static void prv_grow(NotificationShade *shade) {
   shade->order = order;
   shade->rows = rows;
   shade->capacity = capacity;
+  return true;
 }
 
 void notification_shade_add(NotificationShade *shade, const Uuid *id, time_t timestamp,
                             uint8_t group, uint32_t stack_key) {
-  if (shade->num_entries == shade->capacity) {
-    prv_grow(shade);
+  if ((shade->num_entries == shade->capacity) && !prv_grow(shade)) {
+    return;
   }
   const NotificationShadeEntry entry = {
     .id = *id,
@@ -143,6 +151,21 @@ static uint16_t prv_stack_size(const NotificationShade *shade, uint16_t index, u
     }
   }
   return count;
+}
+
+// Whether a newer notification of this one's stack in this group comes first, and places it.
+static bool prv_follows_in_stack(const NotificationShade *shade, uint16_t index, uint8_t group) {
+  const uint32_t key = prv_stack_key(shade, &shade->entries[index]);
+  if (key == 0) {
+    return false;
+  }
+  for (uint16_t i = 0; i < index; i++) {
+    if ((shade->entries[i].stack_key == key) &&
+        (prv_display_group(shade, &shade->entries[i]) == group)) {
+      return true;
+    }
+  }
+  return false;
 }
 
 static bool prv_is_stack_open(const NotificationShade *shade, uint32_t key) {
@@ -219,7 +242,6 @@ void notification_shade_rebuild(NotificationShade *shade) {
   if (shade->num_entries == 0) {
     return;
   }
-  bool *placed = applib_zalloc(shade->num_entries * sizeof(bool));
   uint16_t num_placed = 0;
 
   for (uint8_t group = 0; group < NotificationShadeGroupCount; group++) {
@@ -240,7 +262,8 @@ void notification_shade_rebuild(NotificationShade *shade) {
     }
 
     for (uint16_t first = 0; first < shade->num_entries; first++) {
-      if (placed[first] || (prv_display_group(shade, &shade->entries[first]) != group)) {
+      if ((prv_display_group(shade, &shade->entries[first]) != group) ||
+          prv_follows_in_stack(shade, first, group)) {
         continue;
       }
       const uint16_t members = prv_stack_size(shade, first, group);
@@ -254,10 +277,9 @@ void notification_shade_rebuild(NotificationShade *shade) {
         const bool same =
             (member == first) || ((members > 1) && (shade->entries[member].stack_key == key) &&
                                   (prv_display_group(shade, &shade->entries[member]) == group));
-        if (!same || placed[member]) {
+        if (!same) {
           continue;
         }
-        placed[member] = true;
         if (open && ((members == 1) || stack_open)) {
           prv_add_row(shade, NotificationShadeRowItem, group, num_placed, 1, true, members > 1);
         }
@@ -265,7 +287,6 @@ void notification_shade_rebuild(NotificationShade *shade) {
       }
     }
   }
-  applib_free(placed);
 }
 
 uint16_t notification_shade_row_count(const NotificationShade *shade) {
