@@ -194,6 +194,32 @@ static void prv_draw_today_icon(GContext *ctx, GPoint center, int16_t radius, GC
   }
 }
 
+//! The Today icon on a neighbour's bubble \a radius big: two open rings on the bubble's center,
+//! as far apart as they are thick, open alike
+static void prv_draw_small_today_icon(GContext *ctx, GPoint center, int16_t radius, GColor color) {
+  const int16_t thickness = PBL_MAX(radius / 6, 1);
+  const int16_t outer = (radius * 5) / 6;
+  const int16_t inner = outer - 2 * thickness;
+  const int32_t sweep = (TRIG_MAX_ANGLE * 3) / 4;
+  graphics_context_set_fill_color(ctx, color);
+  graphics_fill_radial_capped_internal(ctx, center, outer - thickness, outer, 0, sweep);
+  if (inner > thickness) {
+    graphics_fill_radial_capped_internal(ctx, center, inner - thickness, inner, 0, sweep);
+  }
+}
+
+//! The Sleep icon on a neighbour's bubble \a radius big: a crescent moon, a disc with a disc of
+//! the bubble's color taken out of its top right
+static void prv_draw_small_moon_icon(GContext *ctx, GPoint center, int16_t radius, GColor color,
+                                     GColor bubble) {
+  const int16_t moon = (radius * 7) / 12;
+  const int16_t shift = (radius + 6) / 12;
+  graphics_context_set_fill_color(ctx, color);
+  graphics_fill_circle(ctx, GPoint(center.x - shift, center.y + shift), moon);
+  graphics_context_set_fill_color(ctx, bubble);
+  graphics_fill_circle(ctx, GPoint(center.x + 2 * shift, center.y - 2 * shift), moon - shift);
+}
+
 static void prv_draw_bubble(GContext *ctx, HealthOrbitView *view, HealthOrbitSection section,
                             GPoint center, int16_t radius, bool selected) {
   if (radius <= 0) {
@@ -203,7 +229,15 @@ static void prv_draw_bubble(GContext *ctx, HealthOrbitView *view, HealthOrbitSec
   graphics_fill_circle(ctx, center, radius);
   const GColor color = health_orbit_section_color(section);
   if (section == HealthOrbitSectionToday) {
-    prv_draw_today_icon(ctx, center, radius * 2 - radius / 10, color);
+    if (selected) {
+      prv_draw_today_icon(ctx, center, radius * 2 - radius / 10, color);
+    } else {
+      prv_draw_small_today_icon(ctx, center, radius, color);
+    }
+    return;
+  }
+  if (section == HealthOrbitSectionSleep && !selected) {
+    prv_draw_small_moon_icon(ctx, center, radius, color, GColorBlack);
     return;
   }
   GDrawCommandImage *icon =
