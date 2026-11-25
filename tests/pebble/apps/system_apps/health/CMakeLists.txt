@@ -370,3 +370,33 @@ pbl_clar_test(test_health_orbit_layout
     pebble/apps/system/timeline/list_layout.c
   PLATFORMS gabbro
 )
+
+pbl_clar_test(test_health_orbit_view
+  MODULES resources graphics_bitdepth gdraw text_render png time
+  SOURCES
+    pebble/applib/graphics/gdraw_command_transforms.c
+    pebble/applib/graphics/gtransform.c
+    pebble/applib/graphics/text_resources.c
+    pebble/applib/ui/animation_interpolate.c
+    pebble/applib/ui/layer.c
+    pebble/applib/ui/menu_layer_round.c
+    pebble/applib/ui/window.c
+    pebble/applib/pbl_std/strftime.c
+    pebble/applib/pbl_std/timelocal.c
+    pebble/apps/system/health/data.c
+    pebble/apps/system/health/orbit_card.c
+    pebble/apps/system/health/orbit_layout.c
+    pebble/apps/system/timeline/list_layout.c
+    pebble/services/activity/health_util.c
+    pebble/shell/system_theme_style.c
+    subsys/logging/hexdump.c
+    tests/fakes/fake_clock.c
+    tests/fakes/fake_gbitmap_get_data_row.c
+    tests/fakes/fake_rtc.c
+    tests/stubs/stubs_animation.c
+    tests/stubs/stubs_system_theme.c
+  PLATFORMS gabbro
+  DEFINES USE_DISPLAY_PERIMETER_ON_FONT_LAYOUT=1
+  OVERRIDES dummy_board
+  TEST_IMAGES
+)
