@@ -1192,6 +1192,19 @@ static void prv_list_place_day_sep(TimelineLayer *layer, const GRect *pin_frame)
   layer_set_frame((Layer *)&layer->day_separator, &frame);
 }
 
+//! Places the day separator's dot just beyond the edge of the screen the pins before the selected
+//! one are by, where the pin before it would come in from
+static void prv_list_place_day_sep_before(TimelineLayer *layer) {
+  GRect frame;
+  prv_get_day_sep_frame(layer, 2, &frame);
+  const int16_t dot_diameter = prv_get_style()->day_sep_dot_diameter;
+  // The dot is drawn in the middle of the frame
+  const int16_t dot_y = prv_list_next_is_down(layer) ? -dot_diameter
+                                                     : (layer->layer.bounds.size.h + dot_diameter);
+  frame.origin.y = dot_y - frame.size.h / 2;
+  layer_set_frame((Layer *)&layer->day_separator, &frame);
+}
+
 static void prv_list_place_fin(TimelineLayer *layer, const GRect *pin_frame) {
   GRect frame;
   prv_get_end_of_timeline_frame(layer, 2, &frame);
@@ -1288,13 +1301,18 @@ static void prv_list_move(TimelineLayer *layer) {
   prv_list_start_from_current(layer);
   TimelineIterState *current = timeline_model_get_current_state();
   if (current && current->current_day != layer->current_day) {
-    // The pins scroll out ahead of the day separator, which comes in where the dot was
+    // The pins scroll out ahead of the day separator. Going to the next day, it comes in where the
+    // dot after the selected pin was; going back a day, from beyond the edge the pins before the
+    // selected one come in from, as there is no dot before it
     list->crosses_day = true;
+    const bool to_next = (layer->move_delta * prv_get_scroll_delta(layer) > 0);
     TimelineListPinView *selected = prv_list_get_selected(layer);
-    if (selected) {
+    if (selected && to_next) {
       prv_list_place_day_sep(layer, &selected->from);
-      layer_set_hidden((Layer *)&layer->day_separator, false);
+    } else {
+      prv_list_place_day_sep_before(layer);
     }
+    layer_set_hidden((Layer *)&layer->day_separator, false);
     const int16_t shift = -layer->move_delta * layer->layer.bounds.size.h;
     for (int i = 0; i < list->num_pins; i++) {
       TimelineListPinView *pin = list->pins[i];
@@ -1302,11 +1320,12 @@ static void prv_list_move(TimelineLayer *layer) {
       pin->frame.origin.y += shift;
       list->leaving[list->num_leaving++] = pin;
     }
+    // The dot becomes the day separator, and the end-of-timeline fin leaves with its pin
+    list->day_end = nullptr;
+    list->timeline_end = list->ends_timeline ? selected : nullptr;
     list->num_pins = 0;
     list->ends_day = false;
     list->ends_timeline = false;
-    list->day_end = nullptr;
-    list->timeline_end = nullptr;
     prv_list_icons_in_and_out(layer, nullptr, 0);
     return;
   }
