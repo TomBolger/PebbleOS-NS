@@ -127,6 +127,7 @@ pbl_test_module(timeline_item
 
 pbl_test_module(menu_layer
   SOURCES
+    pebble/applib/ui/list_wrap.c
     pebble/applib/ui/menu_layer.c
     pebble/applib/ui/menu_layer_round.c
     pebble/applib/ui/scroll_layer.c

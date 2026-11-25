@@ -274,3 +274,12 @@ void PBL_WEAK property_animation_update_int16(PropertyAnimation *property_animat
 void PBL_WEAK property_animation_update_uint32(PropertyAnimation *property_animation,
                                                const uint32_t distance_normalized) {
 }
+
+int64_t PBL_WEAK interpolate_moook_soft(int32_t normalized, int64_t from, int64_t to,
+                                        int32_t num_frames_mid) {
+  return to;
+}
+
+uint32_t PBL_WEAK interpolate_moook_soft_duration(int32_t num_frames_mid) {
+  return 0;
+}
