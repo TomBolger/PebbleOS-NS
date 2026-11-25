@@ -100,9 +100,11 @@ pbl_clar_test(test_timeline_layouts
     tests/fakes/fake_rtc.c
     tests/fixtures/resources/timeline_resource_table.auto.c
     tests/fixtures/screen_grid.c
+    tests/fakes/fake_animation.c
     tests/stubs/stubs_animation.c
     pebble/apps/system/timeline/pin_window.c
     pebble/popups/timeline/timeline_item_layer.c
+    pebble/services/timeline/swap_layer.c
     pebble/services/timeline/alarm_layout.c
     pebble/services/timeline/attribute.c
     pebble/services/timeline/calendar_layout.c
