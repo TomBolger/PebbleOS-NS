@@ -41,7 +41,9 @@ void PBL_WEAK timeline_actions_invoke_action(const TimelineItemAction *action,
                                              void *cb_data) {
 }
 
-void PBL_WEAK timeline_actions_set_dismissed_handler(TimelineActionsDismissedHandler handler) {
+void PBL_WEAK timeline_actions_set_dismissed_handler(ActionMenu *action_menu,
+                                                     TimelineActionsDismissedHandler handler,
+                                                     void *context) {
 }
 
 ActionMenu *PBL_WEAK timeline_actions_open_hosted_action_menu(ActionMenuConfig *base_config,

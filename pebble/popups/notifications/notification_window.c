@@ -1096,9 +1096,9 @@ static void prv_poof_stopped(Animation *animation, bool finished, void *context)
 
 //! Plays the dismissed animation over the whole window instead of a result dialog. The card
 //! itself is removed as usual, underneath it.
-static bool prv_play_dismissed(void) {
-  NotificationWindowData *data = &s_notification_window_data;
-  if (!s_in_use || !data->action_menu || data->poof_sequence) {
+static bool prv_play_dismissed(ActionMenu *action_menu, void *context) {
+  NotificationWindowData *data = context;
+  if (!s_in_use || (data->action_menu != action_menu) || data->poof_sequence) {
     return false;
   }
   TimelineResourceInfo timeline_res = {
@@ -1228,9 +1228,10 @@ static void prv_select_single_click_handler(ClickRecognizerRef recognizer, void 
     return;
   }
 
-  timeline_actions_set_dismissed_handler(prv_play_dismissed);
 #if PBL_ROUND
   if (prv_open_round_actions(window_data, &config, layout)) {
+    timeline_actions_set_dismissed_handler(window_data->action_menu, prv_play_dismissed,
+                                           window_data);
     return;
   }
   // Could not draw it over the card: fall back to the menu window with a fresh hierarchy (the
@@ -1242,6 +1243,10 @@ static void prv_select_single_click_handler(ClickRecognizerRef recognizer, void 
 #endif
   window_data->action_menu = timeline_actions_push_action_menu(
       &config, window_manager_get_window_stack(NOTIFICATION_PRIORITY));
+  if (!window_data->action_menu) {
+    return;
+  }
+  timeline_actions_set_dismissed_handler(window_data->action_menu, prv_play_dismissed, window_data);
   action_menu_set_content_size(window_data->action_menu,
                                alerts_preferences_get_notification_content_size());
 }

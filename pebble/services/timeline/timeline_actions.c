@@ -96,6 +96,8 @@ typedef struct TimelineActionMenu {
   TimelineItem *item;
   ActionResultData *action_result;
   ActionMenuDidCloseCb did_close;
+  TimelineActionsDismissedHandler dismissed;
+  void *dismissed_context;
 } TimelineActionMenu;
 
 static void prv_subscribe_to_action_results_and_timeouts(ActionResultData *data,
@@ -179,17 +181,26 @@ static void prv_cleanup_action_result(ActionResultData *data, bool succeeded) {
   applib_free(data);
 }
 
-static TimelineActionsDismissedHandler s_dismissed_handler;
+void timeline_actions_set_dismissed_handler(ActionMenu *action_menu,
+                                            TimelineActionsDismissedHandler handler,
+                                            void *context) {
+  TimelineActionMenu *timeline_action_menu = action_menu_get_context(action_menu);
+  timeline_action_menu->dismissed = handler;
+  timeline_action_menu->dismissed_context = context;
+}
 
-void timeline_actions_set_dismissed_handler(TimelineActionsDismissedHandler handler) {
-  s_dismissed_handler = handler;
+//! Lets the menu's dismissed handler show a dismissed result
+static bool prv_handle_dismissed(ActionMenu *action_menu) {
+  const TimelineActionMenu *timeline_action_menu = action_menu_get_context(action_menu);
+  return timeline_action_menu->dismissed &&
+         timeline_action_menu->dismissed(action_menu, timeline_action_menu->dismissed_context);
 }
 
 static void prv_show_result_window(ActionResultData *data, const TimelineResourceId timeline_res_id,
                                    const char *msg, bool succeeded) {
   // A dismissed notification plays its own animation instead of a result dialog.
   if (succeeded && data->action_menu && (timeline_res_id == TIMELINE_RESOURCE_RESULT_DISMISSED) &&
-      s_dismissed_handler && s_dismissed_handler()) {
+      prv_handle_dismissed(data->action_menu)) {
     action_menu_close(data->action_menu, false /* animated */);
     data->action_menu = nullptr;
     prv_cleanup_action_result(data, succeeded);
