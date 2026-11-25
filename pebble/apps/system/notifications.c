@@ -19,6 +19,7 @@
 #include <pbl/services/notifications/alerts_preferences_private.h>
 #include <pbl/services/notifications/notification_storage.h>
 #include <pbl/services/notifications/notification_style.h>
+#include <pbl/services/notifications/notification_sync.h>
 #include <pbl/services/time.h>
 #include <pbl/services/timeline/notification_layout.h>
 #include <pbl/services/timeline/timeline_actions.h>
@@ -1181,6 +1182,8 @@ static void prv_handle_init(void) {
   notification_shade_load_storage(&data->shade);
 
   prv_push_window(data);
+  // The list shows what is stored; anything the phone resends arrives as an added event.
+  notification_sync_check();
 }
 
 static void prv_handle_deinit(void) {
