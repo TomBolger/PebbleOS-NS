@@ -121,6 +121,23 @@ void test_health_orbit_view__render_today(void) {
   cl_check(gbitmap_pbi_eq(&s_ctx.dest_bitmap, TEST_PBI_FILE));
 }
 
+void test_health_orbit_view__render_today_no_data(void) {
+  s_data = (HealthData){};
+  prv_render(&s_data, HealthOrbitSectionToday);
+  cl_check(gbitmap_pbi_eq(&s_ctx.dest_bitmap, TEST_PBI_FILE));
+}
+
+void test_health_orbit_view__render_today_large(void) {
+  s_data = prv_sample_data();
+  s_data.step_data[0] = 98765;
+  s_data.sleep_data[0] = HOURS(11, 58);
+  s_data.deep_sleep = HOURS(10, 59);
+  s_data.current_distance_meters = 88800;
+  s_data.current_active_seconds = 888 * PBL_SEC_PER_MIN;
+  prv_render(&s_data, HealthOrbitSectionToday);
+  cl_check(gbitmap_pbi_eq(&s_ctx.dest_bitmap, TEST_PBI_FILE));
+}
+
 void test_health_orbit_view__render_steps(void) {
   s_data = prv_sample_data();
   prv_render(&s_data, HealthOrbitSectionSteps);
