@@ -153,10 +153,45 @@ int16_t health_orbit_week_row_center_y(int index) {
   return HEALTH_WEEK_ROW_TOP + index * HEALTH_WEEK_ROW_PITCH + HEALTH_WEEK_ROW_PITCH / 2;
 }
 
-bool health_orbit_week_row(GSize display, int index, MenuRoundShape *pill) {
+//! A round menu's pill \a height tall centered on \a center_y
+static bool prv_pill(GSize display, int16_t center_y, int16_t height, MenuRoundShape *pill) {
   // The frame the round menu insets its pill from
-  const int16_t frame_h = HEALTH_WEEK_ROW_HEIGHT + 2 * MENU_ROUND_PILL_INSET_Y;
-  const GRect frame =
-      GRect(0, health_orbit_week_row_center_y(index) - frame_h / 2, display.w, frame_h);
+  const int16_t frame_h = height + 2 * MENU_ROUND_PILL_INSET_Y;
+  const GRect frame = GRect(0, center_y - frame_h / 2, display.w, frame_h);
   return menu_round_pill(display, GRect(0, 0, display.w, display.h), frame, frame_h, 0, pill);
+}
+
+bool health_orbit_week_row(GSize display, int index, MenuRoundShape *pill) {
+  return prv_pill(display, health_orbit_week_row_center_y(index), HEALTH_WEEK_ROW_HEIGHT, pill);
+}
+
+int health_orbit_list_num_rows(HealthOrbitList list) {
+  switch (list) {
+    case HealthOrbitListWorkoutKinds:
+      return HEALTH_WORKOUT_NUM_KINDS;
+    case HealthOrbitListWorkout:
+      return HEALTH_WORKOUT_MAX_ROWS;
+    case HealthOrbitListWeek:
+      break;
+  }
+  return HEALTH_ORBIT_LIST_MAX_ROWS;
+}
+
+bool health_orbit_list_row(GSize display, HealthOrbitList list, int index, MenuRoundShape *pill) {
+  if (index < 0 || index >= health_orbit_list_num_rows(list)) {
+    *pill = (MenuRoundShape){};
+    return false;
+  }
+  switch (list) {
+    case HealthOrbitListWorkoutKinds:
+      return prv_pill(display,
+                      HEALTH_WORKOUT_KIND_ROW_TOP + index * HEALTH_WORKOUT_KIND_ROW_PITCH +
+                          HEALTH_WORKOUT_KIND_ROW_HEIGHT / 2,
+                      HEALTH_WORKOUT_KIND_ROW_HEIGHT, pill);
+    case HealthOrbitListWorkout:
+      return health_orbit_week_row(display, index + HEALTH_WORKOUT_FIRST_ROW, pill);
+    case HealthOrbitListWeek:
+      break;
+  }
+  return health_orbit_week_row(display, index, pill);
 }

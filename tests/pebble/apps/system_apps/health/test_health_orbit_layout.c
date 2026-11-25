@@ -317,3 +317,48 @@ void test_health_orbit_layout__week_rows_fit_below_the_banner(void) {
   }
   cl_assert(last_bottom < PBL_DISPLAY_HEIGHT);
 }
+
+//! Checks the rows of \a list are as tall as \a height, one under the other clear of the banner,
+//! centered, their round ends inside the bezel
+static void prv_check_list_rows(HealthOrbitList list, int16_t height) {
+  const int16_t display_radius = PBL_DISPLAY_WIDTH / 2;
+  int16_t last_bottom = LAYOUT_TOP_BANNER_CENTER_Y_ROUND + HEALTH_ORBIT_RADIUS;
+  for (int i = 0; i < health_orbit_list_num_rows(list); i++) {
+    MenuRoundShape pill;
+    cl_assert(health_orbit_list_row(DISPLAY, list, i, &pill));
+    cl_assert_equal_i(pill.box.size.h, height);
+    cl_assert(pill.box.origin.y > last_bottom);
+    last_bottom = grect_get_max_y(&pill.box);
+    cl_assert(PBL_ABS(pill.box.origin.x + grect_get_max_x(&pill.box) - PBL_DISPLAY_WIDTH) <= 1);
+    const GPoint end_center =
+        GPoint(grect_get_max_x(&pill.box) - pill.radius, pill.box.origin.y + pill.radius);
+    const int16_t far_y = PBL_MAX(PBL_ABS(pill.box.origin.y + pill.radius - MID_Y),
+                                  PBL_ABS(grect_get_max_y(&pill.box) - pill.radius - MID_Y));
+    const int32_t reach =
+        prv_distance(GPoint(end_center.x, MID_Y + far_y), GPoint(display_radius, MID_Y));
+    cl_assert(reach + pill.radius <= display_radius - MENU_ROUND_PILL_BEZEL_MARGIN + 1);
+  }
+  cl_assert(last_bottom < PBL_DISPLAY_HEIGHT);
+  // None past the last
+  MenuRoundShape none;
+  cl_assert(!health_orbit_list_row(DISPLAY, list, health_orbit_list_num_rows(list), &none));
+  cl_assert_equal_i(none.box.size.w, 0);
+}
+
+void test_health_orbit_layout__workout_rows_fit_below_the_banner(void) {
+  // The kinds of workout are three tall rows, room for their icons
+  cl_assert_equal_i(health_orbit_list_num_rows(HealthOrbitListWorkoutKinds), 3);
+  prv_check_list_rows(HealthOrbitListWorkoutKinds, HEALTH_WORKOUT_KIND_ROW_HEIGHT);
+  // The workout's measures are the week's rows below the two its time takes
+  prv_check_list_rows(HealthOrbitListWorkout, HEALTH_WEEK_ROW_HEIGHT);
+  for (int i = 0; i < health_orbit_list_num_rows(HealthOrbitListWorkout); i++) {
+    MenuRoundShape measure;
+    MenuRoundShape week;
+    health_orbit_list_row(DISPLAY, HealthOrbitListWorkout, i, &measure);
+    health_orbit_week_row(DISPLAY, i + HEALTH_WORKOUT_FIRST_ROW, &week);
+    cl_assert_equal_grect(measure.box, week.box);
+  }
+  // The week is as it was
+  prv_check_list_rows(HealthOrbitListWeek, HEALTH_WEEK_ROW_HEIGHT);
+  cl_assert_equal_i(health_orbit_list_num_rows(HealthOrbitListWeek), 7);
+}
