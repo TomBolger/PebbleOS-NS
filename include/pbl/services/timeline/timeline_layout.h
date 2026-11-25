@@ -37,6 +37,10 @@
 #define TIMELINE_CARD_ARROW_HEIGHT 13
 /** @brief Horizontal margin of a card, in pixels. */
 #define TIMELINE_CARD_MARGIN PBL_IF_RECT_ELSE(7, 12)
+/** @brief Side margins of the text column of a card; round cards keep it clear of the bezel. */
+#define TIMELINE_CARD_COLUMN_MARGIN PBL_IF_RECT_ELSE(TIMELINE_CARD_MARGIN, 30)
+/** @brief Height of a card's first page: the screen below the status bar. */
+#define TIMELINE_CARD_PAGE_HEIGHT (PBL_DISPLAY_HEIGHT - STATUS_BAR_LAYER_HEIGHT)
 /** @brief Duration of the pin to card transition, in milliseconds. */
 #define TIMELINE_CARD_TRANSITION_MS (interpolate_moook_duration())
 /** @brief Bottom margin of a card body section header, in pixels. */

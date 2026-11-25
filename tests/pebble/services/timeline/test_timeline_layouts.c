@@ -24,30 +24,6 @@
 #include <fixtures/load_test_resources.h>
 #include <fixtures/screen_grid.h>
 
-bool property_animation_init(PropertyAnimation *animation,
-                             const PropertyAnimationImplementation *implementation, void *subject,
-                             void *from_value, void *to_value) {
-  if (!animation) {
-    return false;
-  }
-
-  PropertyAnimationPrivate *animation_private = (PropertyAnimationPrivate *)animation;
-  *animation_private = (PropertyAnimationPrivate){
-    .animation.implementation = (const AnimationImplementation *)implementation,
-    .subject = subject,
-  };
-
-  if (from_value) {
-    animation_private->values.from.int16 = *(int16_t *)from_value;
-  }
-
-  if (to_value) {
-    animation_private->values.to.int16 = *(int16_t *)to_value;
-  }
-
-  return true;
-}
-
 void clock_get_friendly_date(char *buffer, int buf_size, time_t timestamp) {
   if (buffer) {
     strncpy(buffer, "Today", buf_size);
@@ -122,10 +98,29 @@ void test_timeline_layouts__cleanup(void) {
 // Helpers
 //////////////////////
 
-void prv_handle_down_click(ClickRecognizerRef recognizer, void *context);
+//! The swap layer's scroll on a button press
+void prv_attempt_scroll(SwapLayer *swap_layer, ScrollDirection direction);
+
+extern void fake_animation_complete(Animation *animation);
+extern void fake_animation_cleanup(void);
+
+//! Presses down until the card has scrolled at least num_pages screens below the status bar, or
+//! can't scroll further, each press scrolling all the way
+static void prv_scroll_pages(TimelineItemLayer *item_layer, size_t num_pages) {
+  SwapLayer *swap_layer = &item_layer->swap_layer;
+  const int16_t target = num_pages * TIMELINE_CARD_PAGE_HEIGHT;
+  while (-swap_layer->current->layer.frame.origin.y < target) {
+    const int16_t before = swap_layer->current->layer.frame.origin.y;
+    prv_attempt_scroll(swap_layer, ScrollDirectionDown);
+    fake_animation_complete(swap_layer->animation);
+    if (swap_layer->current->layer.frame.origin.y == before) {
+      break;
+    }
+  }
+}
 
 static void prv_render_layout(LayoutId layout_id, time_t timestamp, uint16_t duration_m,
-                              const AttributeList *attr_list, size_t num_down_clicks) {
+                              const AttributeList *attr_list, size_t num_pages) {
   PBL_ASSERTN(attr_list);
 
   TimelineItem item = (TimelineItem){
@@ -145,17 +140,11 @@ static void prv_render_layout(LayoutId layout_id, time_t timestamp, uint16_t dur
 
   window_set_on_screen(window, true, true);
 
-  for (int i = 0; i < num_down_clicks; i++) {
-    prv_handle_down_click(nullptr, &pin_window.item_detail_layer);
-
-    // Aint nobody got time for animations; advance the scrolling property animation to completion
-    int16_t to = 0;
-    if (property_animation_get_to_int16(pin_window.item_detail_layer.animation, &to)) {
-      pin_window.item_detail_layer.scroll_offset_pixels = to;
-    }
-  }
+  prv_scroll_pages(&pin_window.item_detail_layer, num_pages);
 
   window_render(window, &s_ctx);
+  timeline_item_layer_deinit(&pin_window.item_detail_layer);
+  fake_animation_cleanup();
 }
 
 typedef struct TimelineLayoutTestConfig {
@@ -172,7 +161,7 @@ typedef struct TimelineLayoutTestConfig {
 } TimelineLayoutTestConfig;
 
 static void prv_construct_and_render_layout(const TimelineLayoutTestConfig *config,
-                                            size_t num_down_clicks) {
+                                            size_t num_pages) {
   if (!config) {
     return;
   }
@@ -201,7 +190,7 @@ static void prv_construct_and_render_layout(const TimelineLayoutTestConfig *conf
   attribute_list_add_uint32(&attr_list, AttributeIdLastUpdated, 1337);
 
   prv_render_layout(config->layout_id, config->timestamp, config->duration_m, &attr_list,
-                    num_down_clicks);
+                    num_pages);
 
   attribute_list_destroy_list(&attr_list);
 }
@@ -209,7 +198,7 @@ static void prv_construct_and_render_layout(const TimelineLayoutTestConfig *conf
 // Content size grids
 //////////////////////
 
-typedef void (*RenderPageCallback)(const void *context, size_t num_down_clicks);
+typedef void (*RenderPageCallback)(const void *context, size_t num_pages);
 
 //! Checks the first pages in one image: a row per page, a column per content size from Small
 static void prv_check_pages_for_each_size(RenderPageCallback render, const void *context,
@@ -227,8 +216,8 @@ static void prv_check_pages_for_each_size(RenderPageCallback render, const void 
   screen_grid_check(&grid, pbi_file);
 }
 
-static void prv_render_config_page(const void *context, size_t num_down_clicks) {
-  prv_construct_and_render_layout(context, num_down_clicks);
+static void prv_render_config_page(const void *context, size_t num_pages) {
+  prv_construct_and_render_layout(context, num_pages);
 }
 
 // Tests
@@ -376,13 +365,12 @@ void test_timeline_layouts__weather_city_clears_page_arrow(void) {
 }
 
 static void prv_check_renders_like(const TimelineLayoutTestConfig *config,
-                                   const TimelineLayoutTestConfig *reference,
-                                   size_t num_down_clicks) {
+                                   const TimelineLayoutTestConfig *reference, size_t num_pages) {
   const size_t size = s_ctx.dest_bitmap.row_size_bytes * s_ctx.dest_bitmap.bounds.size.h;
   uint8_t *expected = malloc(size);
-  prv_construct_and_render_layout(reference, num_down_clicks);
+  prv_construct_and_render_layout(reference, num_pages);
   memcpy(expected, s_ctx.dest_bitmap.addr, size);
-  prv_construct_and_render_layout(config, num_down_clicks);
+  prv_construct_and_render_layout(config, num_pages);
   cl_assert(memcmp(expected, s_ctx.dest_bitmap.addr, size) == 0);
   free(expected);
 }
@@ -410,7 +398,7 @@ void test_timeline_layouts__weather_pin_kind(void) {
   prv_check_renders_like(&unknown_kind, &reference, 1);
 }
 
-static void prv_construct_and_render_sports_layout(GameState state, size_t num_down_clicks) {
+static void prv_construct_and_render_sports_layout(GameState state, size_t num_pages) {
   AttributeList attr_list = (AttributeList){};
   attribute_list_add_cstring(&attr_list, AttributeIdTitle, "Warriors at Bulls");
   attribute_list_add_uint8(&attr_list, AttributeIdSportsGameState, state);
@@ -429,7 +417,7 @@ static void prv_construct_and_render_sports_layout(GameState state, size_t num_d
   attribute_list_add_cstring(&attr_list, AttributeIdBroadcaster, "ESPN");
   attribute_list_add_uint32(&attr_list, AttributeIdLastUpdated, 1337);
 
-  prv_render_layout(LayoutIdSports, 0, 0, &attr_list, num_down_clicks);
+  prv_render_layout(LayoutIdSports, 0, 0, &attr_list, num_pages);
 
   attribute_list_destroy_list(&attr_list);
 }
@@ -450,8 +438,8 @@ void test_timeline_layouts__sports_ingame(void) {
   cl_check(gbitmap_pbi_eq(&s_ctx.dest_bitmap, TEST_PBI_FILE_X(details1)));
 }
 
-static void prv_render_sports_page(const void *context, size_t num_down_clicks) {
-  prv_construct_and_render_sports_layout(*(const GameState *)context, num_down_clicks);
+static void prv_render_sports_page(const void *context, size_t num_pages) {
+  prv_construct_and_render_sports_layout(*(const GameState *)context, num_pages);
 }
 
 void test_timeline_layouts__content_sizes_sports_pregame(void) {

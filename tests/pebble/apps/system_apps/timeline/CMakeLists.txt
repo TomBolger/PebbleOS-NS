@@ -40,6 +40,7 @@ pbl_clar_test(test_timeline_list_view
     pebble/apps/system/timeline/model.c
     pebble/apps/system/timeline/relbar.c
     pebble/popups/timeline/timeline_item_layer.c
+    pebble/services/timeline/swap_layer.c
     pebble/services/clock/service.c
     pebble/services/blob_db/pin_db.c
     pebble/services/blob_db/timeline_item_storage.c
@@ -102,6 +103,7 @@ pbl_clar_test(test_timeline_no_events
     pebble/apps/system/timeline/model.c
     pebble/apps/system/timeline/relbar.c
     pebble/popups/timeline/timeline_item_layer.c
+    pebble/services/timeline/swap_layer.c
     pebble/services/clock/service.c
     pebble/services/blob_db/pin_db.c
     pebble/services/blob_db/timeline_item_storage.c
