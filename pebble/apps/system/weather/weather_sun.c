@@ -126,6 +126,15 @@ int weather_sun_sunset_minutes(int16_t lat_e2, int16_t lon_e2, int16_t utc_off_m
   return prv_evening_minutes(lat_e2, lon_e2, utc_off_min, SUNSET_ELEV_CDEG, false);
 }
 
+int weather_sun_daylight_minutes(int16_t lat_e2, int16_t lon_e2, int16_t utc_off_min) {
+  int noon_m1000, half_m1000, now_min;
+  if (!prv_solar_day(lat_e2, lon_e2, utc_off_min, SUNSET_ELEV_CDEG, false, &noon_m1000, &half_m1000,
+                     &now_min)) {
+    return -1;
+  }
+  return (2 * half_m1000 + 500) / 1000;
+}
+
 int weather_sun_golden_minutes(int16_t lat_e2, int16_t lon_e2, int16_t utc_off_min) {
   return prv_evening_minutes(lat_e2, lon_e2, utc_off_min, GOLDEN_ELEV_CDEG, true);
 }
