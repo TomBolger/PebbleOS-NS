@@ -4,6 +4,7 @@
 #include <pbl/kernel/compiler.h>
 #include <pbl/services/activity/activity.h>
 #include <pbl/services/activity/hr_util.h>
+#include <pbl/services/activity/workout_service.h>
 
 #include <kernel/events.h>
 
@@ -55,5 +56,9 @@ PBL_WEAK bool workout_service_get_current_workout_info(int32_t *steps_out, int32
                                                        int32_t *distance_m_out,
                                                        int32_t *current_bpm_out,
                                                        HRZone *current_hr_zone_out) {
+  return false;
+}
+
+PBL_WEAK bool workout_service_get_current_workout_metrics(WorkoutServiceMetrics *metrics_out) {
   return false;
 }

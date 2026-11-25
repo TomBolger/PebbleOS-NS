@@ -81,6 +81,17 @@ static const GPoint s_bubble_offsets[HEALTH_ORBIT_CARD_MAX_BUBBLES] = {
 
 #define TYPICAL_COLOR GColorYellow
 
+//! The Workout ring fills over an hour
+#define WORKOUT_RING_FULL_S      PBL_SEC_PER_HOUR
+#define WORKOUT_IDLE_TRACK_COLOR GColorWindsorTan
+
+//! Colors of the workout's measures, as the Workout app labels them
+#define WORKOUT_DISTANCE_COLOR GColorCyan
+#define WORKOUT_PACE_COLOR     GColorGreen
+#define WORKOUT_STEPS_COLOR    GColorShockingPink
+#define WORKOUT_KCAL_COLOR     GColorOrange
+#define WORKOUT_PAUSED_COLOR   GColorChromeYellow
+
 //! PebbleOS has no sleep goal, so the Sleep ring fills toward the typical sleep, or toward this
 //! much sleep until there is a typical night
 #define SLEEP_RING_FALLBACK_TARGET (8 * PBL_SEC_PER_HOUR)
@@ -203,6 +214,33 @@ static OrbitRing prv_sleep_ring(const HealthDayData *day, int16_t outer_radius, 
   };
 }
 
+//! Color of a kind of workout's ring track
+static GColor prv_workout_track_color(ActivitySessionType type) {
+  switch (type) {
+    case ActivitySessionType_Run:
+      return GColorWindsorTan;
+    case ActivitySessionType_Walk:
+      return GColorDukeBlue;
+    default:
+      break;
+  }
+  return GColorDarkGreen;
+}
+
+//! The Workout ring: the time it has gone on toward an hour, all of it past an hour, as there is
+//! no goal for a workout; with none going on, its track alone
+static OrbitRing prv_workout_ring(const HealthWorkoutData *workout) {
+  const bool going_on = (workout->state != HealthWorkoutStateNone);
+  return (OrbitRing){
+    .outer_radius = CARD_RING_OUTER,
+    .thickness = CARD_RING_THICKNESS,
+    .color = health_orbit_workout_color(workout->type),
+    .track_color = going_on ? prv_workout_track_color(workout->type) : WORKOUT_IDLE_TRACK_COLOR,
+    .value = going_on ? workout->duration_s : 0,
+    .full = PBL_MAX(WORKOUT_RING_FULL_S, workout->duration_s),
+  };
+}
+
 //! Whether a card is laid out as the Today card: today's, or a day's overview
 static bool prv_is_day_card(const HealthOrbitCard *card) {
   return (card->section == HealthOrbitSectionToday) || card->day;
@@ -235,6 +273,9 @@ static int prv_get_rings(const HealthOrbitCard *card, HealthData *health_data,
     case HealthOrbitSectionSleep:
       rings_out[0] =
           prv_sleep_ring(day, CARD_RING_OUTER, CARD_RING_THICKNESS, true /* typical_tick */);
+      return 1;
+    case HealthOrbitSectionWorkout:
+      rings_out[0] = prv_workout_ring(health_data_workout_get(health_data));
       return 1;
     case HealthOrbitSectionToday:
     case HealthOrbitSectionCount:
@@ -598,6 +639,253 @@ static void prv_draw_sleep(GContext *ctx, GSize display, const HealthOrbitCard *
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
+// Workout
+
+const ActivitySessionType health_orbit_workout_kinds[3] = {
+  ActivitySessionType_Run,
+  ActivitySessionType_Walk,
+  ActivitySessionType_Open,
+};
+
+GColor health_orbit_workout_color(ActivitySessionType type) {
+  switch (type) {
+    case ActivitySessionType_Run:
+      return GColorChromeYellow;
+    case ActivitySessionType_Walk:
+      return GColorPictonBlue;
+    default:
+      break;
+  }
+  return GColorScreaminGreen;
+}
+
+const char *health_orbit_workout_name(ActivitySessionType type) {
+  switch (type) {
+    case ActivitySessionType_Run:
+      /// A kind of workout of the round Health app
+      return pbl_i18n_noop("Run");
+    case ActivitySessionType_Walk:
+      /// A kind of workout of the round Health app
+      return pbl_i18n_noop("Walk");
+    default:
+      break;
+  }
+  /// The kind of workout that is neither a run nor a walk, in the round Health app
+  return pbl_i18n_noop("Workout");
+}
+
+//! A bubble with a kind of workout's icon over its name
+static void prv_draw_kind_bubble(GContext *ctx, GPoint center, int16_t radius,
+                                 GDrawCommandImage *icon, ActivitySessionType type,
+                                 void *i18n_owner) {
+  if (radius <= 0) {
+    return;
+  }
+  graphics_context_set_fill_color(ctx, GColorDarkGray);
+  graphics_fill_circle(ctx, center, radius);
+  const GDrawState state =
+      health_orbit_clip(ctx, GRect(center.x - radius, center.y - radius, 2 * radius, 2 * radius));
+  if (icon) {
+    const GSize size = gdraw_command_image_get_bounds_size(icon);
+    gdraw_command_image_draw(
+        ctx, icon, GPoint(center.x - size.w / 2, center.y + BUBBLE_VALUE_Y - 1 - size.h / 2));
+  }
+  health_orbit_draw_text(ctx, pbl_i18n_get(health_orbit_workout_name(type), i18n_owner),
+                         &health_orbit_font_gothic_14, health_orbit_workout_color(type), center.x,
+                         center.y + BUBBLE_UNIT_Y);
+  graphics_context_set_drawing_state(ctx, state);
+}
+
+//! No workout going on: the minutes active today, and the three kinds of workout to start
+static void prv_draw_workout_kinds(GContext *ctx, GSize display, const HealthOrbitCard *card,
+                                   HealthData *health_data, void *i18n_owner) {
+  const int16_t middle = display.h / 2;
+  const int16_t dy = card->offset_y;
+
+  /// The title of the Workout card of the round Health app
+  health_orbit_draw_text(ctx, pbl_i18n_get("WORKOUT", i18n_owner),
+                         &health_orbit_font_gothic_14_bold, GColorRajah,
+                         health_orbit_middle_x(display, CARD_INNER_RADIUS, middle + CARD_TITLE_Y),
+                         middle + CARD_TITLE_Y + dy);
+
+  char minutes[12];
+  snprintf(minutes, sizeof(minutes), "%d",
+           (int)(health_data_current_active_seconds_get(health_data) / PBL_SEC_PER_MIN));
+  health_orbit_draw_text(ctx, minutes, &health_orbit_font_leco_38_bold, GColorChromeYellow,
+                         health_orbit_middle_x(display, CARD_INNER_RADIUS, middle + CARD_VALUE_Y),
+                         middle + CARD_VALUE_Y + dy);
+  /// Below the minutes active today on the Workout card of the round Health app
+  health_orbit_draw_text(ctx, pbl_i18n_get("active min today", i18n_owner),
+                         &health_orbit_font_gothic_18_bold, GColorLightGray,
+                         health_orbit_middle_x(display, CARD_INNER_RADIUS, middle + CARD_SUB_Y),
+                         middle + CARD_SUB_Y + dy);
+
+  const HealthOrbitRun pill_run = {
+    /// On the Workout card of the round Health app with no workout going on
+    pbl_i18n_get("START A WORKOUT", i18n_owner), &health_orbit_font_gothic_14_bold, GColorWhite
+  };
+  const GPoint pill_center =
+      GPoint(health_orbit_middle_x(display, CARD_INNER_RADIUS, middle + CARD_PILL_Y),
+             middle + CARD_PILL_Y + dy);
+  prv_draw_pill(ctx, pill_center, CARD_PILL_W, CARD_PILL_H, GColorWindsorTan, &pill_run, 1, 0);
+
+  const int16_t row = middle + BUBBLES_Y;
+  const int16_t middle_x = health_orbit_middle_x(display, CARD_INNER_RADIUS, row);
+  for (int i = 0; i < HEALTH_ORBIT_CARD_MAX_BUBBLES; i++) {
+    const GPoint center =
+        GPoint(middle_x + s_bubble_offsets[i].x, row + s_bubble_offsets[i].y + dy);
+    prv_draw_kind_bubble(ctx, center, card->bubble_radius[i],
+                         card->kind_icons ? card->kind_icons[i] : nullptr,
+                         health_orbit_workout_kinds[i], i18n_owner);
+  }
+}
+
+void health_orbit_format_workout_time(char *buffer, size_t size, int32_t seconds) {
+  const int s = (int)PBL_MAX(seconds, 0);
+  if (s >= PBL_SEC_PER_HOUR) {
+    snprintf(buffer, size, "%d:%02d:%02d", s / PBL_SEC_PER_HOUR,
+             (s / PBL_SEC_PER_MIN) % PBL_MIN_PER_HOUR, s % PBL_SEC_PER_MIN);
+  } else {
+    snprintf(buffer, size, "%d:%02d", s / PBL_SEC_PER_MIN, s % PBL_SEC_PER_MIN);
+  }
+}
+
+void health_orbit_format_workout_distance(char *buffer, size_t size, int32_t meters) {
+  health_util_format_whole_and_decimal(buffer, size, meters, health_util_get_distance_factor());
+}
+
+void health_orbit_format_workout_pace(char *buffer, size_t size, int32_t duration_s,
+                                      int32_t distance_m) {
+  const int32_t pace = (duration_s > 0 && distance_m > 0)
+                           ? (int32_t)health_util_get_pace(duration_s, distance_m)
+                           : 0;
+  if (pace <= 0 || pace >= PBL_SEC_PER_HOUR) {
+    strncpy(buffer, EN_DASH, size);
+    return;
+  }
+  snprintf(buffer, size, "%d:%02d", (int)(pace / PBL_SEC_PER_MIN), (int)(pace % PBL_SEC_PER_MIN));
+}
+
+int32_t health_orbit_workout_cadence(int32_t steps, int32_t duration_s) {
+  return (duration_s > 0) ? ((steps * PBL_SEC_PER_MIN + duration_s / 2) / duration_s) : 0;
+}
+
+//! A workout going on, or the one the watch detected: its kind, its time, how it started or that it
+//! is paused, and its measures
+static void prv_draw_workout_going_on(GContext *ctx, GSize display, const HealthOrbitCard *card,
+                                      const HealthWorkoutData *workout, void *i18n_owner) {
+  const int16_t middle = display.h / 2;
+  const int16_t dy = card->offset_y;
+  const bool paused = (workout->state == HealthWorkoutStatePaused);
+  const GColor color = health_orbit_workout_color(workout->type);
+
+  char title[24];
+  strncpy(title, pbl_i18n_get(health_orbit_workout_name(workout->type), i18n_owner),
+          sizeof(title) - 1);
+  title[sizeof(title) - 1] = '\0';
+  for (char *c = title; *c; c++) {
+    *c = toupper((unsigned char)*c);
+  }
+  health_orbit_draw_text(ctx, title, &health_orbit_font_gothic_14_bold, color,
+                         health_orbit_middle_x(display, CARD_INNER_RADIUS, middle + CARD_TITLE_Y),
+                         middle + CARD_TITLE_Y + dy);
+
+  char time[16];
+  health_orbit_format_workout_time(time, sizeof(time), workout->duration_s);
+  health_orbit_draw_text(ctx, time, &health_orbit_font_leco_38_bold,
+                         paused ? WORKOUT_PAUSED_COLOR : GColorWhite,
+                         health_orbit_middle_x(display, CARD_INNER_RADIUS, middle + CARD_VALUE_Y),
+                         middle + CARD_VALUE_Y + dy);
+
+  const char *how;
+  if (paused) {
+    /// Below a paused workout's time on the Workout card of the round Health app
+    how = pbl_i18n_get("Paused", i18n_owner);
+  } else if (workout->state == HealthWorkoutStateDetected || workout->auto_detected) {
+    /// Below the time of a workout the watch detected on its own, in the round Health app
+    how = pbl_i18n_get("Auto-detected", i18n_owner);
+  } else {
+    /// Below the time of a workout started from the round Health app or the Workout app
+    how = pbl_i18n_get("Started manually", i18n_owner);
+  }
+  health_orbit_draw_text(ctx, how, &health_orbit_font_gothic_18_bold,
+                         paused ? WORKOUT_PAUSED_COLOR : GColorLightGray,
+                         health_orbit_middle_x(display, CARD_INNER_RADIUS, middle + CARD_SUB_Y),
+                         middle + CARD_SUB_Y + dy);
+
+  // Runs and walks are paced, an open workout has its cadence
+  const bool open = (workout->type == ActivitySessionType_Open);
+  char measure[16];
+  HealthOrbitRun pill_runs[3];
+  if (open) {
+    snprintf(measure, sizeof(measure), "%" PRId32,
+             health_orbit_workout_cadence(workout->steps, workout->duration_s));
+    pill_runs[0] = (HealthOrbitRun){
+      /// Steps a minute of a workout, before its value
+      pbl_i18n_get("CADENCE", i18n_owner), &health_orbit_font_gothic_14_bold, WORKOUT_STEPS_COLOR
+    };
+    /// Unit of the cadence, steps a minute
+    pill_runs[2] = (HealthOrbitRun){
+      pbl_i18n_get("spm", i18n_owner), &health_orbit_font_gothic_14, GColorLightGray
+    };
+  } else {
+    health_orbit_format_workout_pace(measure, sizeof(measure), workout->duration_s,
+                                     workout->distance_m);
+    pill_runs[0] = (HealthOrbitRun){
+      /// A workout's average time a mile or kilometer, before its value
+      pbl_i18n_get("PACE", i18n_owner), &health_orbit_font_gothic_14_bold, WORKOUT_PACE_COLOR
+    };
+    pill_runs[2] = (HealthOrbitRun){
+      pbl_i18n_get(health_util_get_distance_string(pbl_i18n_noop("/mi"), pbl_i18n_noop("/km")),
+                   i18n_owner),
+      &health_orbit_font_gothic_14, GColorLightGray
+    };
+  }
+  pill_runs[1] = (HealthOrbitRun){measure, &health_orbit_font_gothic_14_bold, GColorWhite};
+  const GPoint pill_center =
+      GPoint(health_orbit_middle_x(display, CARD_INNER_RADIUS, middle + CARD_PILL_Y),
+             middle + CARD_PILL_Y + dy);
+  prv_draw_pill(ctx, pill_center, CARD_PILL_W, CARD_PILL_H, prv_workout_track_color(workout->type),
+                pill_runs, PBL_ARRAY_SIZE(pill_runs), 4);
+
+  char distance[HEALTH_WHOLE_AND_DECIMAL_LENGTH];
+  health_orbit_format_workout_distance(distance, sizeof(distance), workout->distance_m);
+  char steps[16];
+  health_orbit_format_count(steps, sizeof(steps), workout->steps);
+  char kcal[12];
+  snprintf(kcal, sizeof(kcal), "%" PRId32, workout->active_kcal);
+  const OrbitBubble distance_bubble = {
+    GColorDarkGray, distance,
+    pbl_i18n_get(health_util_get_distance_string(pbl_i18n_noop("mi"), pbl_i18n_noop("km")),
+                 i18n_owner),
+    WORKOUT_DISTANCE_COLOR
+  };
+  /// Unit of a workout's steps in a bubble of the round Health app
+  const OrbitBubble steps_bubble = {
+    GColorDarkGray, steps, pbl_i18n_get("steps", i18n_owner), WORKOUT_STEPS_COLOR
+  };
+  const OrbitBubble kcal_bubble = {
+    GColorDarkGray, kcal, pbl_i18n_get("kcal", i18n_owner), WORKOUT_KCAL_COLOR
+  };
+  const OrbitBubble bubbles[] = {
+    open ? steps_bubble : distance_bubble,
+    open ? kcal_bubble : steps_bubble,
+    open ? distance_bubble : kcal_bubble,
+  };
+  prv_draw_bubbles(ctx, display, card, bubbles, PBL_ARRAY_SIZE(bubbles));
+}
+
+static void prv_draw_workout(GContext *ctx, GSize display, const HealthOrbitCard *card,
+                             HealthData *health_data, void *i18n_owner) {
+  const HealthWorkoutData *workout = health_data_workout_get(health_data);
+  if (workout->state == HealthWorkoutStateNone) {
+    prv_draw_workout_kinds(ctx, display, card, health_data, i18n_owner);
+  } else {
+    prv_draw_workout_going_on(ctx, display, card, workout, i18n_owner);
+  }
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
 // API Functions
 
 GColor health_orbit_section_color(HealthOrbitSection section) {
@@ -606,6 +894,8 @@ GColor health_orbit_section_color(HealthOrbitSection section) {
       return GColorIslamicGreen;
     case HealthOrbitSectionSleep:
       return GColorCobaltBlue;
+    case HealthOrbitSectionWorkout:
+      return GColorChromeYellow;
     case HealthOrbitSectionToday:
     case HealthOrbitSectionCount:
       break;
@@ -666,6 +956,9 @@ void health_orbit_card_draw_content(GContext *ctx, const HealthOrbitCard *card,
       break;
     case HealthOrbitSectionSleep:
       prv_draw_sleep(ctx, display, card, health_data, i18n_owner);
+      break;
+    case HealthOrbitSectionWorkout:
+      prv_draw_workout(ctx, display, card, health_data, i18n_owner);
       break;
     case HealthOrbitSectionToday:
       prv_draw_today(ctx, display, card, health_data, i18n_owner);

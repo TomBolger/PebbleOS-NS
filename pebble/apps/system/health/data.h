@@ -40,6 +40,32 @@ typedef struct HealthDayData {
   int32_t typical_sleep;
 } HealthDayData;
 
+//! What the workout going on is at
+typedef enum HealthWorkoutState {
+  //! No workout, nor a walk or run the watch has detected
+  HealthWorkoutStateNone,
+  //! A walk, run or open workout the watch detected and is still going on, not yet a workout
+  HealthWorkoutStateDetected,
+  HealthWorkoutStateRunning,
+  HealthWorkoutStatePaused,
+} HealthWorkoutState;
+
+//! The workout going on, or the session the watch detected
+typedef struct HealthWorkoutData {
+  HealthWorkoutState state;
+  ActivitySessionType type;
+  //! Whether the watch detected it, as far as the health data has seen it go from a detected
+  //! session to a workout
+  bool auto_detected;
+  //! Time it has gone on, without its pauses
+  int32_t duration_s;
+  int32_t distance_m;
+  int32_t steps;
+  int32_t active_kcal;
+  //! The detected session, to turn into a workout
+  ActivitySession session;
+} HealthWorkoutData;
+
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 // API Functions
 //
@@ -154,6 +180,16 @@ int32_t health_data_current_deep_sleep_get(HealthData *health_data);
 //! @param days_ago How many days before today the day is
 //! @param[out] day_out What the overview of the day shows
 void health_data_day_get(HealthData *health_data, int days_ago, HealthDayData *day_out);
+
+//! Read the workout going on from the workout service, or else the walk, run or open workout the
+//! watch has detected and is still going on
+//! @param health_data A pointer to the health data to use
+void health_data_update_workout(HealthData *health_data);
+
+//! Get the workout going on as last read
+//! @param health_data A pointer to the health data to use
+//! @return The workout, its state none if there is none
+const HealthWorkoutData *health_data_workout_get(HealthData *health_data);
 
 //! Get the historical deep sleep data
 //! @param health_data A pointer to the health data to use
