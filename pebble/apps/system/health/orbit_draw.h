@@ -31,6 +31,8 @@ typedef struct HealthOrbitRun {
   const char *text;
   const HealthOrbitFont *font;
   GColor color;
+  //! Space before the run on top of the gap between runs, to set a word apart
+  int8_t extra_gap;
 } HealthOrbitRun;
 
 //! Width of a run of text
