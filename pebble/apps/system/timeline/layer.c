@@ -654,7 +654,7 @@ static int32_t prv_list_rest_icon_angle(TimelineLayer *layer, const TimelineList
                                         const GRect *frame, bool selected,
                                         const GRect *selected_frame, int32_t selected_angle) {
   const TimelineList *list = &layer->list;
-  const int16_t row = frame->origin.y + pin->anchor_y;
+  const int16_t row = frame->origin.y + pin->placement.anchor_y;
   const int side = selected ? prv_list_side(layer, row)
                             : ((frame->origin.y < selected_frame->origin.y) ? -1 : 1);
   if (row < 0 || row >= layer->layer.bounds.size.h) {
@@ -746,6 +746,35 @@ static int16_t prv_list_text_bottom(TimelineLayer *layer) {
 #endif
 }
 
+//! Measures how a pin rests in the list, from its text as it is laid out
+static void prv_list_pin_place(TimelineLayer *layer, TimelineListPinView *pin) {
+  const int16_t height = prv_list_pin_height(pin);
+  const int16_t screen_height = layer->layer.bounds.size.h;
+  // On rect, a pin shows whole
+  int16_t edge_top = TIMELINE_LIST_NEIGHBOUR_MARGIN_RECT;
+  int16_t edge_bottom = TIMELINE_LIST_NEIGHBOUR_MARGIN_RECT;
+  int16_t reach_top = edge_top;
+  int16_t reach_bottom = screen_height - edge_bottom;
+#if PBL_ROUND
+  // On round, it rests out as far as its time and title show whole beside the circle, its
+  // padding above them. Pushed further, it shows while its time and title rows are on screen,
+  // the display cutting off what does not fit: better most of a pin than none of it
+  const int16_t band_top = timeline_list_arc_band(
+      &layer->list.arc, timeline_layout_get_head_width(pin->layout), &edge_bottom);
+  edge_top = band_top - TIMELINE_LAYOUT_COMPACT_PADDING_TOP;
+  reach_top = -TIMELINE_LAYOUT_COMPACT_PADDING_TOP;
+  reach_bottom = screen_height - LIST_MARGIN + height - pin->placement.anchor_y;
+#endif
+  pin->placement = (TimelineListPin){
+    .height = height,
+    .anchor_y = pin->placement.anchor_y,
+    .edge_top = edge_top,
+    .edge_bottom = edge_bottom,
+    .reach_top = reach_top,
+    .reach_bottom = reach_bottom,
+  };
+}
+
 //! Lays a pin's text out once, as it shows when selected, so it never reflows as it moves: on
 //! round, flowing beside the arc where it rests selected. Text past where the circle reaches, or
 //! past the screen on rect, is cut off; the pin's card shows all of it.
@@ -765,16 +794,17 @@ static void prv_list_pin_flow(TimelineLayer *layer, TimelineListPinView *pin) {
   const int max_attempts = 3;
   for (int attempt = 0; attempt < max_attempts; attempt++) {
     const int16_t top =
-        PBL_IF_ROUND_ELSE(prv_list_anchor_row(layer) - pin->anchor_y, LIST_MARGIN);
+        PBL_IF_ROUND_ELSE(prv_list_anchor_row(layer) - pin->placement.anchor_y, LIST_MARGIN);
     const int16_t max_height =
         prv_list_text_bottom(layer) - top - TIMELINE_LAYOUT_COMPACT_PADDING_TOP;
     timeline_layout_set_flow(pin->layout, GPoint(x, top), perimeter, PBL_MAX(max_height, 1));
     const int16_t anchor_y = prv_list_get_anchor_y(pin->layout);
-    if (anchor_y == pin->anchor_y) {
+    if (anchor_y == pin->placement.anchor_y) {
       break;
     }
-    pin->anchor_y = anchor_y;
+    pin->placement.anchor_y = anchor_y;
   }
+  prv_list_pin_place(layer, pin);
 }
 
 static void prv_list_pin_free(TimelineListPinView *pin) {
@@ -957,32 +987,7 @@ static void prv_list_build(TimelineLayer *layer) {
 static void prv_list_get_pins(TimelineLayer *layer, TimelineListPin *pins) {
   TimelineList *list = &layer->list;
   for (int i = 0; i < list->num_pins; i++) {
-    const TimelineListPinView *pin = list->pins[i];
-    const int16_t height = prv_list_pin_height(pin);
-    const int16_t screen_height = layer->layer.bounds.size.h;
-    // On rect, a pin shows whole
-    int16_t edge_top = TIMELINE_LIST_NEIGHBOUR_MARGIN_RECT;
-    int16_t edge_bottom = TIMELINE_LIST_NEIGHBOUR_MARGIN_RECT;
-    int16_t reach_top = edge_top;
-    int16_t reach_bottom = screen_height - edge_bottom;
-#if PBL_ROUND
-    // On round, it rests out as far as its time and title show whole beside the circle, its
-    // padding above them. Pushed further, it shows while its time and title rows are on screen,
-    // the display cutting off what does not fit: better most of a pin than none of it
-    const int16_t band_top = timeline_list_arc_band(
-        &list->arc, timeline_layout_get_head_width(pin->layout), &edge_bottom);
-    edge_top = band_top - TIMELINE_LAYOUT_COMPACT_PADDING_TOP;
-    reach_top = -TIMELINE_LAYOUT_COMPACT_PADDING_TOP;
-    reach_bottom = screen_height - LIST_MARGIN + height - pin->anchor_y;
-#endif
-    pins[prv_list_screen_index(layer, list->num_pins, i)] = (TimelineListPin){
-      .height = height,
-      .anchor_y = pin->anchor_y,
-      .edge_top = edge_top,
-      .edge_bottom = edge_bottom,
-      .reach_top = reach_top,
-      .reach_bottom = reach_bottom,
-    };
+    pins[prv_list_screen_index(layer, list->num_pins, i)] = list->pins[i]->placement;
   }
 }
 
@@ -1033,7 +1038,7 @@ static void prv_list_layout(TimelineLayer *layer) {
   for (int i = 0; i < num_pins; i++) {
     const int screen_index = prv_list_screen_index(layer, num_pins, i);
     TimelineListPinView *pin = list->pins[i];
-    pin->frame = prv_list_full_frame(layer, tops[screen_index], prv_list_pin_height(pin));
+    pin->frame = prv_list_full_frame(layer, tops[screen_index], pin->placement.height);
   }
 #if PBL_ROUND
   // Each icon rests on the arc by its pin's title, the selected pin's at the notch
@@ -1270,13 +1275,13 @@ static void prv_list_icons_in_and_out(TimelineLayer *layer, TimelineListPinView 
       kept |= (old[j] == pin);
     }
     if (!kept) {
-      const int16_t row = pin->from.origin.y + pin->anchor_y;
+      const int16_t row = pin->from.origin.y + pin->placement.anchor_y;
       pin->icon_from_angle = prv_list_hidden_angle(list, prv_list_side(layer, row));
     }
   }
   for (int i = 0; i < list->num_leaving; i++) {
     TimelineListPinView *pin = list->leaving[i];
-    const int16_t row = pin->frame.origin.y + pin->anchor_y;
+    const int16_t row = pin->frame.origin.y + pin->placement.anchor_y;
     pin->icon_angle = prv_list_hidden_angle(list, prv_list_side(layer, row));
   }
 #endif
@@ -1354,7 +1359,7 @@ static void prv_list_reset(TimelineLayer *layer) {
     // Icons turn in from out of view, the selected one's from the way the pins come
     const int side = (i == list->selected)
                          ? ((slide < 0) ? -1 : 1)
-                         : prv_list_side(layer, pin->frame.origin.y + pin->anchor_y);
+                         : prv_list_side(layer, pin->frame.origin.y + pin->placement.anchor_y);
     pin->icon_from_angle = prv_list_hidden_angle(list, side);
 #endif
   }

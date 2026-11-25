@@ -67,8 +67,8 @@ typedef struct {
   TimelineIterState state;
   TimelineLayoutInfo info;
   TimelineLayout *layout;
-  //! Offset from the pin's top of the point that rests on the selection anchor when selected
-  int16_t anchor_y;
+  //! How the pin rests in the list, measured once as its text is laid out
+  TimelineListPin placement;
   //! Resting frame
   GRect frame;
   //! Frame the next up/down animation starts from
