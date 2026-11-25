@@ -32,8 +32,8 @@ GContext *graphics_context_get_current_context(void) {
   return &s_ctx;
 }
 
-//! A Wednesday afternoon, 15:45
-#define NOW_UTC 1764085500
+//! Wednesday 25 November 2026, 15:45
+#define NOW_UTC 1795621500
 
 void test_health_orbit_view__initialize(void) {
   pbl_realtime_set(NOW_UTC);
@@ -64,6 +64,45 @@ void test_health_orbit_view__cleanup(void) {
 // Helpers
 //////////////////////
 
+//! Sets the typical steps by 15:45, the 63 quarter hours before it, and over the whole day
+static void prv_set_typical_steps(HealthData *data, int32_t by_now, int32_t whole_day) {
+  const int now_quarter = 63;
+  const int rest = ACTIVITY_NUM_METRIC_AVERAGES - now_quarter;
+  data->step_averages.average[0] = by_now;
+  for (int i = now_quarter; i < ACTIVITY_NUM_METRIC_AVERAGES; i++) {
+    data->step_averages.average[i] = (whole_day - by_now) / rest;
+  }
+  data->step_averages.average[now_quarter] += (whole_day - by_now) % rest;
+}
+
+#define HOURS(h, m) (((h) * PBL_MIN_PER_HOUR + (m)) * PBL_SEC_PER_MIN)
+
+//! A Wednesday afternoon's data: steps ahead of typical, a night shorter than typical
+static HealthData prv_sample_data(void) {
+  HealthData data = {
+    .step_data = {7842, 7120, 8015, 4950, 11430, 6204, 9812},
+    .current_distance_meters = 5600,
+    .current_calories = 312,
+    .current_active_seconds = 47 * PBL_SEC_PER_MIN,
+    .monthly_step_average = 8455,
+    .sleep_data =
+        {HOURS(6, 52), HOURS(7, 20), HOURS(5, 56), HOURS(7, 48), HOURS(8, 31), HOURS(6, 15),
+         HOURS(7, 2)},
+    .typical_sleep = HOURS(7, 25),
+    .deep_sleep = HOURS(1, 40),
+    .deep_sleep_data =
+        {HOURS(1, 40), HOURS(1, 28), HOURS(1, 0), HOURS(1, 45), HOURS(2, 0), HOURS(1, 10),
+         HOURS(1, 35)},
+    .sleep_start = -HOURS(0, 12),
+    .sleep_end = HOURS(6, 40),
+    .typical_sleep_start = -HOURS(0, 45),
+    .typical_sleep_end = HOURS(6, 50),
+    .monthly_sleep_average = HOURS(7, 10),
+  };
+  prv_set_typical_steps(&data, 6910, 9120);
+  return data;
+}
+
 static void prv_render(HealthData *health_data, HealthOrbitSection section) {
   s_view = health_orbit_view_create(health_data);
   prv_show_section(s_view, section);
@@ -74,18 +113,41 @@ static void prv_render(HealthData *health_data, HealthOrbitSection section) {
 // Tests
 //////////////////////
 
+static HealthData s_data;
+
 void test_health_orbit_view__render_today(void) {
-  prv_render(&(HealthData){}, HealthOrbitSectionToday);
+  s_data = prv_sample_data();
+  prv_render(&s_data, HealthOrbitSectionToday);
   cl_check(gbitmap_pbi_eq(&s_ctx.dest_bitmap, TEST_PBI_FILE));
 }
 
 void test_health_orbit_view__render_steps(void) {
-  prv_render(&(HealthData){}, HealthOrbitSectionSteps);
+  s_data = prv_sample_data();
+  prv_render(&s_data, HealthOrbitSectionSteps);
+  cl_check(gbitmap_pbi_eq(&s_ctx.dest_bitmap, TEST_PBI_FILE));
+}
+
+void test_health_orbit_view__render_steps_no_data(void) {
+  s_data = (HealthData){};
+  prv_render(&s_data, HealthOrbitSectionSteps);
+  cl_check(gbitmap_pbi_eq(&s_ctx.dest_bitmap, TEST_PBI_FILE));
+}
+
+void test_health_orbit_view__render_steps_large(void) {
+  // The longest numbers fit their lines, pill and bubbles
+  s_data = prv_sample_data();
+  s_data.step_data[0] = 98765;
+  prv_set_typical_steps(&s_data, 12345, 99999);
+  s_data.current_distance_meters = 88800;
+  s_data.current_calories = 4321;
+  s_data.current_active_seconds = 888 * PBL_SEC_PER_MIN;
+  prv_render(&s_data, HealthOrbitSectionSteps);
   cl_check(gbitmap_pbi_eq(&s_ctx.dest_bitmap, TEST_PBI_FILE));
 }
 
 void test_health_orbit_view__render_sleep(void) {
-  prv_render(&(HealthData){}, HealthOrbitSectionSleep);
+  s_data = prv_sample_data();
+  prv_render(&s_data, HealthOrbitSectionSleep);
   cl_check(gbitmap_pbi_eq(&s_ctx.dest_bitmap, TEST_PBI_FILE));
 }
 
