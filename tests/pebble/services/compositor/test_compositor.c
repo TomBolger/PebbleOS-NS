@@ -845,3 +845,51 @@ void test_compositor__scaled_app_frame_keeps_the_aspect_ratio(void) {
   // Nothing to scale
   prv_assert_scaled_app_frame(GSizeZero, GRect(0, 0, w, h));
 }
+
+// Fills each column of the app framebuffer with its own value
+static void prv_paint_app_columns(void) {
+  for (int16_t y = 0; y < PBL_DISPLAY_HEIGHT; y++) {
+    for (int16_t x = 0; x < PBL_DISPLAY_WIDTH; x++) {
+      s_app_framebuffer_data[y * PBL_DISPLAY_WIDTH + x] = (uint8_t)(x + 1);
+    }
+  }
+}
+
+static uint8_t prv_system_pixel(int16_t x, int16_t y) {
+  return s_framebuffer_data[y * PBL_DISPLAY_WIDTH + x];
+}
+
+void test_compositor__app_fb_copy_from_origin_moves_the_frame(void) {
+  const int16_t w = PBL_DISPLAY_WIDTH;
+  const int16_t h = PBL_DISPLAY_HEIGHT;
+  prv_paint_app_columns();
+
+  // Copied from the app's origin, the frame lands where the rectangle starts, moved right...
+  compositor_scaled_app_fb_copy(GRect(8, 0, w, h), false /* copy_relative_to_origin */);
+  cl_assert_equal_i(prv_system_pixel(7, 10), 0);
+  cl_assert_equal_i(prv_system_pixel(8, 10), 1);
+  cl_assert_equal_i(prv_system_pixel(w - 1, 10), w - 8);
+
+  // ...or left, the whole display covered but what it uncovers on the right
+  memset(s_framebuffer_data, 0, sizeof(s_framebuffer_data));
+  compositor_scaled_app_fb_copy(GRect(-8, 0, w, h), false /* copy_relative_to_origin */);
+  cl_assert_equal_i(prv_system_pixel(0, 10), 9);
+  cl_assert_equal_i(prv_system_pixel(w - 9, 10), w);
+  cl_assert_equal_i(prv_system_pixel(w - 8, 10), 0);
+
+  // ...or up
+  memset(s_framebuffer_data, 0, sizeof(s_framebuffer_data));
+  compositor_scaled_app_fb_copy(GRect(0, -20, w, h), false /* copy_relative_to_origin */);
+  cl_assert_equal_i(prv_system_pixel(5, h - 21), 6);
+  cl_assert_equal_i(prv_system_pixel(5, h - 20), 0);
+}
+
+void test_compositor__app_fb_copy_relative_to_origin_stays_in_place(void) {
+  prv_paint_app_columns();
+
+  compositor_scaled_app_fb_copy(GRect(-8, 30, 40, 10), true /* copy_relative_to_origin */);
+  cl_assert_equal_i(prv_system_pixel(0, 30), 1);
+  cl_assert_equal_i(prv_system_pixel(31, 39), 32);
+  cl_assert_equal_i(prv_system_pixel(32, 39), 0);
+  cl_assert_equal_i(prv_system_pixel(0, 40), 0);
+}
