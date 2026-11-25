@@ -1845,12 +1845,11 @@ static bool prv_notification_is_phone_silent(Uuid *id) {
 
 //! How long after the last button press or touch a new notification waits to be focused
 #define FOCUS_DEFER_MS 10000
-//! How often a waiting notification checks again while the action menu is open
-#define FOCUS_DEFER_RETRY_MS 500
 
 static uint32_t prv_focus_defer_remaining_ms(NotificationWindowData *data) {
   if (data->action_menu) {
-    return FOCUS_DEFER_RETRY_MS;
+    // Closing the menu counts as an interaction: the wait runs on from there.
+    return FOCUS_DEFER_MS;
   }
   if (!data->last_interaction_ms) {
     return 0;
