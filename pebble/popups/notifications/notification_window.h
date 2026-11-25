@@ -12,7 +12,7 @@ void notification_window_service_init(void);
 
 void notification_window_init(bool is_modal);
 
-void notification_window_init_history(bool allow_dismiss_all);
+void notification_window_init_history(void);
 
 void notification_window_show(void);
 

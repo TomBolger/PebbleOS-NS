@@ -263,50 +263,6 @@ static void prv_reload_swap_layer(NotificationWindowData *data) {
   }
 }
 
-/////////////////////
-// Dismiss All
-/////////////////////
-
-static void prv_handle_dismiss_all_complete(bool succeeded, void *cb_data) {
-  NotificationWindowData *window_data = (NotificationWindowData *)cb_data;
-  window_data->window_frozen = false;
-  if (s_in_use && succeeded) {
-    prv_pop_notification_window(window_data);
-  }
-}
-
-static void prv_dismiss_all(void *data, ActionMenu *action_menu) {
-  NotificationWindowData *window_data = (NotificationWindowData *)data;
-
-  const int num_notifications = notifications_presented_list_count();
-  if (num_notifications == 0) {
-    return;
-  }
-
-  Uuid *first_id = notifications_presented_list_first();
-
-  NotificationInfo *notif_list = pbl_malloc_check(sizeof(NotificationInfo) * num_notifications);
-
-  for (int i = 0; i < num_notifications; i++) {
-    Uuid *id = notifications_presented_list_relative(first_id, i);
-    memcpy(&notif_list[i].id, id, sizeof(Uuid));
-    notif_list[i].type = notifications_presented_list_get_type(id);
-  }
-
-  PBL_LOG_DBG("Dismissing %d notifications", num_notifications);
-  window_data->window_frozen = true;
-  timeline_actions_dismiss_all(notif_list, num_notifications, action_menu,
-                               prv_handle_dismiss_all_complete, data);
-
-  pbl_free(notif_list);
-}
-
-static void prv_dismiss_all_action_cb(ActionMenu *action_menu, const ActionMenuItem *item,
-                                      void *context) {
-  NotificationWindowData *window_data = (NotificationWindowData *)item->action_data;
-  prv_dismiss_all(window_data, action_menu);
-}
-
 static int64_t prv_interpolate_moook_peek_animation(int32_t normalized, int64_t from, int64_t to) {
   return interpolate_moook_soft(normalized, from, to, NUM_MOOOK_SOFT_MID_FRAMES);
 }
@@ -930,14 +886,11 @@ static ActionMenuLevel *prv_create_action_menu_for_item(TimelineItem *item,
        !uuid_equal(&(Uuid)UUID_REMINDERS_DATA_SOURCE, &items_originator_id) &&
        reminders_can_snooze(item));
 
-  const bool has_dismiss_all_action = (window_data->allow_dismiss_all && (dismiss_action) &&
-                                       (notifications_presented_list_count() > 1));
   const bool has_quiet_time_action = true; // Always true
   const bool has_ancs_mute_action = prv_has_mute_action(item);
 
   uint8_t num_local_actions = 0;
   num_local_actions += (has_snooze_action) ? 1 : 0;
-  num_local_actions += (has_dismiss_all_action) ? 1 : 0;
   num_local_actions += (has_quiet_time_action) ? 1 : 0;
   num_local_actions += (has_ancs_mute_action) ? 1 : 0;
 
@@ -1019,10 +972,6 @@ static ActionMenuLevel *prv_create_action_menu_for_item(TimelineItem *item,
     ios_notif_pref_db_free_prefs(notif_prefs);
   }
 
-  if (has_dismiss_all_action) {
-    action_menu_level_add_action(root_level, pbl_i18n_get("Dismiss All", root_level),
-                                 prv_dismiss_all_action_cb, window_data);
-  }
   if (has_quiet_time_action) {
     action_menu_level_add_action(root_level,
                                  do_not_disturb_is_active()
@@ -1248,21 +1197,13 @@ static void prv_select_single_click_handler(ClickRecognizerRef recognizer, void 
                                alerts_preferences_get_notification_content_size());
 }
 
-static void prv_select_long_click_handler(ClickRecognizerRef recognizer, void *data) {
-  prv_dismiss_all(data, nullptr);
-}
-
 static void prv_back_button_single_click_handler(ClickRecognizerRef recognizer, void *data) {
   NotificationWindowData *window_data = data;
   prv_pop_notification_window(window_data);
 }
 
 static void prv_click_config_provider(void *data) {
-  NotificationWindowData *window_data = data;
   window_single_click_subscribe(BUTTON_ID_SELECT, prv_select_single_click_handler);
-  if (window_data->allow_dismiss_all) {
-    window_long_click_subscribe(BUTTON_ID_SELECT, 1000, prv_select_long_click_handler, nullptr);
-  }
   window_set_click_context(BUTTON_ID_SELECT, data);
 
   window_single_click_subscribe(BUTTON_ID_BACK, prv_back_button_single_click_handler);
@@ -1527,7 +1468,7 @@ static bool prv_action_button_touch_transparent(const Layer *layer, const GPoint
 }
 #endif
 
-static void prv_init_notification_window(bool is_modal, bool allow_dismiss_all) {
+static void prv_init_notification_window(bool is_modal) {
   NotificationWindowData *data = &s_notification_window_data;
 
   // init_notification_window() can be called from KernelMain when displaying an incoming
@@ -1541,7 +1482,6 @@ static void prv_init_notification_window(bool is_modal, bool allow_dismiss_all) 
   s_in_use = true;
   data->pop_timer_is_final = false;
   data->is_modal = is_modal;
-  data->allow_dismiss_all = allow_dismiss_all;
   data->notification_app_id = UUID_INVALID;
   data->peek_layer_timer = EVENTED_TIMER_INVALID_ID;
   data->peek_animation = nullptr;
@@ -1644,7 +1584,7 @@ fail:
 }
 
 void notification_window_init(bool is_modal) {
-  prv_init_notification_window(is_modal, true);
+  prv_init_notification_window(is_modal);
 
   if (is_modal && notification_window_is_modal()) {
     // If we didn't ask for a modal window, it means some other task already created it,
@@ -1654,8 +1594,8 @@ void notification_window_init(bool is_modal) {
   }
 }
 
-void notification_window_init_history(bool allow_dismiss_all) {
-  prv_init_notification_window(false, allow_dismiss_all);
+void notification_window_init_history(void) {
+  prv_init_notification_window(false /* is_modal */);
 }
 
 void notification_window_show() {
@@ -1899,7 +1839,7 @@ static void prv_handle_notification_added_common(Uuid *id, NotificationType type
   }
 
   // will fail and return early if already init'ed.
-  prv_init_notification_window(true /*is_modal*/, true /*allow_dismiss_all*/);
+  prv_init_notification_window(true /* is_modal */);
 
   if (!data->is_modal) {
     prv_log_notification_vibe("skipped: history window", id);
