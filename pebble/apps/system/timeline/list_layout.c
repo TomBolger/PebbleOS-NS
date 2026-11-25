@@ -125,10 +125,15 @@ static int16_t prv_half_width(int16_t radius, int16_t distance_y) {
   return integer_sqrt((int32_t)radius * radius - distance * distance);
 }
 
-int16_t timeline_list_arc_depth(const TimelineListArc *arc, int16_t top, int16_t bottom) {
+//! How deep a circle reaches into the display on a row a distance from its middle row
+static int16_t prv_circle_depth(int16_t center_inset, int16_t radius, int16_t distance) {
   // The circle covers the column of its edge
+  return center_inset + prv_half_width(radius, distance) + 1;
+}
+
+int16_t timeline_list_arc_depth(const TimelineListArc *arc, int16_t top, int16_t bottom) {
   const int16_t distance = prv_rows_distance(arc->display_radius, top, bottom, false);
-  return arc->center_inset + prv_half_width(arc->radius, distance) + 1;
+  return prv_circle_depth(arc->center_inset, arc->radius, distance);
 }
 
 //! Distance from the side opposite the circle to inside the display's edge across a run of rows
@@ -233,9 +238,8 @@ int32_t timeline_list_arc_max_angle(const TimelineListArc *arc, int16_t distance
 }
 
 //! Depth of the sidebar's circle on a row a distance from its middle row
-static int16_t prv_circle_depth(const TimelineListSidebar *sidebar, int16_t distance) {
-  // The circle covers the column of its edge
-  return sidebar->center_inset + prv_half_width(sidebar->radius, distance) + 1;
+static int16_t prv_sidebar_circle_depth(const TimelineListSidebar *sidebar, int16_t distance) {
+  return prv_circle_depth(sidebar->center_inset, sidebar->radius, distance);
 }
 
 int16_t timeline_list_sidebar_depth(const TimelineListSidebar *sidebar, int16_t row) {
@@ -243,14 +247,14 @@ int16_t timeline_list_sidebar_depth(const TimelineListSidebar *sidebar, int16_t 
   if (distance > sidebar->radius) {
     return 0;
   }
-  const int16_t depth = prv_circle_depth(sidebar, distance);
+  const int16_t depth = prv_sidebar_circle_depth(sidebar, distance);
   const int16_t half_notch = sidebar->notch_height / 2;
   if (distance >= half_notch || sidebar->notch_width <= 0) {
     return depth;
   }
   // The notch's sides run straight from its tip to its base on the circle's edge, so each row
   // steps evenly and no pixel sticks out
-  const int16_t tip = prv_circle_depth(sidebar, 0) - sidebar->notch_width;
-  const int16_t base = prv_circle_depth(sidebar, half_notch);
+  const int16_t tip = prv_sidebar_circle_depth(sidebar, 0) - sidebar->notch_width;
+  const int16_t base = prv_sidebar_circle_depth(sidebar, half_notch);
   return PBL_MIN(depth, tip + (base - tip) * distance / half_notch);
 }
