@@ -318,11 +318,11 @@ static void prv_create_list_view_and_render(ListViewConfig *config) {
 
 #if PBL_ROUND
   // Scrolling the fixed slots brings the next pin's title near the middle, and pins only rest on
-  // the middle once they stop
-  // A compact pin taking the whole screen shows from its top, its title beyond the notch's reach
+  // the middle once they stop. The compact list rests every pin's title at the notch, however it
+  // got there.
   const bool day_separator_shown = config->day_separator && !config->after_day_separator;
   if (!day_separator_shown && !config->scroll_progress &&
-      !config->num_back_scrolls && (timeline_layer.compact || config->num_scrolls == 0)) {
+      (timeline_layer.compact || config->num_scrolls == 0)) {
     prv_assert_title_centered(&window, &timeline_layer);
   }
 #endif
