@@ -59,16 +59,21 @@ struct HealthOrbitView {
   //! The card going out as another comes in
   HealthOrbitCard leaving;
   bool leaving_shown;
-  //! Section whose colors the background and the sidebar have
+  //! Section whose colors the background has
   HealthOrbitSection color_section;
+  //! Section whose color the sidebar had, as the section's color sweeps in over it
+  HealthOrbitSection sidebar_from;
   Animation *animation;
   //! Whether Up past the first section and Down past the last one wrap round
   bool wrap;
 
-  //! How far along the orbit it has turned, HEALTH_ORBIT_STEP per section from the first, and
-  //! where it turns to, which is past a full turn when it goes on round to wrap
+  //! How far along the orbit it has turned, HEALTH_ORBIT_STEP per section from the first, where
+  //! it turns from, and where to, which is past a full turn when it goes on round to wrap
   int16_t orbit_offset;
+  int16_t orbit_from;
   int16_t orbit_target;
+  //! Whether it turns as for Down, the bubbles coming up from below
+  bool orbit_down;
   //! Angle the sidebar is turned by, back to the top as the week shows
   int16_t turn;
   //! Radius of the bubbles of the sections away from the notch
@@ -138,17 +143,89 @@ static GDrawCommandImage *prv_create_icon(HealthOrbitSection section, int16_t si
   return icon;
 }
 
+//! The section's color sweeping in over the sidebar's as the orbit turns: a line from the sidebar's
+//! center turns across it from the side the bubbles come in from, the new color behind it
+typedef struct SidebarSweep {
+  GColor from;
+  GColor to;
+  //! Angle of the line from the sidebar's middle row, down positive
+  int32_t angle;
+  //! Whether the new color is above the line, as the bubbles come in from above
+  bool from_above;
+} SidebarSweep;
+
+//! Fills columns \a x0 to \a x1, in eighths of a pixel, of row \a y in the colors of the sweep's
+//! two sides of the line, the pixel it crosses in a blend of them
+static void prv_fill_swept_span(GContext *ctx, int16_t y, int16_t x0, int16_t x1, int32_t edge8,
+                                GColor left, GColor right) {
+  const int16_t edge = PBL_CLAMP(edge8 >> 3, x0, x1);
+  graphics_context_set_fill_color(ctx, left);
+  graphics_fill_rect(ctx, &GRect(x0, y, edge - x0, 1));
+  graphics_context_set_fill_color(ctx, right);
+  graphics_fill_rect(ctx, &GRect(edge, y, x1 - edge, 1));
+  if ((edge8 >> 3) >= x0 && (edge8 >> 3) < x1) {
+    // How much of the pixel is right of the line, in quarters, as antialiasing blends
+    const uint8_t right_share = ((8 - (edge8 & 7)) * 3 + 4) / 8;
+    GColor blend = right;
+    blend.a = right_share;
+    graphics_context_set_fill_color(ctx, gcolor_alpha_blend(blend, left));
+    graphics_fill_rect(ctx, &GRect(edge, y, 1, 1));
+  }
+}
+
+//! Fills row \a y of the sidebar, from column \a x0 to the display's edge, as the sweep has it
+static void prv_fill_swept_row(GContext *ctx, GSize display, int16_t y, int16_t x0,
+                               const SidebarSweep *sweep) {
+  const GPoint center = health_orbit_center(display, 0);
+  const int32_t dy = y - center.y;
+  const int32_t angle = sweep->angle;
+  // The part of the row above the line, all, none, or one side of where the line crosses it
+  bool all_above;
+  bool none_above;
+  if (dy == 0) {
+    all_above = (angle > 0);
+    none_above = !all_above;
+  } else {
+    all_above = (dy < 0 && angle >= 0);
+    none_above = (dy > 0 && angle <= 0);
+  }
+  const GColor above = sweep->from_above ? sweep->to : sweep->from;
+  const GColor below = sweep->from_above ? sweep->from : sweep->to;
+  if (all_above || none_above) {
+    graphics_context_set_fill_color(ctx, all_above ? above : below);
+    graphics_fill_rect(ctx, &GRect(x0, y, display.w - x0, 1));
+    return;
+  }
+  // Where the line crosses the row, in eighths of a pixel, as far left as it can usefully be
+  const int32_t abs_angle = PBL_ABS(angle);
+  const int32_t sin = sin_lookup(abs_angle);
+  const int64_t run8 = ((int64_t)PBL_ABS(dy) * 8 * cos_lookup(abs_angle)) / PBL_MAX(sin, 1);
+  const int32_t edge8 = 8 * center.x + 4 - (int32_t)PBL_MIN(run8, 8 * 2 * display.w);
+  if (dy < 0) {
+    prv_fill_swept_span(ctx, y, x0, display.w, edge8, below, above);
+  } else {
+    prv_fill_swept_span(ctx, y, x0, display.w, edge8, above, below);
+  }
+}
+
 //! Fills the sidebar turned by \a turn. At rest on the right and at the top it is filled as the
-//! timeline fills it, a row or a column at a time, notched on the right; on the way, its circle with
-//! the notch, closing as it turns up, cut out in the background color.
-static void prv_fill_sidebar(GContext *ctx, GSize display, int32_t turn, GColor color, GColor bg) {
-  graphics_context_set_fill_color(ctx, color);
+//! timeline fills it, a row or a column at a time, notched on the right, where the section's color
+//! can sweep in; on the way, its circle with the notch, closing as it turns up, cut out in the
+//! background color.
+static void prv_fill_sidebar(GContext *ctx, GSize display, int32_t turn, const SidebarSweep *sweep,
+                             GColor bg) {
+  graphics_context_set_fill_color(ctx, sweep->to);
   const int16_t notch_width = health_orbit_notch_width(turn);
   if (turn == 0 || turn == -QUARTER_TURN) {
     const TimelineListSidebar sidebar = health_orbit_sidebar(display, notch_width);
+    const bool swept = (turn == 0) && !gcolor_equal(sweep->from, sweep->to);
     for (int16_t i = 0; i < display.h; i++) {
       const int16_t depth = timeline_list_sidebar_depth(&sidebar, i);
       if (depth <= 0) {
+        continue;
+      }
+      if (swept) {
+        prv_fill_swept_row(ctx, display, i, display.w - depth, sweep);
         continue;
       }
       const GRect span =
@@ -314,6 +391,27 @@ static void prv_draw_cards(GContext *ctx, HealthOrbitView *view) {
   health_orbit_card_draw_rings(ctx, &view->card, view->health_data, !leaving_tracks);
 }
 
+//! The sidebar's colors as the orbit turns: the section's sweeping in from the side its bubble
+//! comes in from as the orbit turns, all of it by the time the bubble is at the notch
+static SidebarSweep prv_get_sidebar_sweep(HealthOrbitView *view, GSize display) {
+  const int32_t travel = PBL_ABS(view->orbit_target - view->orbit_from);
+  const int32_t remaining = view->orbit_down ? (view->orbit_target - view->orbit_offset)
+                                             : (view->orbit_offset - view->orbit_target);
+  const int32_t progress = (travel > 0)
+                               ? PBL_CLAMP((travel - remaining) * ANIMATION_NORMALIZED_MAX / travel,
+                                           0, ANIMATION_NORMALIZED_MAX)
+                               : ANIMATION_NORMALIZED_MAX;
+  // The line starts and ends a little past where the sidebar leaves the display
+  const int32_t reach = health_orbit_sidebar_reach(display) + TRIG_MAX_ANGLE / 64;
+  const int32_t angle = -reach + (2 * reach * progress) / ANIMATION_NORMALIZED_MAX;
+  return (SidebarSweep){
+    .from = health_orbit_section_color(view->sidebar_from),
+    .to = health_orbit_section_color(view->section),
+    .angle = view->orbit_down ? -angle : angle,
+    .from_above = !view->orbit_down,
+  };
+}
+
 static void prv_layer_update_proc(Layer *layer, GContext *ctx) {
   HealthOrbitView *view = window_get_user_data(layer_get_window(layer));
   const GSize display = layer->bounds.size;
@@ -330,7 +428,8 @@ static void prv_layer_update_proc(Layer *layer, GContext *ctx) {
     health_orbit_week_draw(ctx, view->section, view->health_data, rows, view->week_header_offset_y,
                            view->crown, view);
   }
-  prv_fill_sidebar(ctx, display, view->turn, health_orbit_section_color(view->color_section), bg);
+  const SidebarSweep sweep = prv_get_sidebar_sweep(view, display);
+  prv_fill_sidebar(ctx, display, view->turn, &sweep, bg);
   prv_draw_orbit(ctx, view, display);
 }
 
@@ -343,7 +442,7 @@ static void prv_layer_update_proc(Layer *layer, GContext *ctx) {
 //! The orbit turns and the cards slide as the timeline scrolls
 #define SLIDE_MS TIMELINE_UP_DOWN_ANIMATION_DURATION_MS
 
-//! The colors change as the slide bounces back, as the rect cards do
+//! The background's color changes as the slide bounces back, as the rect cards do
 #define COLOR_SWAP_MS (SLIDE_MS - interpolate_moook_out_duration())
 
 //! A ring sweeps in with a Moook curve in degrees, overshooting by 12
@@ -503,8 +602,10 @@ static void prv_rest(HealthOrbitView *view) {
   view->animation = nullptr;
   view->leaving_shown = false;
   view->color_section = view->section;
+  view->sidebar_from = view->section;
   health_orbit_card_init(&view->card, view->section);
   view->orbit_offset = view->section * HEALTH_ORBIT_STEP;
+  view->orbit_from = view->orbit_offset;
   view->orbit_target = view->orbit_offset;
   view->turn = view->week ? -QUARTER_TURN : 0;
   view->neighbour_radius = view->week ? 0 : NEIGHBOUR_BUBBLE_RADIUS;
@@ -559,8 +660,9 @@ static void prv_finish(HealthOrbitView *view) {
 // Transitions
 
 //! Up or Down: the orbit turns a step, Up counterclockwise and Down clockwise, going on round the
-//! way it turns to wrap past the ends. The card slides out the way the button goes as the next
-//! slides in, the old rings snap back, the new ones sweep in and its bubbles pop one after another.
+//! way it turns to wrap past the ends, as the section's color sweeps in over the sidebar from the
+//! side its bubble comes in from. The card slides out the way the button goes as the next slides
+//! in, the old rings snap back, the new ones sweep in and its bubbles pop one after another.
 static void prv_animate_section(HealthOrbitView *view, HealthOrbitSection section, bool down) {
   prv_finish(view);
   const int16_t height = view->layer.bounds.size.h;
@@ -605,7 +707,10 @@ static void prv_animate_section(HealthOrbitView *view, HealthOrbitSection sectio
   } else if (!down && target > view->orbit_offset) {
     target -= HEALTH_ORBIT_LENGTH;
   }
+  view->sidebar_from = view->leaving.section;
+  view->orbit_from = view->orbit_offset;
   view->orbit_target = target;
+  view->orbit_down = down;
   prv_add_int16(&transition, &view->orbit_offset, target, 0, SLIDE_MS,
                 timeline_animation_interpolate_moook_soft);
   prv_play(view, &transition);
