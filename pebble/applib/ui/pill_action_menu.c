@@ -8,12 +8,13 @@
 
 #include <pbl/services/timeline/notification_layout.h>
 #include <pbl/util/math.h>
+#include <pbl/util/trig.h>
 
 #include <applib/applib_malloc.auto.h>
-#include <applib/fonts/fonts.h>
 #include <applib/graphics/gdraw_command_image.h>
 #include <applib/graphics/gdraw_command_transforms.h>
 #include <applib/graphics/graphics.h>
+#include <applib/graphics/graphics_circle.h>
 #include <applib/graphics/graphics_private.h>
 #include <applib/graphics/text.h>
 #include <applib/ui/action_menu_window_private.h>
@@ -36,22 +37,27 @@
 #define CENTER_Y      (PBL_DISPLAY_HEIGHT / 2)
 #define SCREEN_RADIUS (PBL_DISPLAY_WIDTH / 2)
 
-// The circle the pill settles into: the round notification banner's circle, turned a quarter
+// The circle the menu settles into: the round notification banner's circle, turned a quarter
 // round so it hangs off the left edge as deep as the banner hangs off the top, with the icon where
 // the banner has it.
 #define BUBBLE_RADIUS     BANNER_CIRCLE_RADIUS
 #define BUBBLE_CENTER_X   LAYOUT_TOP_BANNER_CENTER_Y_ROUND
 #define BUBBLE_ICON_INSET (LAYOUT_TOP_BANNER_ICON_CENTER_Y_ROUND - BUBBLE_CENTER_X)
+// A banner scrolled out of sight starts from a small circle just above the screen.
+#define HIDDEN_START_RADIUS  14
+#define HIDDEN_START_Y       (-HIDDEN_START_RADIUS - 2)
+#define HIDDEN_BANNER_BOTTOM 4
 
 //! The first row starts this many rows above the centre, and the last stops as many below it
 #define EDGE_ROWS 2
 
-#define ROW_HEIGHT      38
-#define ROW_PILL_HEIGHT (ROW_HEIGHT - 6)
-#define TEXT_LEFT       (BUBBLE_CENTER_X + BUBBLE_RADIUS + 8)
-#define TEXT_RIGHT      (PBL_DISPLAY_WIDTH - 10)
-#define ROW_EDGE_GAP    8
-#define ROW_MIN_WIDTH   60
+//! A row is this much taller than its font's size, its pill this much shorter than the row
+#define ROW_PADDING      14
+#define ROW_PILL_PADDING 6
+#define TEXT_LEFT        (BUBBLE_CENTER_X + BUBBLE_RADIUS + 8)
+#define TEXT_RIGHT       (PBL_DISPLAY_WIDTH - 10)
+#define ROW_EDGE_GAP     8
+#define ROW_MIN_WIDTH    60
 // A tap this far left of the text column still picks a row.
 #define TAP_SLACK_PX 10
 
@@ -70,15 +76,20 @@
 typedef struct PillActionMenu {
   ActionMenu *action_menu;
   Window *window;
-  MenuLayer *menu_layer;
   Layer layer;
   bool open;
   bool closing;
+  //! Closing from all the way open, it lands with the bounce it opened with
+  bool closing_bounces;
+  bool from_banner;
 
   GColor color;
   GColor text_color;
   GColor background;
   GColor foreground;
+  PillActionMenuFont font;
+  PillActionMenuFont small_font;
+  int16_t row_height;
   ClickConfigProvider window_click_config;
   void *window_click_context;
   bool window_overrides_back;
@@ -94,9 +105,24 @@ typedef struct PillActionMenu {
   // How wide each label of the level shown is at the large size, -1 until first drawn
   int16_t *label_widths;
 
-  // The selected row of the menu, on screen with the menu at rest: its pill and its cell
-  MenuRoundShape row_pill;
-  GRect row_frame;
+  union {
+    // Out of a menu: its selected row, on screen with the menu at rest, its pill and its cell
+    struct {
+      MenuLayer *menu_layer;
+      MenuRoundShape pill;
+      GRect frame;
+    } row;
+    // Out of a banner: the circle it starts as, in polar form around the screen centre
+    struct {
+      int32_t angle;
+      int32_t distance;
+      int32_t radius;
+      int32_t icon_inset;
+      int16_t cover_bottom; // rows 0..this are the banner, covered as the motion starts
+      Layer *card;          // slid left in step with the actions' edge
+      int16_t card_x;       // the card's resting x
+    } banner;
+  };
 
   Animation *motion;
   int32_t progress; // 0..1000, linear in time; eased when drawing
@@ -120,6 +146,15 @@ typedef struct PillActionMenu {
 
 static int32_t prv_lerp(int32_t from, int32_t to, int32_t e) {
   return from + (((to - from) * e) / 1000);
+}
+
+//! How far the opening has gone, eased, in thousandths: past 1000 as it overshoots, and closing
+//! from all the way open, past 0 as it lands
+static int32_t prv_eased(PillActionMenu *menu) {
+  if (menu->closing_bounces) {
+    return 1000 - interpolate_ease_out_overshoot(1000 - menu->progress);
+  }
+  return interpolate_ease_out_overshoot(menu->progress);
 }
 
 static const ActionMenuLevel *prv_level(PillActionMenu *menu) {
@@ -148,23 +183,47 @@ static MenuRoundShape prv_bubble(void) {
 
 //! Where the menu's selected row is now, on screen, with the window's content at rest
 static void prv_capture_row(PillActionMenu *menu) {
-  MenuLayer *menu_layer = menu->menu_layer;
+  MenuLayer *menu_layer = menu->row.menu_layer;
   Layer *root = window_get_root_layer(menu->window);
   const GRect slid = root->bounds;
   root->bounds.origin.x = 0;
   GRect content;
   layer_get_global_frame(&menu_layer->scroll_layer.content_sublayer, &content);
   const GRect highlight = menu_layer->inverter.layer.frame;
-  menu->row_frame =
+  menu->row.frame =
       GRect(content.origin.x + highlight.origin.x, content.origin.y + highlight.origin.y,
             highlight.size.w, highlight.size.h);
-  if (!menu_layer_get_round_highlight(menu_layer, &menu->row_pill)) {
-    menu->row_pill = (MenuRoundShape){
-      .box = grect_inset(menu->row_frame, GEdgeInsets(3)),
-      .radius = (menu->row_frame.size.h - 6) / 2,
+  if (!menu_layer_get_round_highlight(menu_layer, &menu->row.pill)) {
+    menu->row.pill = (MenuRoundShape){
+      .box = grect_inset(menu->row.frame, GEdgeInsets(3)),
+      .radius = (menu->row.frame.size.h - 6) / 2,
     };
   }
   root->bounds = slid;
+}
+
+//! The circle where \a banner is on screen: a big one whose lower edge is the banner's curve, or,
+//! scrolled away, a small one just above the top edge
+static void prv_capture_banner(PillActionMenu *menu, const PillActionMenuBanner *banner) {
+  int32_t start_y;
+  if (banner->bottom > HIDDEN_BANNER_BOTTOM) {
+    menu->banner.radius = BANNER_CIRCLE_RADIUS;
+    start_y = banner->bottom - BANNER_CIRCLE_RADIUS;
+    menu->banner.icon_inset = banner->icon_center_y - start_y;
+    menu->banner.cover_bottom = banner->bottom;
+  } else {
+    menu->banner.radius = HIDDEN_START_RADIUS;
+    start_y = HIDDEN_START_Y;
+    menu->banner.icon_inset = 0;
+    menu->banner.cover_bottom = -1;
+  }
+  menu->banner.distance = CENTER_Y - start_y;
+  menu->banner.angle = atan2_lookup((int16_t)(start_y - CENTER_Y), 0);
+  if (menu->banner.angle < TRIG_MAX_ANGLE / 2) {
+    menu->banner.angle += TRIG_MAX_ANGLE;
+  }
+  menu->banner.card = banner->card;
+  menu->banner.card_x = banner->card ? banner->card->frame.origin.x : 0;
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -191,14 +250,15 @@ static void prv_draw_icon(PillActionMenu *menu, GContext *ctx, GPoint center, in
 }
 
 //! How wide label \a i of the level shown is at the large size, measured once per level
-static int16_t prv_label_width(PillActionMenu *menu, GContext *ctx, uint16_t i, GFont font) {
+static int16_t prv_label_width(PillActionMenu *menu, GContext *ctx, uint16_t i) {
   int16_t *width = menu->label_widths ? &menu->label_widths[i] : nullptr;
   if (width && (*width >= 0)) {
     return *width;
   }
   const GSize size = graphics_text_layout_get_max_used_size(
-      ctx, prv_level(menu)->items[i].label ?: "", font, GRect(0, 0, 400, ROW_PILL_HEIGHT),
-      GTextOverflowModeTrailingEllipsis, GTextAlignmentLeft, nullptr);
+      ctx, prv_level(menu)->items[i].label ?: "", menu->font.font,
+      GRect(0, 0, 400, menu->row_height - ROW_PILL_PADDING), GTextOverflowModeTrailingEllipsis,
+      GTextAlignmentLeft, nullptr);
   if (width) {
     *width = size.w;
   }
@@ -208,9 +268,11 @@ static int16_t prv_label_width(PillActionMenu *menu, GContext *ctx, uint16_t i, 
 static void prv_draw_rows(PillActionMenu *menu, GContext *ctx, int16_t shift) {
   const ActionMenuLevel *level = prv_level(menu);
   const uint16_t selected = prv_selected(menu);
+  const int16_t row_height = menu->row_height;
+  const int16_t pill_height = row_height - ROW_PILL_PADDING;
   for (uint16_t i = 0; i < level->num_items; i++) {
-    const int32_t center_y = CENTER_Y + ((int32_t)i - EDGE_ROWS) * ROW_HEIGHT - menu->list_pos;
-    if ((center_y + (ROW_HEIGHT / 2) < 0) || (center_y - (ROW_HEIGHT / 2) > PBL_DISPLAY_HEIGHT)) {
+    const int32_t center_y = CENTER_Y + ((int32_t)i - EDGE_ROWS) * row_height - menu->list_pos;
+    if ((center_y + (row_height / 2) < 0) || (center_y - (row_height / 2) > PBL_DISPLAY_HEIGHT)) {
       continue;
     }
     // Keep each row inside the round screen at its height
@@ -223,41 +285,34 @@ static void prv_draw_rows(PillActionMenu *menu, GContext *ctx, int16_t shift) {
       continue;
     }
 
-    const char *text = level->items[i].label ?: "";
-    int16_t points = 24;
-    GFont font = fonts_get_system_font(FONT_KEY_GOTHIC_24_BOLD);
-    if (prv_label_width(menu, ctx, i, font) > right - left - 12) {
-      // Too long: a step smaller
-      points = 18;
-      font = fonts_get_system_font(FONT_KEY_GOTHIC_18_BOLD);
-    }
-
-    const GRect pill =
-        GRect(left + shift, center_y - (ROW_PILL_HEIGHT / 2), right - left, ROW_PILL_HEIGHT);
+    // Too long: a step smaller
+    const PillActionMenuFont *font =
+        (prv_label_width(menu, ctx, i) > right - left - 12) ? &menu->small_font : &menu->font;
+    const GRect pill = GRect(left + shift, center_y - (pill_height / 2), right - left, pill_height);
     if (i == selected) {
       graphics_context_set_fill_color(ctx, menu->color);
-      graphics_fill_round_rect(ctx, &pill, ROW_PILL_HEIGHT / 2, GCornersAll);
+      graphics_fill_round_rect(ctx, &pill, pill_height / 2, GCornersAll);
       graphics_context_set_text_color(ctx, menu->text_color);
     } else {
       graphics_context_set_text_color(ctx, menu->foreground);
     }
     // Gothic draws its letters about a quarter of its size below the top of the box
-    graphics_draw_text(
-        ctx, text, font,
-        GRect(pill.origin.x + 8, center_y - (points * 7 / 10), pill.size.w - 16, points + 8),
-        GTextOverflowModeTrailingEllipsis, GTextAlignmentCenter, nullptr);
+    graphics_draw_text(ctx, level->items[i].label ?: "", font->font,
+                       GRect(pill.origin.x + 8, center_y - (font->points * 7 / 10),
+                             pill.size.w - 16, font->points + 8),
+                       GTextOverflowModeTrailingEllipsis, GTextAlignmentCenter, nullptr);
   }
 }
 
 //! The selected row's content, as the menu draws it highlighted, where the row is now, within
 //! \a clip: it stays in the highlight colours inside the morphing shape as the menu slides away
 static void prv_draw_row_content(PillActionMenu *menu, GContext *ctx, GRect clip, int16_t shift) {
-  MenuLayer *menu_layer = menu->menu_layer;
+  MenuLayer *menu_layer = menu->row.menu_layer;
   if (!menu_layer->callbacks.draw_row) {
     return;
   }
   const GDrawState prev_state = graphics_context_get_drawing_state(ctx);
-  const GRect row = menu->row_frame;
+  const GRect row = menu->row.frame;
   Layer cell = {
     .frame = GRect(0, 0, row.size.w, row.size.h),
     .bounds = GRect(0, 0, row.size.w, row.size.h),
@@ -328,31 +383,19 @@ static void prv_fill_shape(GContext *ctx, const MenuRoundShape *shape) {
   graphics_release_frame_buffer(ctx, framebuffer);
 }
 
-static void prv_update_proc(Layer *layer, GContext *ctx) {
-  PillActionMenu *menu = (PillActionMenu *)((uint8_t *)layer - offsetof(PillActionMenu, layer));
-  const GRect bounds = layer->bounds;
-  const int32_t e = interpolate_ease_out_overshoot(menu->progress);
-
-  // The actions come in from the right behind a sweeping edge, as the menu slides out to the left
-  graphics_context_set_fill_color(ctx, menu->background);
-  const int32_t edge = PBL_MAX(PBL_DISPLAY_WIDTH - (PBL_DISPLAY_WIDTH * e / 1000), 0);
-  if (edge < bounds.size.w) {
-    graphics_fill_rect(ctx, &GRect(edge, 0, bounds.size.w - edge, bounds.size.h));
-  }
-  prv_draw_rows(menu, ctx, (int16_t)(PBL_DISPLAY_WIDTH * (1000 - e) / 1000));
-
-  // The row's pill moves left and morphs into the circle, a single shape on every frame
+//! The row's pill moves left and morphs into the circle, a single shape on every frame
+static void prv_draw_row_morph(PillActionMenu *menu, GContext *ctx, int32_t e) {
   const MenuRoundShape bubble = prv_bubble();
-  const MenuRoundShape shape = menu_round_morph(&menu->row_pill, &bubble, e);
+  const MenuRoundShape shape = menu_round_morph(&menu->row.pill, &bubble, e);
   graphics_context_set_fill_color(ctx, menu->color);
   prv_fill_shape(ctx, &shape);
   // The row's content stays in the highlight colours inside the shape, in bands narrowed to its
   // round ends, so none of it shows over the background beside them
   const GRect box = shape.box;
   const int32_t r = shape.radius;
-  const int16_t row_top = menu->row_frame.origin.y;
-  const int16_t row_bottom = grect_get_max_y(&menu->row_frame);
-  const int16_t band_h = (menu->row_frame.size.h + CONTENT_BANDS - 1) / CONTENT_BANDS;
+  const int16_t row_top = menu->row.frame.origin.y;
+  const int16_t row_bottom = grect_get_max_y(&menu->row.frame);
+  const int16_t band_h = (menu->row.frame.size.h + CONTENT_BANDS - 1) / CONTENT_BANDS;
   for (int16_t y0 = row_top; y0 < row_bottom; y0 += band_h) {
     const int16_t top = PBL_MAX(y0, box.origin.y);
     const int16_t bottom = PBL_MIN(PBL_MIN(y0 + band_h, row_bottom), grect_get_max_y(&box));
@@ -369,11 +412,54 @@ static void prv_update_proc(Layer *layer, GContext *ctx) {
   }
 
   // The icon grows in from the pill's left end to where the circle holds it
-  const GPoint from = GPoint(menu->row_pill.box.origin.x + menu->row_pill.radius,
-                             menu->row_pill.box.origin.y + (menu->row_pill.box.size.h / 2));
+  const GPoint from = GPoint(menu->row.pill.box.origin.x + menu->row.pill.radius,
+                             menu->row.pill.box.origin.y + (menu->row.pill.box.size.h / 2));
   const GPoint to = GPoint(BUBBLE_CENTER_X + BUBBLE_ICON_INSET, CENTER_Y);
   prv_draw_icon(menu, ctx, GPoint(prv_lerp(from.x, to.x, e), prv_lerp(from.y, to.y, e)),
                 PBL_CLAMP(e, 0, 1000));
+}
+
+//! The banner swings around the screen centre from the top to the left edge
+static void prv_draw_banner_swing(PillActionMenu *menu, GContext *ctx, int32_t e) {
+  const int32_t angle = prv_lerp(menu->banner.angle, TRIG_MAX_ANGLE / 2, e);
+  const int32_t distance = prv_lerp(menu->banner.distance, CENTER_X - BUBBLE_CENTER_X, e);
+  const int32_t radius = PBL_MAX(prv_lerp(menu->banner.radius, BUBBLE_RADIUS, e), 1);
+  const int32_t cos_a = cos_lookup(angle);
+  const int32_t sin_a = sin_lookup(angle);
+  const GPoint center = GPoint(CENTER_X + cos_a * distance / TRIG_MAX_RATIO,
+                               CENTER_Y + sin_a * distance / TRIG_MAX_RATIO);
+  graphics_context_set_fill_color(ctx, menu->color);
+  graphics_fill_circle(ctx, center, (uint16_t)radius);
+
+  // The icon sits on the side of the circle facing the screen centre, so it turns with it
+  const int32_t inset = prv_lerp(menu->banner.icon_inset, BUBBLE_ICON_INSET, e);
+  const GPoint icon_center =
+      GPoint(center.x - cos_a * inset / TRIG_MAX_RATIO, center.y - sin_a * inset / TRIG_MAX_RATIO);
+  prv_draw_icon(menu, ctx, icon_center, PBL_MIN((radius - 6) * 1000 / 24, 1000));
+}
+
+static void prv_update_proc(Layer *layer, GContext *ctx) {
+  PillActionMenu *menu = (PillActionMenu *)((uint8_t *)layer - offsetof(PillActionMenu, layer));
+  const GRect bounds = layer->bounds;
+  const int32_t e = prv_eased(menu);
+
+  // The actions come in from the right behind a sweeping edge, as what was there slides out to
+  // the left; a banner on it is covered, as it is now the circle
+  graphics_context_set_fill_color(ctx, menu->background);
+  if (menu->from_banner && (menu->banner.cover_bottom >= 0)) {
+    graphics_fill_rect(ctx, &GRect(0, 0, bounds.size.w, menu->banner.cover_bottom + 1));
+  }
+  const int32_t edge = PBL_MAX(PBL_DISPLAY_WIDTH - (PBL_DISPLAY_WIDTH * e / 1000), 0);
+  if (edge < bounds.size.w) {
+    graphics_fill_rect(ctx, &GRect(edge, 0, bounds.size.w - edge, bounds.size.h));
+  }
+  prv_draw_rows(menu, ctx, (int16_t)(PBL_DISPLAY_WIDTH * (1000 - e) / 1000));
+
+  if (menu->from_banner) {
+    prv_draw_banner_swing(menu, ctx, e);
+  } else {
+    prv_draw_row_morph(menu, ctx, e);
+  }
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -413,7 +499,7 @@ static void prv_touch_drag(PillActionMenu *menu) {
   }
   // Finger up moves down the list, a row per row height
   const int16_t dy = pan_recognizer_get_total_delta(state->widget_pan).y;
-  const int16_t rows = -dy / ROW_HEIGHT;
+  const int16_t rows = -dy / menu->row_height;
   if (rows != menu->drag_rows_applied) {
     prv_move(menu, rows - menu->drag_rows_applied);
     menu->drag_rows_applied = rows;
@@ -434,12 +520,13 @@ static void prv_touch_tap(void *w, GPoint point) {
   if (!prv_accepts_input(menu)) {
     return;
   }
+  const int16_t row_height = menu->row_height;
   const int32_t from_first =
-      point.y - CENTER_Y + (EDGE_ROWS * ROW_HEIGHT) + menu->list_pos + (ROW_HEIGHT / 2);
+      point.y - CENTER_Y + (EDGE_ROWS * row_height) + menu->list_pos + (row_height / 2);
   if ((from_first < 0) || (point.x < TEXT_LEFT - TAP_SLACK_PX)) {
     return;
   }
-  const int32_t index = from_first / ROW_HEIGHT;
+  const int32_t index = from_first / row_height;
   if (index < prv_count(menu)) {
     prv_activate(menu, (uint16_t)index);
   }
@@ -506,11 +593,20 @@ static void prv_unschedule(Animation **animation) {
   }
 }
 
-//! Slides the window's content, the menu among it, left in step with the edge the actions come in
-//! behind, keeping the action menu's own layer in place
-static void prv_slide_window(PillActionMenu *menu) {
-  const int32_t e = interpolate_ease_out_overshoot(menu->progress);
-  const int16_t offset = (int16_t)(PBL_DISPLAY_WIDTH * e / 1000);
+//! Slides what the menu opened from left, in step with the edge the actions come in behind: the
+//! card, or the window's content with the menu among it, keeping the action menu's own layer in
+//! place
+static void prv_slide(PillActionMenu *menu) {
+  const int16_t offset = (int16_t)(PBL_DISPLAY_WIDTH * prv_eased(menu) / 1000);
+  if (menu->from_banner) {
+    Layer *card = menu->banner.card;
+    if (card) {
+      GRect frame = card->frame;
+      frame.origin.x = menu->banner.card_x - offset;
+      layer_set_frame(card, &frame);
+    }
+    return;
+  }
   Layer *root = window_get_root_layer(menu->window);
   GRect bounds = root->bounds;
   bounds.origin.x = -offset;
@@ -524,8 +620,10 @@ static void prv_destroy(PillActionMenu *menu) {
   prv_unschedule(&menu->glide);
   prv_unschedule(&menu->motion);
   menu->progress = 0;
-  prv_slide_window(menu);
-  menu_layer_set_round_pill_hidden(menu->menu_layer, false);
+  prv_slide(menu);
+  if (!menu->from_banner) {
+    menu_layer_set_round_pill_hidden(menu->row.menu_layer, false);
+  }
   prv_touch_deregister(menu);
   layer_remove_from_parent(&menu->layer);
   layer_deinit(&menu->layer);
@@ -545,7 +643,7 @@ static void prv_motion_update(Animation *animation, const AnimationProgress p) {
   PillActionMenu *menu = animation_get_context(animation);
   menu->progress = menu->motion_from +
                    (menu->motion_to - menu->motion_from) * (int32_t)p / ANIMATION_NORMALIZED_MAX;
-  prv_slide_window(menu);
+  prv_slide(menu);
   layer_mark_dirty(&menu->layer);
 }
 
@@ -556,7 +654,7 @@ static void prv_motion_stopped(Animation *animation, bool finished, void *contex
   }
   menu->motion = nullptr;
   menu->progress = menu->motion_to;
-  prv_slide_window(menu);
+  prv_slide(menu);
   if (menu->closing) {
     prv_destroy(menu);
   } else {
@@ -587,7 +685,7 @@ static void prv_run_motion(PillActionMenu *menu, int32_t to) {
   }
   // No animation: jump to the end
   menu->progress = to;
-  prv_slide_window(menu);
+  prv_slide(menu);
   if (menu->closing) {
     prv_destroy(menu);
   }
@@ -621,7 +719,7 @@ static void prv_notify_level(PillActionMenu *menu, const ActionMenuItem *item) {
 static void prv_selection_changed(PillActionMenu *menu, bool animated) {
   prv_notify_level(menu, &prv_level(menu)->items[prv_selected(menu)]);
   const int32_t target =
-      menu_round_list_scroll(prv_selected(menu), prv_count(menu), ROW_HEIGHT, EDGE_ROWS);
+      menu_round_list_scroll(prv_selected(menu), prv_count(menu), menu->row_height, EDGE_ROWS);
   prv_unschedule(&menu->glide);
   layer_mark_dirty(&menu->layer);
   if (animated && (target != menu->list_pos)) {
@@ -751,16 +849,21 @@ static void prv_click_config_provider(void *context) {
 // ---------------------------------------------------------------------------------------------
 // Open / close
 
-//! The action menu is closing: play the opening backwards, into the pill of the row the menu has
-//! selected now, which may have changed with what the action did
+//! The action menu is closing: play the opening backwards, out of a menu into the pill of the
+//! row it has selected now, which may have changed with what the action did. Not animated, it
+//! goes at once, also while it was playing that.
 static void prv_host_close(ActionMenu *action_menu, bool animated, void *context) {
   PillActionMenu *menu = context;
   menu->closing = true;
+  // A banner swings back as it swung out; closed mid-opening, it turns back on the same curve
+  menu->closing_bounces = menu->from_banner && (menu->progress >= 1000);
   if (!animated) {
     prv_destroy(menu);
     return;
   }
-  prv_capture_row(menu);
+  if (!menu->from_banner) {
+    prv_capture_row(menu);
+  }
   prv_run_motion(menu, 0);
 }
 
@@ -768,49 +871,47 @@ static const ActionMenuHost s_host = {
   .close = prv_host_close,
 };
 
-ActionMenu *pill_action_menu_open(const PillActionMenuConfig *config,
-                                  ActionMenuConfig *menu_config) {
+//! Opens the action menu of \a menu_config over \a setup's window, set up as \a setup is, with
+//! its result windows on \a window_stack. Takes \a icon, NULL for none.
+static ActionMenu *prv_open(const PillActionMenu *setup, WindowStack *window_stack,
+                            PillActionMenuOpenHosted open_hosted, ActionMenuConfig *menu_config,
+                            GDrawCommandImage *icon) {
   const ActionMenuLevel *root = menu_config->root_level;
-  Window *window = config->window;
-  if (!root || (root->num_items == 0) || !window) {
-    return nullptr;
+  Window *window = setup->window;
+  PillActionMenu *menu = nullptr;
+  ActionMenu *action_menu = nullptr;
+  if (root && (root->num_items > 0) && window) {
+    menu = applib_zalloc(sizeof(PillActionMenu));
   }
-  PillActionMenu *menu = applib_zalloc(sizeof(PillActionMenu));
-  if (!menu) {
-    return nullptr;
+  if (menu) {
+    action_menu =
+        (open_hosted ?: action_menu_open_hosted)(window_stack, menu_config, &s_host, menu);
   }
-  ActionMenu *action_menu =
-      action_menu_open_hosted(window->parent_window_stack, menu_config, &s_host, menu);
   if (!action_menu) {
     applib_free(menu);
+    gdraw_command_image_destroy(icon);
     return nullptr;
   }
-  MenuLayer *menu_layer = config->menu_layer;
-  *menu = (PillActionMenu){
-    .action_menu = action_menu,
-    .window = window,
-    .menu_layer = menu_layer,
-    .open = true,
-    .color = menu_layer->highlight_colors[MenuLayerColorBackground],
-    .text_color = menu_layer->highlight_colors[MenuLayerColorForeground],
-    .background = menu_layer->normal_colors[MenuLayerColorBackground],
-    .foreground = menu_layer->normal_colors[MenuLayerColorForeground],
-    .window_click_config = window->click_config_provider,
-    .window_click_context = window->click_config_context,
-    .window_overrides_back = window->overrides_back_button,
-  };
-  menu->icon = gdraw_command_image_create_with_resource(config->icon_resource_id);
-  if (menu->icon) {
-    menu->icon_size = gdraw_command_image_get_data_size(menu->icon);
-    menu->scaled_icon = gdraw_command_image_clone(menu->icon);
+  *menu = *setup;
+  menu->action_menu = action_menu;
+  menu->open = true;
+  menu->window_click_config = window->click_config_provider;
+  menu->window_click_context = window->click_config_context;
+  menu->window_overrides_back = window->overrides_back_button;
+  menu->icon = icon;
+  if (icon) {
+    menu->icon_size = gdraw_command_image_get_data_size(icon);
+    menu->scaled_icon = gdraw_command_image_clone(icon);
   }
   menu->levels[0] = root;
   menu->selected[0] = (uint16_t)PBL_MIN(root->default_selected_item, (unsigned)root->num_items - 1);
   menu->depth = 1;
 
-  prv_capture_row(menu);
-  // The menu's own pill would show under the one that morphs
-  menu_layer_set_round_pill_hidden(menu_layer, true);
+  if (!menu->from_banner) {
+    prv_capture_row(menu);
+    // The menu's own pill would show under the one that morphs
+    menu_layer_set_round_pill_hidden(menu->row.menu_layer, true);
+  }
 
   Layer *root_layer = window_get_root_layer(window);
   layer_init(&menu->layer, &GRect(0, 0, root_layer->frame.size.w, root_layer->frame.size.h));
@@ -821,6 +922,47 @@ ActionMenu *pill_action_menu_open(const PillActionMenuConfig *config,
   prv_touch_register(menu);
   prv_run_motion(menu, 1000);
   return action_menu;
+}
+
+ActionMenu *pill_action_menu_open(const PillActionMenuConfig *config,
+                                  ActionMenuConfig *menu_config) {
+  MenuLayer *menu_layer = config->menu_layer;
+  Window *window = config->window;
+  if (!window) {
+    return nullptr;
+  }
+  const PillActionMenu setup = {
+    .window = window,
+    .color = menu_layer->highlight_colors[MenuLayerColorBackground],
+    .text_color = menu_layer->highlight_colors[MenuLayerColorForeground],
+    .background = menu_layer->normal_colors[MenuLayerColorBackground],
+    .foreground = menu_layer->normal_colors[MenuLayerColorForeground],
+    .font = {fonts_get_system_font(FONT_KEY_GOTHIC_24_BOLD), 24},
+    .small_font = {fonts_get_system_font(FONT_KEY_GOTHIC_18_BOLD), 18},
+    .row_height = 24 + ROW_PADDING,
+    .row.menu_layer = menu_layer,
+  };
+  return prv_open(&setup, window->parent_window_stack, nullptr, menu_config,
+                  gdraw_command_image_create_with_resource(config->icon_resource_id));
+}
+
+ActionMenu *pill_action_menu_open_from_banner(const PillActionMenuBannerConfig *config,
+                                              ActionMenuConfig *menu_config) {
+  PillActionMenu setup = {
+    .window = config->window,
+    .from_banner = true,
+    .color = config->color,
+    .text_color = config->text_color,
+    .background = config->background,
+    .foreground = config->foreground,
+    .font = config->font,
+    .small_font = config->small_font,
+    .row_height = config->font.points + ROW_PADDING,
+  };
+  prv_capture_banner(&setup, &config->banner);
+  const AppResourceInfo *icon = &config->banner.icon;
+  return prv_open(&setup, config->window_stack, config->open_hosted, menu_config,
+                  gdraw_command_image_create_with_resource_system(icon->res_app_num, icon->res_id));
 }
 
 #endif // PBL_ROUND
