@@ -321,6 +321,24 @@ void test_timeline_actions__dismiss_all_stored_empty(void) {
 // Item action menus
 ///////////////////////////
 
+static TimelineItemAction s_open_app_action = {
+  .id = 0,
+  .type = TimelineItemActionTypeOpenWatchApp,
+  .attr_list = (AttributeList){
+    .num_attributes = 1, .attributes = (Attribute[1]){{.id = AttributeIdTitle, .cstring = "More"}}
+  }
+};
+
+static TimelineItemAction s_remote_remove_action = {
+  .id = 1,
+  .type = TimelineItemActionTypeRemoteRemove,
+};
+
+static TimelineItemAction s_generic_action = {
+  .id = 2,
+  .type = TimelineItemActionTypeGeneric,
+};
+
 static TimelineItem prv_item(TimelineItemType type, LayoutId layout, TimelineItemAction *actions,
                              uint8_t num_actions) {
   return (TimelineItem){
@@ -333,8 +351,32 @@ static TimelineItem prv_item(TimelineItemType type, LayoutId layout, TimelineIte
 void test_timeline_actions__item_menu_never_empty(void) {
   TimelineItem pin = prv_item(TimelineItemTypePin, LayoutIdGeneric, nullptr, 0);
   cl_assert(timeline_actions_has_item_menu(&pin));
+  cl_assert(!timeline_actions_perform_sole_action(&pin));
 
   TimelineItem notification =
       prv_item(TimelineItemTypeNotification, LayoutIdNotification, nullptr, 0);
   cl_assert(!timeline_actions_has_item_menu(&notification));
+}
+
+// A single action that only opens something is performed without a menu
+void test_timeline_actions__sole_opening_action(void) {
+  TimelineItem weather = prv_item(TimelineItemTypePin, LayoutIdWeather, &s_open_app_action, 1);
+  cl_assert(timeline_actions_perform_sole_action(&weather));
+
+  TimelineItem generic = prv_item(TimelineItemTypePin, LayoutIdGeneric, &s_generic_action, 1);
+  cl_assert(!timeline_actions_perform_sole_action(&generic));
+
+  TimelineItem remove = prv_item(TimelineItemTypePin, LayoutIdGeneric, &s_remote_remove_action, 1);
+  cl_assert(!timeline_actions_perform_sole_action(&remove));
+}
+
+// Calendar pins always offer Remove, so a single phone action still opens the menu
+void test_timeline_actions__calendar_remove(void) {
+  TimelineItem calendar = prv_item(TimelineItemTypePin, LayoutIdCalendar, &s_open_app_action, 1);
+  cl_assert(timeline_actions_has_item_menu(&calendar));
+  cl_assert(!timeline_actions_perform_sole_action(&calendar));
+
+  TimelineItemAction actions[] = {s_open_app_action, s_remote_remove_action};
+  TimelineItem with_remove = prv_item(TimelineItemTypePin, LayoutIdCalendar, actions, 2);
+  cl_assert(!timeline_actions_perform_sole_action(&with_remove));
 }
