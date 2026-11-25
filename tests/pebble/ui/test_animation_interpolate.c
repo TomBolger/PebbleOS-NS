@@ -3,6 +3,7 @@
 
 #include <stdio.h>
 
+#include <pbl/util/math.h>
 #include <pbl/util/size.h>
 
 #include <applib/ui/animation.h>
@@ -132,4 +133,21 @@ void test_animation_interpolate__moook_custom(void) {
 
   cl_assert_equal_i(
       20000, interpolate_moook_custom(ANIMATION_NORMALIZED_MAX, -20000, 20000, &s_custom_moook));
+}
+
+void test_animation_interpolate__ease_out_overshoot(void) {
+  cl_assert_equal_i(interpolate_ease_out_overshoot(0), 0);
+  cl_assert_equal_i(interpolate_ease_out_overshoot(1000), 1000);
+  // The round menus' and banners' curve, exactly
+  cl_assert_equal_i(interpolate_ease_out_overshoot(100), 369);
+  cl_assert_equal_i(interpolate_ease_out_overshoot(250), 748);
+  cl_assert_equal_i(interpolate_ease_out_overshoot(500), 1025);
+  cl_assert_equal_i(interpolate_ease_out_overshoot(750), 1041);
+  cl_assert_equal_i(interpolate_ease_out_overshoot(900), 1010);
+  // It overshoots on the way and settles back
+  int32_t peak = 0;
+  for (int32_t t = 0; t <= 1000; t++) {
+    peak = PBL_MAX(peak, interpolate_ease_out_overshoot(t));
+  }
+  cl_assert_equal_i(peak, 1055);
 }
