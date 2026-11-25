@@ -55,6 +55,10 @@ bool PBL_WEAK timeline_actions_has_item_menu(const TimelineItem *item) {
   return false;
 }
 
+bool PBL_WEAK timeline_actions_perform_sole_action(const TimelineItem *item) {
+  return false;
+}
+
 ActionMenuLevel *PBL_WEAK timeline_actions_create_item_root_level(TimelineItem *item,
                                                                   TimelineItemActionSource source) {
   return nullptr;
