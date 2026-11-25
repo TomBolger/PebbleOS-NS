@@ -704,9 +704,8 @@ static GRangeHorizontal prv_list_perimeter(const GPerimeter *perimeter, const GS
     return (GRangeHorizontal){};
   }
   int16_t end;
-  const int16_t start =
-      timeline_list_arc_drawn_range(pin_perimeter->arc, rows.origin_y, rows.origin_y + rows.size_h,
-                                    pin_perimeter->dy, &end);
+  const int16_t start = timeline_list_arc_drawn_range(
+      pin_perimeter->arc, rows.origin_y, rows.origin_y + rows.size_h, pin_perimeter->dy, &end);
   if (end <= start) {
     return (GRangeHorizontal){};
   }
@@ -1199,8 +1198,8 @@ static void prv_list_place_day_sep_before(TimelineLayer *layer) {
   prv_get_day_sep_frame(layer, 2, &frame);
   const int16_t dot_diameter = prv_get_style()->day_sep_dot_diameter;
   // The dot is drawn in the middle of the frame
-  const int16_t dot_y = prv_list_next_is_down(layer) ? -dot_diameter
-                                                     : (layer->layer.bounds.size.h + dot_diameter);
+  const int16_t dot_y =
+      prv_list_next_is_down(layer) ? -dot_diameter : (layer->layer.bounds.size.h + dot_diameter);
   frame.origin.y = dot_y - frame.size.h / 2;
   layer_set_frame((Layer *)&layer->day_separator, &frame);
 }
