@@ -66,15 +66,18 @@ void notifications_presented_list_remove(Uuid *id) {
   pbl_free(node);
 }
 
-static NotifList *prv_add_notification_common(Uuid *id, NotificationType type) {
-  notifications_presented_list_remove(id);
-
+static NotifList *prv_create_entry(Uuid *id, NotificationType type) {
   NotifList *new_entry = pbl_malloc_check(sizeof(NotifList));
   list_init((ListNode *)new_entry);
   new_entry->notif.type = type;
   new_entry->notif.id = *id;
 
   return new_entry;
+}
+
+static NotifList *prv_add_notification_common(Uuid *id, NotificationType type) {
+  notifications_presented_list_remove(id);
+  return prv_create_entry(id, type);
 }
 
 void notifications_presented_list_add(Uuid *id, NotificationType type) {
@@ -87,7 +90,7 @@ void notifications_presented_list_append(Uuid *id, NotificationType type) {
   if (prv_find_listnode_for_notif(id)) {
     return;
   }
-  NotifList *new_entry = prv_add_notification_common(id, type);
+  NotifList *new_entry = prv_create_entry(id, type);
   if (s_presented_notifs) {
     list_append(&s_presented_notifs->list_node, &new_entry->list_node);
   } else {
