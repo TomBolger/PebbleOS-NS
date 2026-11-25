@@ -77,6 +77,10 @@ GPoint health_orbit_bubble_center(GSize display, int16_t offset, int32_t turn);
 //! \a offset along the orbit taken the shorter way round, from minus to plus half its length.
 int16_t health_orbit_wrap_offset(int16_t offset);
 
+//! Angle round the sidebar's center from its middle row to where its edge meets the edge of the
+//! \a display, above and below: as far as a line from its center turns across what shows of it.
+int32_t health_orbit_sidebar_reach(GSize display);
+
 //! Where text runs across the rows from \a top to \a bottom inside a ring whose inside is
 //! \a inner_radius from the middle of the \a display, clear of the sidebar; none on rows that are
 //! not all inside the ring.

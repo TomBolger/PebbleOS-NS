@@ -246,13 +246,13 @@ void test_health_orbit_view__wrap_keeps_turning_the_same_way(void) {
   prv_render(&s_data, HealthOrbitSectionToday);
   // Up on the first section turns on round counterclockwise to the last
   prv_animate_section(s_view, HealthOrbitSectionSleep, false /* down */);
-  cl_assert(s_view->orbit_target < 0);
+  cl_assert(s_view->orbit_target < s_view->orbit_from);
   cl_assert_equal_i(s_view->orbit_target + HEALTH_ORBIT_LENGTH,
                     HealthOrbitSectionSleep * HEALTH_ORBIT_STEP);
   prv_rest(s_view);
   // Down on the last turns on round clockwise to the first
   prv_animate_section(s_view, HealthOrbitSectionToday, true /* down */);
-  cl_assert(s_view->orbit_target > HealthOrbitSectionSleep * HEALTH_ORBIT_STEP);
+  cl_assert(s_view->orbit_target > s_view->orbit_from);
   cl_assert_equal_i(s_view->orbit_target - HEALTH_ORBIT_LENGTH, 0);
   prv_rest(s_view);
   cl_assert_equal_i(s_view->orbit_offset, 0);

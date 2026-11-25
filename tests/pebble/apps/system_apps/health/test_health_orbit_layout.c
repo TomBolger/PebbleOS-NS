@@ -141,6 +141,21 @@ void test_health_orbit_layout__orbit_goes_all_the_way_round(void) {
                     2 * HEALTH_ORBIT_STEP);
 }
 
+void test_health_orbit_layout__sidebar_reach(void) {
+  // Where a line from the sidebar's center at the reach meets its edge is on the display's edge
+  const int32_t reach = health_orbit_sidebar_reach(DISPLAY);
+  const GPoint center = health_orbit_center(DISPLAY, 0);
+  for (int side = -1; side <= 1; side += 2) {
+    const GPoint edge =
+        GPoint(center.x - (HEALTH_ORBIT_RADIUS * cos_lookup(reach)) / TRIG_MAX_RATIO,
+               center.y + side * (HEALTH_ORBIT_RADIUS * sin_lookup(reach)) / TRIG_MAX_RATIO);
+    cl_assert(PBL_ABS(prv_distance(edge, GPoint(PBL_DISPLAY_WIDTH / 2, MID_Y)) -
+                      PBL_DISPLAY_WIDTH / 2) <= 1);
+  }
+  // Less than a quarter turn, as the sidebar's center is off the display
+  cl_assert(reach > 0 && reach < QUARTER);
+}
+
 void test_health_orbit_layout__banner_bubble_is_centered_in_the_banner(void) {
   // Turned up into the banner, the selected bubble is as far from the top of the display as from
   // the banner's edge, across its width

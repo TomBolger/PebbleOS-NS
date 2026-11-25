@@ -85,6 +85,18 @@ int16_t health_orbit_wrap_offset(int16_t offset) {
   return wrapped;
 }
 
+int32_t health_orbit_sidebar_reach(GSize display) {
+  // The triangle of the two centers and where the circles meet, in half pixels
+  const GPoint center = health_orbit_center(display, 0);
+  const int64_t d = 2 * center.x - (display.w - 1);
+  const int64_t r = 2 * HEALTH_ORBIT_RADIUS;
+  const int64_t display_r = display.w;
+  // Along the line between the centers from the sidebar's, and across it, to where they meet
+  const int64_t along = (d * d + r * r - display_r * display_r) / (2 * d);
+  const int64_t across = (along < r) ? integer_sqrt(r * r - along * along) : 0;
+  return atan2_lookup((int16_t)across, (int16_t)along);
+}
+
 GRangeHorizontal health_orbit_text_range(GSize display, int16_t inner_radius, int16_t top,
                                          int16_t bottom) {
   const TimelineListArc arc = prv_arc(display, inner_radius);
