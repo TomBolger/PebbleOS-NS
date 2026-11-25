@@ -150,22 +150,6 @@ bool alerts_preferences_get_notification_dismissal_sync(void);
 void alerts_preferences_set_notification_dismissal_sync(bool enable);
 
 /**
- * @brief Get whether notifications are stacked by app in history, as the phone does.
- *
- * Takes precedence over grouping by sender.
- *
- * @return true if enabled (default), false otherwise.
- */
-bool alerts_preferences_get_notification_group_by_app(void);
-
-/**
- * @brief Set whether notifications are stacked by app in history.
- *
- * @param enable true to enable.
- */
-void alerts_preferences_set_notification_group_by_app(bool enable);
-
-/**
  * @brief Get whether the notification history is split into the phone's sections
  * (Conversations, Notifications, Silent and its categories).
  *
@@ -215,12 +199,44 @@ typedef enum {
  */
 NotificationGroupingRange alerts_preferences_get_notification_grouping_range(void);
 
+/** @brief What notifications the phone doesn't stack are stacked by in history. */
+typedef enum {
+  /** The app that posted them, as the phone does (default). */
+  NotificationGroupBy_App = 0,
+  /** Their sender, within the grouping range; Android only. */
+  NotificationGroupBy_Sender,
+  /** Nothing: they are listed one by one. */
+  NotificationGroupBy_Off,
+  /** Number of choices. */
+  NotificationGroupByCount,
+} NotificationGroupBy;
+
 /**
- * @brief Set the notification grouping range.
+ * @brief Get what notifications are stacked by in history.
  *
- * @param range Grouping range.
+ * Stored as notifGroupByApp and the grouping range, so a sender range set before this
+ * preference existed reads as NotificationGroupBy_Sender.
+ *
+ * @return What notifications are stacked by.
  */
-void alerts_preferences_set_notification_grouping_range(NotificationGroupingRange range);
+NotificationGroupBy alerts_preferences_get_notification_group_by(void);
+
+/**
+ * @brief Set what notifications are stacked by in history.
+ *
+ * Choosing NotificationGroupBy_Sender keeps the stored grouping range, or groups notifications of
+ * any age if there is none.
+ *
+ * @param group_by What notifications are stacked by.
+ */
+void alerts_preferences_set_notification_group_by(NotificationGroupBy group_by);
+
+/**
+ * @brief Get whether notifications are stacked by app in history.
+ *
+ * @return true if alerts_preferences_get_notification_group_by() is NotificationGroupBy_App.
+ */
+bool alerts_preferences_get_notification_group_by_app(void);
 
 /** @brief Style of the clock in the notification window status bar. */
 typedef enum {
