@@ -68,6 +68,11 @@ static void prv_port_hole_transition_animation_update(GContext *ctx, Animation *
                                    PBL_DISPLAY_HEIGHT);
 
     compositor_scaled_app_fb_copy(rect, false /* copy_relative_to_origin */);
+    // Transparent modals, e.g. the timeline peek, are part of the frame being revealed
+    const GPoint drawing_box_origin = ctx->draw_state.drawing_box.origin;
+    gpoint_add_eq(&ctx->draw_state.drawing_box.origin, rect.origin);
+    compositor_render_modal();
+    ctx->draw_state.drawing_box.origin = drawing_box_origin;
   } else {
     // First half of the transition
     const int16_t diff = s_data.animation_offset_px - current_offset_px;
@@ -93,6 +98,7 @@ const CompositorTransition *compositor_port_hole_transition_app_get(
   static const CompositorTransition s_impl = {
     .init = prv_port_hole_transition_animation_init,
     .update = prv_port_hole_transition_animation_update,
+    .skip_modal_render_after_update = true, // Modals are rendered under the ring
   };
 
   return &s_impl;
