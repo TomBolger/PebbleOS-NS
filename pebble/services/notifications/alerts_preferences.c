@@ -115,6 +115,9 @@ static bool s_notification_respect_phone_silence = false;
 #define PREF_KEY_NOTIF_DISMISSAL_SYNC "notifDismissalSync"
 static bool s_notification_dismissal_sync = false;
 
+// Written to ask the phone to check the notifications the watch holds; never read back.
+#define PREF_KEY_NOTIF_SYNC_REQUEST "notifSyncRequest"
+
 // With the grouping range, the Group by preference: App, else Sender if a range is set, else Off.
 #define PREF_KEY_NOTIF_GROUP_BY_APP "notifGroupByApp"
 static bool s_notification_group_by_app = true;
@@ -618,6 +621,10 @@ bool alerts_preferences_get_notification_dismissal_sync(void) {
 void alerts_preferences_set_notification_dismissal_sync(bool enable) {
   s_notification_dismissal_sync = enable;
   SET_PREF(PREF_KEY_NOTIF_DISMISSAL_SYNC, s_notification_dismissal_sync);
+}
+
+void alerts_preferences_set_notification_sync_request(const void *request, size_t length) {
+  prv_set_pref(PREF_KEY_NOTIF_SYNC_REQUEST, strlen(PREF_KEY_NOTIF_SYNC_REQUEST), request, length);
 }
 
 NotificationGroupBy alerts_preferences_get_notification_group_by(void) {
