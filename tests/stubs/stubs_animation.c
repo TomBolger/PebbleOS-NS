@@ -270,3 +270,7 @@ InterpolateInt64Function PBL_WEAK animation_private_current_interpolate_override
 void PBL_WEAK property_animation_update_int16(PropertyAnimation *property_animation,
                                               const uint32_t distance_normalized) {
 }
+
+void PBL_WEAK property_animation_update_uint32(PropertyAnimation *property_animation,
+                                               const uint32_t distance_normalized) {
+}
