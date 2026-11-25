@@ -1245,17 +1245,8 @@ SwapTouchLiftoffAction swap_layer_touch_liftoff_action(int16_t base_offset, int1
   return SwapTouchLiftoff_Settle;
 }
 
-int16_t swap_layer_touch_settle_offset(int16_t base_offset, int16_t delta_y, int16_t max_dy,
-                                       int16_t page_h) {
-  int16_t target = PBL_CLAMP(base_offset - delta_y, 0, max_dy);
-  if (page_h > 0) {
-    // Land on the nearest page boundary, never past the last one (max_dy may include the
-    // next-notification peek, which is not a rest position).
-    const int16_t last_page = (int16_t)((max_dy / page_h) * page_h);
-    target = (int16_t)(((target + page_h / 2) / page_h) * page_h);
-    target = PBL_MIN(target, last_page);
-  }
-  return target;
+int16_t swap_layer_touch_settle_offset(int16_t base_offset, int16_t delta_y, int16_t max_dy) {
+  return PBL_CLAMP(base_offset - delta_y, 0, max_dy);
 }
 
 static uint32_t prv_now_ms(void) {
@@ -1448,7 +1439,7 @@ static void prv_swap_ops_pan_cancel(void *w) {
   swap_layer->touch.edge = false;
   const int16_t cur = prv_get_current_notification_offset(swap_layer);
   const int16_t max_dy = prv_get_max_scroll_dy(swap_layer);
-  const int16_t target = swap_layer_touch_settle_offset(cur, 0, max_dy, 0 /* page_h */);
+  const int16_t target = swap_layer_touch_settle_offset(cur, 0, max_dy);
   prv_scroll(swap_layer, cur - target, AnimationCurveEaseOut);
 }
 

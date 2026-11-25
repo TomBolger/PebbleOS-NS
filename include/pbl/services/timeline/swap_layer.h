@@ -362,14 +362,10 @@ SwapTouchLiftoffAction swap_layer_touch_liftoff_action(int16_t base_offset, int1
                                                        int16_t max_dy);
 
 /*
- * Test seam: the offset a Settle liftoff (or a cancelled pan) animates to. The raw target is
- * clamp(base_offset - delta_y, 0, max_dy); with page_h > 0 it is then quantized to the nearest
- * page boundary, never past the last whole page below max_dy (which may include the
- * next-notification peek). Cards are laid out in a fixed column on both shapes, so the swap
- * layer passes 0 and settles freely.
+ * Test seam: the offset a cancelled pan animates back to, clamp(base_offset - delta_y, 0,
+ * max_dy).
  */
-int16_t swap_layer_touch_settle_offset(int16_t base_offset, int16_t delta_y, int16_t max_dy,
-                                       int16_t page_h);
+int16_t swap_layer_touch_settle_offset(int16_t base_offset, int16_t delta_y, int16_t max_dy);
 
 /*
  * Test seam: the finger velocity in px/s (positive is down) at release_ms, from the samples
