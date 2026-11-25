@@ -115,6 +115,7 @@ static bool s_notification_respect_phone_silence = false;
 #define PREF_KEY_NOTIF_DISMISSAL_SYNC "notifDismissalSync"
 static bool s_notification_dismissal_sync = false;
 
+// With the grouping range, the Group by preference: App, else Sender if a range is set, else Off.
 #define PREF_KEY_NOTIF_GROUP_BY_APP "notifGroupByApp"
 static bool s_notification_group_by_app = true;
 
@@ -502,6 +503,13 @@ void alerts_preferences_init(void) {
   RESTORE_PREF(PREF_KEY_DND_AUTO_DISMISS, s_dnd_auto_dismiss);
 #undef RESTORE_PREF
 
+  // A sender range chosen before Group by existed still groups by sender
+  if (!pbl_settings_exists(&file, PREF_KEY_NOTIF_GROUP_BY_APP,
+                           strlen(PREF_KEY_NOTIF_GROUP_BY_APP))) {
+    s_notification_group_by_app =
+        (alerts_preferences_get_notification_grouping_range() == NotificationGroupingRange_Never);
+  }
+
   prv_migrate_legacy_dnd_schedule(&file);
   prv_migrate_notification_content_size(&file);
   prv_migrate_dnd_schedule_slots(&file);
@@ -612,13 +620,33 @@ void alerts_preferences_set_notification_dismissal_sync(bool enable) {
   SET_PREF(PREF_KEY_NOTIF_DISMISSAL_SYNC, s_notification_dismissal_sync);
 }
 
-bool alerts_preferences_get_notification_group_by_app(void) {
-  return s_notification_group_by_app;
+NotificationGroupBy alerts_preferences_get_notification_group_by(void) {
+  if (s_notification_group_by_app) {
+    return NotificationGroupBy_App;
+  }
+  return (alerts_preferences_get_notification_grouping_range() != NotificationGroupingRange_Never)
+             ? NotificationGroupBy_Sender
+             : NotificationGroupBy_Off;
 }
 
-void alerts_preferences_set_notification_group_by_app(bool enable) {
-  s_notification_group_by_app = enable;
+void alerts_preferences_set_notification_group_by(NotificationGroupBy group_by) {
+  s_notification_group_by_app = (group_by == NotificationGroupBy_App);
   SET_PREF(PREF_KEY_NOTIF_GROUP_BY_APP, s_notification_group_by_app);
+  // App keeps the range for a later return to Sender
+  NotificationGroupingRange range = alerts_preferences_get_notification_grouping_range();
+  if (group_by == NotificationGroupBy_Sender && range == NotificationGroupingRange_Never) {
+    range = NotificationGroupingRange_All;
+  } else if (group_by == NotificationGroupBy_Off) {
+    range = NotificationGroupingRange_Never;
+  }
+  if (range != s_notification_grouping_range) {
+    s_notification_grouping_range = range;
+    SET_PREF(PREF_KEY_NOTIF_GROUPING_RANGE, s_notification_grouping_range);
+  }
+}
+
+bool alerts_preferences_get_notification_group_by_app(void) {
+  return s_notification_group_by_app;
 }
 
 bool alerts_preferences_get_notification_sections(void) {
@@ -646,11 +674,6 @@ NotificationGroupingRange alerts_preferences_get_notification_grouping_range(voi
   return (s_notification_grouping_range < NotificationGroupingRangeCount)
              ? s_notification_grouping_range
              : NotificationGroupingRange_Never;
-}
-
-void alerts_preferences_set_notification_grouping_range(NotificationGroupingRange range) {
-  s_notification_grouping_range = range;
-  SET_PREF(PREF_KEY_NOTIF_GROUPING_RANGE, s_notification_grouping_range);
 }
 
 NotificationStatusBarStyle alerts_preferences_get_notification_status_bar_style(void) {

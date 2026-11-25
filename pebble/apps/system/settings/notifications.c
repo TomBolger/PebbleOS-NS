@@ -39,8 +39,7 @@ enum NotificationsItem {
   NotificationsItemVibeDelay,
   NotificationsItemBacklight,
   NotificationsItemSections,
-  NotificationsItemGroupByApp,
-  NotificationsItemGroupBySender,
+  NotificationsItemGroupBy,
   NotificationsItemStatusBarStyle,
   NotificationsItem_Count,
 };
@@ -296,40 +295,35 @@ static void prv_status_bar_style_menu_push(SettingsNotificationsData *data) {
                             s_status_bar_style_labels, data);
 }
 
-// Group by Sender
+// Group by
 ////////////////////////
 
-static const char *s_notification_grouping_range_labels[] = {
-  /// Disable notification grouping
-  [NotificationGroupingRange_Never] = pbl_i18n_noop("Never"),
-  /// Group notifications received within one day
-  [NotificationGroupingRange_OneDay] = pbl_i18n_noop("1 Day"),
-  /// Group notifications received within one week
-  [NotificationGroupingRange_OneWeek] = pbl_i18n_noop("1 Week"),
-  /// Group all notifications
-  [NotificationGroupingRange_All] = pbl_i18n_noop("All"),
+static const char *s_group_by_labels[] = {
+  /// Stack notifications by the app that posted them, as the phone does
+  [NotificationGroupBy_App] = pbl_i18n_noop("App"),
+  /// Stack notifications by their sender
+  [NotificationGroupBy_Sender] = pbl_i18n_noop("Sender"),
+  /// Don't stack notifications
+  [NotificationGroupBy_Off] = pbl_i18n_noop("Off"),
 };
 
-static_assert(PBL_ARRAY_SIZE(s_notification_grouping_range_labels) ==
-                  NotificationGroupingRangeCount,
-              "");
+static_assert(PBL_ARRAY_SIZE(s_group_by_labels) == NotificationGroupByCount, "");
 
-static void prv_notification_grouping_range_menu_select(OptionMenu *option_menu, int selection,
-                                                        void *context) {
-  alerts_preferences_set_notification_grouping_range((NotificationGroupingRange)selection);
+static void prv_group_by_menu_select(OptionMenu *option_menu, int selection, void *context) {
+  alerts_preferences_set_notification_group_by((NotificationGroupBy)selection);
   app_window_stack_remove(&option_menu->window, true /* animated */);
 }
 
-static void prv_notification_grouping_range_menu_push(SettingsNotificationsData *data) {
+static void prv_group_by_menu_push(SettingsNotificationsData *data) {
   const OptionMenuCallbacks callbacks = {
-    .select = prv_notification_grouping_range_menu_select,
+    .select = prv_group_by_menu_select,
   };
-  /// Title for the notification sender grouping settings screen
-  const char *title = pbl_i18n_noop("Group by Sender");
+  /// Title for the screen choosing what notifications are stacked by
+  const char *title = pbl_i18n_noop("Group by");
   settings_option_menu_push(title, OptionMenuContentType_SingleLine,
-                            alerts_preferences_get_notification_grouping_range(), &callbacks,
-                            PBL_ARRAY_SIZE(s_notification_grouping_range_labels),
-                            true /* icons_enabled */, s_notification_grouping_range_labels, data);
+                            alerts_preferences_get_notification_group_by(), &callbacks,
+                            PBL_ARRAY_SIZE(s_group_by_labels), true /* icons_enabled */,
+                            s_group_by_labels, data);
 }
 
 // Menu Layer Callbacks
@@ -390,18 +384,10 @@ static void prv_draw_row_cb(SettingsCallbacks *context, GContext *ctx, const Lay
                                                                 : pbl_i18n_noop("Off");
       break;
     }
-    case NotificationsItemGroupByApp: {
-      /// Notification settings item for stacking notifications by app, as the phone does
-      title = pbl_i18n_noop("Group by App");
-      subtitle = alerts_preferences_get_notification_group_by_app() ? pbl_i18n_noop("On")
-                                                                    : pbl_i18n_noop("Off");
-      break;
-    }
-    case NotificationsItemGroupBySender: {
-      /// Notification settings item for grouping notifications by sender
-      title = pbl_i18n_noop("Group by Sender");
-      subtitle = s_notification_grouping_range_labels
-          [alerts_preferences_get_notification_grouping_range()];
+    case NotificationsItemGroupBy: {
+      /// Notification settings item for what notifications are stacked by
+      title = pbl_i18n_noop("Group by");
+      subtitle = s_group_by_labels[alerts_preferences_get_notification_group_by()];
       break;
     }
     case NotificationsItemStatusBarStyle: {
@@ -453,12 +439,8 @@ static void prv_select_click_cb(SettingsCallbacks *context, uint16_t row) {
     case NotificationsItemSections:
       alerts_preferences_set_notification_sections(!alerts_preferences_get_notification_sections());
       break;
-    case NotificationsItemGroupByApp:
-      alerts_preferences_set_notification_group_by_app(
-          !alerts_preferences_get_notification_group_by_app());
-      break;
-    case NotificationsItemGroupBySender:
-      prv_notification_grouping_range_menu_push(data);
+    case NotificationsItemGroupBy:
+      prv_group_by_menu_push(data);
       break;
     case NotificationsItemStatusBarStyle:
       prv_status_bar_style_menu_push(data);

@@ -112,3 +112,77 @@ void test_alerts_preferences__window_timeout_keeps_valid_values(void) {
   cl_assert(alerts_preferences_get_notification_window_timeout_ms() ==
             NOTIF_WINDOW_TIMEOUT_INFINITE);
 }
+
+#define PREF_KEY_NOTIF_GROUP_BY_APP   "notifGroupByApp"
+#define PREF_KEY_NOTIF_GROUPING_RANGE "notifGroupingRange"
+
+static void prv_set_group_by_app(bool enable) {
+  prv_set(NOTIF_PREFS_FILE_NAME, NOTIF_PREFS_FILE_LEN, PREF_KEY_NOTIF_GROUP_BY_APP,
+          strlen(PREF_KEY_NOTIF_GROUP_BY_APP), &enable, sizeof(enable));
+}
+
+static void prv_set_grouping_range(NotificationGroupingRange range) {
+  prv_set(NOTIF_PREFS_FILE_NAME, NOTIF_PREFS_FILE_LEN, PREF_KEY_NOTIF_GROUPING_RANGE,
+          strlen(PREF_KEY_NOTIF_GROUPING_RANGE), &range, sizeof(range));
+}
+
+void test_alerts_preferences__group_by_defaults_to_app(void) {
+  prv_set_grouping_range(NotificationGroupingRange_Never);
+  alerts_preferences_init();
+  cl_assert_equal_i(alerts_preferences_get_notification_group_by(), NotificationGroupBy_App);
+  cl_assert(alerts_preferences_get_notification_group_by_app());
+}
+
+// A Group by Sender range chosen before Group by existed keeps grouping by sender
+void test_alerts_preferences__group_by_keeps_sender_range(void) {
+  prv_set_grouping_range(NotificationGroupingRange_OneWeek);
+  alerts_preferences_init();
+  cl_assert_equal_i(alerts_preferences_get_notification_group_by(), NotificationGroupBy_Sender);
+  cl_assert_equal_i(alerts_preferences_get_notification_grouping_range(),
+                    NotificationGroupingRange_OneWeek);
+}
+
+void test_alerts_preferences__group_by_reads_stored_app(void) {
+  prv_set_grouping_range(NotificationGroupingRange_OneDay);
+  prv_set_group_by_app(true);
+  alerts_preferences_init();
+  cl_assert_equal_i(alerts_preferences_get_notification_group_by(), NotificationGroupBy_App);
+
+  prv_set_group_by_app(false);
+  alerts_preferences_init();
+  cl_assert_equal_i(alerts_preferences_get_notification_group_by(), NotificationGroupBy_Sender);
+
+  prv_set_grouping_range(NotificationGroupingRange_Never);
+  alerts_preferences_init();
+  cl_assert_equal_i(alerts_preferences_get_notification_group_by(), NotificationGroupBy_Off);
+}
+
+void test_alerts_preferences__group_by_set(void) {
+  alerts_preferences_init();
+
+  // Sender groups notifications of any age when no range was chosen
+  alerts_preferences_set_notification_group_by(NotificationGroupBy_Sender);
+  alerts_preferences_init();
+  cl_assert_equal_i(alerts_preferences_get_notification_group_by(), NotificationGroupBy_Sender);
+  cl_assert_equal_i(alerts_preferences_get_notification_grouping_range(),
+                    NotificationGroupingRange_All);
+
+  alerts_preferences_set_notification_group_by(NotificationGroupBy_Off);
+  alerts_preferences_init();
+  cl_assert_equal_i(alerts_preferences_get_notification_group_by(), NotificationGroupBy_Off);
+  cl_assert(!alerts_preferences_get_notification_group_by_app());
+
+  alerts_preferences_set_notification_group_by(NotificationGroupBy_App);
+  alerts_preferences_init();
+  cl_assert_equal_i(alerts_preferences_get_notification_group_by(), NotificationGroupBy_App);
+}
+
+// App keeps a chosen range, so going back to Sender restores it
+void test_alerts_preferences__group_by_app_keeps_range(void) {
+  prv_set_grouping_range(NotificationGroupingRange_OneDay);
+  alerts_preferences_init();
+  alerts_preferences_set_notification_group_by(NotificationGroupBy_App);
+  alerts_preferences_set_notification_group_by(NotificationGroupBy_Sender);
+  cl_assert_equal_i(alerts_preferences_get_notification_grouping_range(),
+                    NotificationGroupingRange_OneDay);
+}
