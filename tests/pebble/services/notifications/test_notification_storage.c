@@ -1240,3 +1240,66 @@ void test_notification_storage__iterate_strings_after_reads_section_and_stack(vo
   // Absent numeric attributes read as 0, not as what the previous notification had.
   cl_assert_equal_i(found[2], 0);
 }
+
+void test_notification_storage__digest_add_is_fnv1a_of_the_id_bytes(void) {
+  // The phone computes the same values: keep these vectors in sync with it.
+  const Uuid first = UuidMake(0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a,
+                              0x0b, 0x0c, 0x0d, 0x0e, 0x0f);
+  const Uuid second = UuidMake(0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1a,
+                               0x1b, 0x1c, 0x1d, 0x1e, 0x1f);
+  NotificationStorageDigest digest = {};
+  notification_storage_digest_add(&digest, &first);
+  cl_assert_equal_i(digest.count, 1);
+  cl_assert_equal_i(digest.hash, 0xc8fff215);
+  notification_storage_digest_add(&digest, &second);
+  cl_assert_equal_i(digest.count, 2);
+  cl_assert_equal_i(digest.hash, 0xba1acd00);
+
+  // Order does not matter.
+  NotificationStorageDigest reversed = {};
+  notification_storage_digest_add(&reversed, &second);
+  notification_storage_digest_add(&reversed, &first);
+  cl_assert_equal_i(reversed.count, digest.count);
+  cl_assert_equal_i(reversed.hash, digest.hash);
+}
+
+void test_notification_storage__digest_counts_live_notifications_of_a_source(void) {
+  const Uuid android = UuidMake(0xed, 0x42, 0x9c, 0x16, 0xf6, 0x74, 0x42, 0x20, 0x95, 0xda, 0x45,
+                                0x4f, 0x30, 0x3f, 0x15, 0xe2);
+  const Uuid other = UuidMake(9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9);
+  TimelineItem item = {
+    .header =
+        {
+          .parent_id = android,
+          .timestamp = 100,
+          .type = TimelineItemTypeNotification,
+          .layout = LayoutIdGeneric,
+        },
+    .attr_list = {.num_attributes = PBL_ARRAY_SIZE(attributes), .attributes = attributes},
+  };
+  NotificationStorageDigest digest;
+  notification_storage_digest(&android, &digest);
+  cl_assert_equal_i(digest.count, 0);
+  cl_assert_equal_i(digest.hash, 0);
+
+  NotificationStorageDigest expected = {};
+  for (uint8_t i = 1; i <= 3; i++) {
+    item.header.id = UuidMake(i, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
+    notification_storage_store(&item);
+    if (i != 2) {
+      notification_storage_digest_add(&expected, &item.header.id);
+    }
+  }
+  // Not from Android: left out.
+  item.header.id = UuidMake(4, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
+  item.header.parent_id = other;
+  notification_storage_store(&item);
+  // Deleted: left out. Read (hidden from the app, still stored): counted.
+  notification_storage_remove(&UuidMake(2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0));
+  notification_storage_set_status(&UuidMake(3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0),
+                                  TimelineItemStatusRead | TimelineItemStatusDismissed);
+
+  notification_storage_digest(&android, &digest);
+  cl_assert_equal_i(digest.count, 2);
+  cl_assert_equal_i(digest.hash, expected.hash);
+}
