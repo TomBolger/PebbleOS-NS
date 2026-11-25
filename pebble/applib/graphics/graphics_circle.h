@@ -111,6 +111,13 @@ void graphics_fill_radial_internal(GContext *ctx, GPoint center, uint16_t radius
                                    uint16_t radius_outer, int32_t angle_start, int32_t angle_end);
 
 //! @internal
+//! Fills a band like \ref graphics_fill_radial_internal, its ends rounded off by a disc as wide as
+//! the band centred on each of them, where graphics_fill_radial_internal cuts them flat.
+void graphics_fill_radial_capped_internal(GContext *ctx, GPoint center, uint16_t radius_inner,
+                                          uint16_t radius_outer, int32_t angle_start,
+                                          int32_t angle_end);
+
+//! @internal
 void graphics_fill_oval(GContext *ctx, GRect rect, GOvalScaleMode scale_mode);
 
 //! Calculates a GPoint located at the angle provided on the perimeter of a circle defined by the
