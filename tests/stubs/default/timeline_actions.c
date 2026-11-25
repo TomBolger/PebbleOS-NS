@@ -50,3 +50,12 @@ ActionMenu *PBL_WEAK timeline_actions_open_hosted_action_menu(ActionMenuConfig *
                                                               void *host_context) {
   return nullptr;
 }
+
+bool PBL_WEAK timeline_actions_has_item_menu(const TimelineItem *item) {
+  return false;
+}
+
+ActionMenuLevel *PBL_WEAK timeline_actions_create_item_root_level(TimelineItem *item,
+                                                                  TimelineItemActionSource source) {
+  return nullptr;
+}
