@@ -71,6 +71,18 @@ static TimelineItemAction s_dismiss_action = {
   .type = TimelineItemActionTypeDismiss,
 };
 
+// Stored notifications are numbered by the first byte of their id, from 1
+#define MAX_STORED 4
+static int s_num_stored;
+static uint8_t s_stored_status[MAX_STORED + 1];
+static bool s_stored_removed[MAX_STORED + 1];
+static int s_removed_events;
+
+static void prv_store(uint8_t status) {
+  cl_assert(s_num_stored < MAX_STORED);
+  s_stored_status[++s_num_stored] = status;
+}
+
 bool notification_storage_get(const Uuid *id, TimelineItem *item_out) {
   *item_out = (TimelineItem){
     .header =
@@ -78,10 +90,33 @@ bool notification_storage_get(const Uuid *id, TimelineItem *item_out) {
           .id = *id,
           .parent_id = UUID_NOTIFICATIONS_DATA_SOURCE,
           .type = TimelineItemTypeNotification,
+          .status = (id->byte0 <= MAX_STORED) ? s_stored_status[id->byte0] : 0,
         },
     .action_group = {.num_actions = 1, .actions = &s_dismiss_action},
   };
   return true;
+}
+
+void notification_storage_iterate(bool (*iter_callback)(void *data,
+                                                        SerializedTimelineItemHeader *header),
+                                  void *data) {
+  for (int i = 1; i <= s_num_stored; i++) {
+    SerializedTimelineItemHeader header = {
+      .common = {.id = {.byte0 = i}, .status = s_stored_status[i]},
+    };
+    if (!s_stored_removed[i] && !iter_callback(data, &header)) {
+      return;
+    }
+  }
+}
+
+void notification_storage_remove(const Uuid *id) {
+  cl_assert(id->byte0 >= 1 && id->byte0 <= s_num_stored);
+  s_stored_removed[id->byte0] = true;
+}
+
+void notifications_handle_notification_removed(Uuid *id) {
+  s_removed_events++;
 }
 
 bool pbl_pp_session_has_capability(const struct pbl_pp_session *session,
@@ -115,6 +150,11 @@ void test_timeline_actions__initialize(void) {
   s_window_state_supported = false;
   s_send_count = 0;
   s_num_launcher_callbacks = 0;
+  s_num_stored = 0;
+  memset(s_stored_status, 0, sizeof(s_stored_status));
+  memset(s_stored_removed, 0, sizeof(s_stored_removed));
+  s_removed_events = 0;
+  s_phone_disconnected = false;
 }
 
 void test_timeline_actions__cleanup(void) {
@@ -222,4 +262,58 @@ void test_timeline_actions__dismiss_all_sends_from_sys_work(void) {
   cl_assert_equal_i(s_send_count, PBL_ARRAY_SIZE(notifications));
   cl_assert_equal_i(list_count(s_sys_work_callback_head), 0);
   cl_assert_equal_i(s_num_launcher_callbacks, 0);
+}
+
+static void prv_run_until_idle(void) {
+  while (list_count(s_sys_work_callback_head) || s_num_launcher_callbacks) {
+    // Only one dismissal is ever waiting to go out
+    cl_assert(list_count(s_sys_work_callback_head) <= 2);
+    cl_assert(s_num_launcher_callbacks <= 1);
+    if (list_count(s_sys_work_callback_head)) {
+      fake_sys_work_callbacks_invoke(1);
+    } else {
+      prv_run_launcher_callback();
+    }
+  }
+}
+
+// Clearing dismisses each stored notification on the phone, then removes it from the watch.
+void test_timeline_actions__dismiss_all_stored(void) {
+  prv_store(0);
+  prv_store(TimelineItemStatusDismissed);
+  prv_store(TimelineItemStatusRead);
+
+  timeline_actions_dismiss_all_stored();
+  // Runs on KernelMain
+  cl_assert_equal_i(s_num_launcher_callbacks, 1);
+  cl_assert_equal_i(s_send_count, 0);
+  prv_run_until_idle();
+
+  // The phone already knows about the notification dismissed on the watch
+  cl_assert_equal_i(s_send_count, 2);
+  for (int i = 1; i <= s_num_stored; i++) {
+    cl_assert(s_stored_removed[i]);
+  }
+  cl_assert_equal_i(s_removed_events, 3);
+}
+
+// Without a phone, clearing only clears the watch.
+void test_timeline_actions__dismiss_all_stored_disconnected(void) {
+  s_phone_disconnected = true;
+  prv_store(0);
+  prv_store(0);
+
+  timeline_actions_dismiss_all_stored();
+  prv_run_until_idle();
+
+  cl_assert_equal_i(s_send_count, 0);
+  cl_assert(s_stored_removed[1] && s_stored_removed[2]);
+  cl_assert_equal_i(s_removed_events, 2);
+}
+
+void test_timeline_actions__dismiss_all_stored_empty(void) {
+  timeline_actions_dismiss_all_stored();
+  prv_run_until_idle();
+  cl_assert_equal_i(s_send_count, 0);
+  cl_assert_equal_i(s_removed_events, 0);
 }
