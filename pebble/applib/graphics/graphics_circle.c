@@ -1286,18 +1286,32 @@ void graphics_fill_radial_internal(GContext *ctx, GPoint center, uint16_t radius
                         radius_inner_fixed, radius_inner_fixed, angle_start, angle_end);
 }
 
+//! \a num / \a den rounded to the nearest integer, halves away from zero
+static int32_t prv_div_round(int32_t num, int32_t den) {
+  return (num >= 0) ? ((num + den / 2) / den) : -((-num + den / 2) / den);
+}
+
 void graphics_fill_radial_capped_internal(GContext *ctx, GPoint center, uint16_t radius_inner,
                                           uint16_t radius_outer, int32_t angle_start,
                                           int32_t angle_end) {
   graphics_fill_radial_internal(ctx, center, radius_inner, radius_outer, angle_start, angle_end);
-  const uint16_t thickness = radius_outer - radius_inner;
-  const int32_t radius_mid = radius_outer - (thickness / 2);
+  // Each end is a disc exactly as wide as the band, centered on its middle line, in the radial
+  // fill's precise coordinates. Rows are filled about a whole or half pixel, so the center's row is
+  // the nearest of those.
+  const int32_t one = FIXED_S16_3_ONE.raw_value;
+  const int32_t half = FIXED_S16_3_HALF.raw_value;
+  const int32_t mid = (radius_inner + radius_outer) * half;
+  const Fixed_S16_3 cap_radius = {.raw_value = (radius_outer - radius_inner) * half};
   const int32_t angles[2] = {angle_start, angle_end};
   for (size_t i = 0; i < PBL_ARRAY_SIZE(angles); i++) {
-    const GPoint cap =
-        GPoint(center.x + (int16_t)((radius_mid * sin_lookup(angles[i])) / TRIG_MAX_RATIO),
-               center.y - (int16_t)((radius_mid * cos_lookup(angles[i])) / TRIG_MAX_RATIO));
-    graphics_fill_circle(ctx, cap, thickness / 2);
+    const int32_t x = center.x * one + prv_div_round(mid * sin_lookup(angles[i]), TRIG_MAX_RATIO);
+    const int32_t y = center.y * one - prv_div_round(mid * cos_lookup(angles[i]), TRIG_MAX_RATIO);
+    const GPointPrecise cap = {
+      .x.raw_value = x,
+      .y.raw_value = prv_div_round(y, half) * half,
+    };
+    prv_fill_oval_precise(ctx, cap, cap_radius, cap_radius, (Fixed_S16_3){}, (Fixed_S16_3){}, 0,
+                          TRIG_MAX_ANGLE);
   }
 }
 
