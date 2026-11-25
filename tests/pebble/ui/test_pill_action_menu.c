@@ -84,8 +84,9 @@ void graphics_context_set_drawing_state(GContext *ctx, GDrawState draw_state) {
 }
 void graphics_draw_bitmap_in_rect(GContext *ctx, const GBitmap *bitmap, const GRect *rect) {
 }
-void graphics_fill_radial_internal(GContext *ctx, GPoint center, uint16_t radius_inner,
-                                   uint16_t radius_outer, int32_t angle_start, int32_t angle_end) {
+void graphics_fill_radial_capped_internal(GContext *ctx, GPoint center, uint16_t radius_inner,
+                                          uint16_t radius_outer, int32_t angle_start,
+                                          int32_t angle_end) {
 }
 void graphics_private_draw_horizontal_line_prepared(GContext *ctx, GBitmap *framebuffer,
                                                     GRect *clip_box, int16_t y, Fixed_S16_3 x1,

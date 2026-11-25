@@ -143,22 +143,6 @@ PBL_T_STATIC bool prv_scrollbar_thumb_angles(MenuLayer *menu_layer, int16_t cont
   return true;
 }
 
-//! Fills an arc band with rounded end caps (graphics_fill_radial ends are cut flat).
-static void prv_scrollbar_fill_capped_arc(GContext *ctx, GPoint center, uint16_t radius_outer,
-                                          uint16_t thickness, int32_t angle_start,
-                                          int32_t angle_end) {
-  graphics_fill_radial_internal(ctx, center, radius_outer - thickness, radius_outer, angle_start,
-                                angle_end);
-  const int32_t radius_mid = radius_outer - (thickness / 2);
-  const int32_t angles[2] = {angle_start, angle_end};
-  for (size_t i = 0; i < PBL_ARRAY_SIZE(angles); i++) {
-    const GPoint cap =
-        GPoint(center.x + (int16_t)((radius_mid * sin_lookup(angles[i])) / TRIG_MAX_RATIO),
-               center.y - (int16_t)((radius_mid * cos_lookup(angles[i])) / TRIG_MAX_RATIO));
-    graphics_fill_circle(ctx, cap, thickness / 2);
-  }
-}
-
 //! The subdued color of the full-length track behind the thumb: the gray nearer the menu's
 //! background, so the track reads as a guide while the foreground-colored thumb pops.
 static GColor prv_scrollbar_track_color(MenuLayer *menu_layer) {
@@ -186,11 +170,12 @@ static void prv_scrollbar_draw(MenuLayer *menu_layer, GContext *ctx, int16_t con
   // provides the contrast backing for the thumb, so no halo is needed.
   const int32_t track_start = PBL_DEG_TO_TRIGANGLE(90) - (MENU_LAYER_SCROLLBAR_TRACK_SWEEP / 2);
   graphics_context_set_fill_color(ctx, prv_scrollbar_track_color(menu_layer));
-  prv_scrollbar_fill_capped_arc(ctx, center, radius_outer, MENU_LAYER_SCROLLBAR_WIDTH, track_start,
-                                track_start + MENU_LAYER_SCROLLBAR_TRACK_SWEEP);
+  graphics_fill_radial_capped_internal(ctx, center, radius_outer - MENU_LAYER_SCROLLBAR_WIDTH,
+                                       radius_outer, track_start,
+                                       track_start + MENU_LAYER_SCROLLBAR_TRACK_SWEEP);
   graphics_context_set_fill_color(ctx, menu_layer->normal_colors[MenuLayerColorForeground]);
-  prv_scrollbar_fill_capped_arc(ctx, center, radius_outer, MENU_LAYER_SCROLLBAR_WIDTH, angle_start,
-                                angle_end);
+  graphics_fill_radial_capped_internal(ctx, center, radius_outer - MENU_LAYER_SCROLLBAR_WIDTH,
+                                       radius_outer, angle_start, angle_end);
 }
 #else
 //! Scrollbar thumb rect in content-space coordinates (the space menu_layer_update_proc draws in).

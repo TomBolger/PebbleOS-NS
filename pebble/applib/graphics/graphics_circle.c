@@ -1286,6 +1286,21 @@ void graphics_fill_radial_internal(GContext *ctx, GPoint center, uint16_t radius
                         radius_inner_fixed, radius_inner_fixed, angle_start, angle_end);
 }
 
+void graphics_fill_radial_capped_internal(GContext *ctx, GPoint center, uint16_t radius_inner,
+                                          uint16_t radius_outer, int32_t angle_start,
+                                          int32_t angle_end) {
+  graphics_fill_radial_internal(ctx, center, radius_inner, radius_outer, angle_start, angle_end);
+  const uint16_t thickness = radius_outer - radius_inner;
+  const int32_t radius_mid = radius_outer - (thickness / 2);
+  const int32_t angles[2] = {angle_start, angle_end};
+  for (size_t i = 0; i < PBL_ARRAY_SIZE(angles); i++) {
+    const GPoint cap =
+        GPoint(center.x + (int16_t)((radius_mid * sin_lookup(angles[i])) / TRIG_MAX_RATIO),
+               center.y - (int16_t)((radius_mid * cos_lookup(angles[i])) / TRIG_MAX_RATIO));
+    graphics_fill_circle(ctx, cap, thickness / 2);
+  }
+}
+
 void graphics_fill_radial(GContext *ctx, GRect rect, GOvalScaleMode scale_mode,
                           uint16_t inset_thickness, int32_t angle_start, int32_t angle_end) {
   GPointPrecise center;
