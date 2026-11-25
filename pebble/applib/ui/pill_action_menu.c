@@ -20,7 +20,7 @@
 #include <applib/ui/animation.h>
 #include <applib/ui/layer.h>
 #include <applib/ui/menu_layer_private.h>
-#include <applib/ui/vibes.h>
+#include <shell/prefs.h>
 
 #ifdef CONFIG_TOUCH
 #include <applib/ui/recognizer/pan.h>
@@ -647,9 +647,10 @@ static void prv_selection_changed(PillActionMenu *menu, bool animated) {
 static void prv_move(PillActionMenu *menu, int16_t rows) {
   uint16_t *selected = &menu->selected[menu->depth - 1];
   const int32_t target = (int32_t)*selected + rows;
-  if ((target < 0) || (target >= prv_count(menu))) {
-    // Already at the end
-    vibes_short_pulse();
+  if (((target < 0) || (target >= prv_count(menu))) &&
+      (shell_prefs_get_menu_scroll_vibe_behavior() == MenuScrollVibeOnLocked)) {
+    // Already at the end: a pulse, as menus give there if asked to
+    menu_layer_play_scroll_vibe();
   }
   const uint16_t clamped = (uint16_t)PBL_CLAMP(target, 0, (int32_t)prv_count(menu) - 1);
   if (clamped != *selected) {

@@ -299,7 +299,7 @@ static bool prv_menu_index_is_last_index(MenuLayer *menu_layer, const MenuIndex 
   return menu_index_compare(index, &last_index) == 0;
 }
 
-static void prv_vibe_pulse(void) {
+void menu_layer_play_scroll_vibe(void) {
   uint32_t const segments[] = {50};
   VibePattern pat = {
     .durations = segments,
@@ -357,7 +357,7 @@ static bool prv_menu_scroll_handle_wrap_around(MenuLayer *menu_layer, ClickRecog
   const bool animated = true;
   menu_layer_set_selected_index(menu_layer, *wraparound_dest_index, MenuRowAlignCenter, animated);
   if (menu_layer->scroll_vibe_on_wrap_around) {
-    prv_vibe_pulse();
+    menu_layer_play_scroll_vibe();
   }
   return true;
 }
@@ -421,7 +421,7 @@ void menu_up_click_handler(ClickRecognizerRef recognizer, void *context) {
   if ((menu_layer->scroll_vibe_on_blocked) &&
       (menu_index_compare(&current_index, &prev_index) == 0) &&
       (prv_menu_index_is_first_index(menu_layer, &current_index))) {
-    prv_vibe_pulse();
+    menu_layer_play_scroll_vibe();
   }
 }
 
@@ -443,7 +443,7 @@ void menu_down_click_handler(ClickRecognizerRef recognizer, void *context) {
   if ((menu_layer->scroll_vibe_on_blocked) &&
       (menu_index_compare(&current_index, &prev_index) == 0) &&
       (prv_menu_index_is_last_index(menu_layer, &current_index))) {
-    prv_vibe_pulse();
+    menu_layer_play_scroll_vibe();
   }
 }
 

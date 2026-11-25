@@ -17,8 +17,10 @@
 #include <applib/ui/menu_text_scroll.h>
 #include <applib/ui/pill_action_menu.h>
 #include <applib/ui/shadows.h>
+#include <applib/ui/vibes.h>
 #include <applib/ui/window_private.h>
 #include <clar.h>
+#include <shell/prefs.h>
 #include <stubs_compiled_with_legacy2_sdk.h>
 
 // Stubs for what these tests never reach: the ActionMenu window, drawing and animation curves
@@ -198,6 +200,15 @@ void *window_get_user_data(const Window *window) {
   return window->user_data;
 }
 
+// What the action menu plays
+/////////////////////
+
+static int s_num_vibes;
+
+void vibes_enqueue_custom_pattern(VibePattern pattern) {
+  s_num_vibes++;
+}
+
 // What the action menu tells its client
 /////////////////////
 
@@ -263,6 +274,8 @@ void test_pill_action_menu__initialize(void) {
 
   s_num_selections = 0;
   s_num_did_close = 0;
+  s_num_vibes = 0;
+  shell_prefs_set_menu_scroll_vibe_behavior(MenuScrollNoVibe);
   s_root = prv_create_level(4);
   s_sub = prv_create_level(2);
   for (int i = 0; i < 3; i++) {
@@ -349,4 +362,18 @@ void test_pill_action_menu__back_restores_the_window_clicks(void) {
   cl_assert(s_window.click_config_provider == provider);
   cl_assert(s_window.click_config_context == &s_menu_layer);
   cl_assert_equal_b(s_window.overrides_back_button, overrides_back);
+}
+
+void test_pill_action_menu__pulses_at_the_ends_as_menus_do(void) {
+  cl_assert(prv_open());
+  // Menus are quiet at their ends unless asked
+  prv_click(BUTTON_ID_UP);
+  cl_assert_equal_i(s_num_vibes, 0);
+
+  shell_prefs_set_menu_scroll_vibe_behavior(MenuScrollVibeOnLocked);
+  prv_click(BUTTON_ID_UP);
+  cl_assert_equal_i(s_num_vibes, 1);
+  // Moving on is not an end
+  prv_click(BUTTON_ID_DOWN);
+  cl_assert_equal_i(s_num_vibes, 1);
 }
