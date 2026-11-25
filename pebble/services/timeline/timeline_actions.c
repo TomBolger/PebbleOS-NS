@@ -1167,6 +1167,75 @@ ActionMenu *timeline_actions_push_response_menu(TimelineItem *item,
   return timeline_actions_push_action_menu(&config, window_stack);
 }
 
+// ------------------------------------------------------------------------------------------------
+// Item action menus
+
+//! Remove, for pins the phone gives no way to remove. It has no phone action id, so the pin is
+//! removed on the watch (see timeline_invoke_action).
+static TimelineItemAction *prv_watch_remove_action(void) {
+  static Attribute s_title;
+  static TimelineItemAction s_action;
+  if (!s_title.cstring) {
+    // This i18n'd string is leaked, but only ever allocated once
+    s_title = (Attribute){
+      .id = AttributeIdTitle,
+      .cstring = (char *)pbl_i18n_get("Remove", &s_title),
+    };
+    s_action = (TimelineItemAction){
+      .id = TIMELINE_INVALID_ACTION_ID,
+      .type = TimelineItemActionTypeRemove,
+      .attr_list = {.num_attributes = 1, .attributes = &s_title},
+    };
+  }
+  return &s_action;
+}
+
+static bool prv_has_remove_action(const TimelineItem *item) {
+  return timeline_item_find_action_by_type(item, TimelineItemActionTypeRemove) ||
+         timeline_item_find_action_by_type(item, TimelineItemActionTypeRemoteRemove);
+}
+
+//! The watch's own actions of an item: Remove, for calendar pins and for pins without actions,
+//! unless the phone gives one.
+static TimelineItemAction *prv_watch_action(const TimelineItem *item) {
+  if (item->header.type != TimelineItemTypePin || prv_has_remove_action(item)) {
+    return nullptr;
+  }
+  if (item->header.layout == LayoutIdCalendar || item->action_group.num_actions == 0) {
+    return prv_watch_remove_action();
+  }
+  return nullptr;
+}
+
+static uint8_t prv_num_menu_actions(const TimelineItem *item) {
+  return item->action_group.num_actions + (prv_watch_action(item) ? 1 : 0);
+}
+
+static TimelineItemAction *prv_menu_action(const TimelineItem *item, uint8_t index) {
+  if (index < item->action_group.num_actions) {
+    return &item->action_group.actions[index];
+  }
+  return prv_watch_action(item);
+}
+
+bool timeline_actions_has_item_menu(const TimelineItem *item) {
+  return prv_num_menu_actions(item) > 0;
+}
+
+ActionMenuLevel *timeline_actions_create_item_root_level(TimelineItem *item,
+                                                         TimelineItemActionSource source) {
+  const uint8_t num_actions = prv_num_menu_actions(item);
+  if (num_actions == 0) {
+    return nullptr;
+  }
+  ActionMenuLevel *root_level =
+      timeline_actions_create_action_menu_root_level(num_actions, 0, source);
+  for (uint8_t i = 0; i < num_actions; i++) {
+    timeline_actions_add_action_to_root_level(prv_menu_action(item, i), root_level);
+  }
+  return root_level;
+}
+
 typedef struct {
   ActionResultData *data; //!< Results shown to the user; nullptr when clearing storage
   int num_notifications;

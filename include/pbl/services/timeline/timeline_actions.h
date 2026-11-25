@@ -59,6 +59,27 @@ ActionMenuLevel *timeline_actions_create_action_menu_root_level(uint8_t num_acti
                                                                 TimelineItemActionSource source);
 
 /**
+ * @brief Whether an item has an action menu.
+ *
+ * The menu holds the item's actions and the watch's own: Remove for calendar pins and for pins
+ * without actions, unless the phone gives one. It is never empty.
+ *
+ * @param item Item.
+ * @return false if the item has no actions at all.
+ */
+bool timeline_actions_has_item_menu(const TimelineItem *item);
+
+/**
+ * @brief Create the root level of an item's action menu (see timeline_actions_has_item_menu).
+ *
+ * @param item Item; must outlive the menu.
+ * @param source Window or app creating the menu.
+ * @return Root level, or NULL if the item has no actions.
+ */
+ActionMenuLevel *timeline_actions_create_item_root_level(TimelineItem *item,
+                                                         TimelineItemActionSource source);
+
+/**
  * @brief Called when an action succeeds with a "dismissed" result while its action menu is open.
  *
  * @return true if the caller showed the result itself (the menu is then closed without a result
