@@ -115,7 +115,7 @@ static void prv_finish_transition(void);
 static AppFrameFit prv_get_app_frame_fit(void);
 static bool prv_app_frame_fit_is_verbatim(const AppFrameFit *fit);
 static void prv_scaled_app_fb_copy(const GRect update_rect, bool copy_relative_to_origin,
-                                   int16_t offset_y, const AppFrameFit *fit);
+                                   const AppFrameFit *fit);
 
 void compositor_init(void) {
   compositor_display_init();
@@ -283,7 +283,7 @@ static bool prv_render_app_dirty_rect(const AppFrameFit *fit) {
   rect = display_rect;
 #endif
   if (!grect_is_empty(&rect) && prv_narrow_to_changed_rows(&rect)) {
-    prv_scaled_app_fb_copy(rect, false /* copy_relative_to_origin */, 0 /* offset_y */, fit);
+    prv_scaled_app_fb_copy(rect, false /* copy_relative_to_origin */, fit);
     framebuffer_mark_dirty_rect(&s_framebuffer, rect);
   }
 
@@ -320,7 +320,7 @@ void compositor_render_app(void) {
          framebuffer_get_size_bytes(&s_framebuffer));
 
   prv_scaled_app_fb_copy(GRect(0, 0, PBL_DISPLAY_WIDTH, PBL_DISPLAY_HEIGHT),
-                         false /* copy_relative_to_origin */, 0 /* offset_y */, &fit);
+                         false /* copy_relative_to_origin */, &fit);
   prv_reset_app_framebuffer_dirty(app_state_get_framebuffer());
 
   if (s_state == CompositorState_AppAndModal) {
@@ -775,13 +775,8 @@ GRect compositor_get_scaled_app_frame(GSize app_size) {
 }
 
 void compositor_scaled_app_fb_copy(const GRect update_rect, bool copy_relative_to_origin) {
-  compositor_scaled_app_fb_copy_offset(update_rect, copy_relative_to_origin, 0 /* offset_y */);
-}
-
-void compositor_scaled_app_fb_copy_offset(const GRect update_rect, bool copy_relative_to_origin,
-                                          int16_t offset_y) {
   const AppFrameFit fit = prv_get_app_frame_fit();
-  prv_scaled_app_fb_copy(update_rect, copy_relative_to_origin, offset_y, &fit);
+  prv_scaled_app_fb_copy(update_rect, copy_relative_to_origin, &fit);
 }
 
 //! Set the pixels [start_x, end_x) of a row of the system framebuffer to black.
@@ -809,7 +804,7 @@ static void prv_fill_row_black(GBitmap *bitmap, int16_t y, int16_t start_x, int1
 }
 
 static void prv_scaled_app_fb_copy(const GRect update_rect, bool copy_relative_to_origin,
-                                   int16_t offset_y, const AppFrameFit *fit) {
+                                   const AppFrameFit *fit) {
   GBitmap src_bitmap = compositor_get_app_framebuffer_as_bitmap();
   GBitmap dst_bitmap = compositor_get_framebuffer_as_bitmap();
 
@@ -864,7 +859,7 @@ static void prv_scaled_app_fb_copy(const GRect update_rect, bool copy_relative_t
     const int16_t app_shift_y = timeline_peek_get_origin_y() - disp_height;
 
     for (int16_t dst_y = 0; dst_y < update_rect.size.h; dst_y++) {
-      const int16_t dst_y_offset = dst_y + update_rect.origin.y + offset_y;
+      const int16_t dst_y_offset = dst_y + update_rect.origin.y;
       if (dst_y_offset < 0 || dst_y_offset >= disp_height)
         continue;
       if ((fit->squish_for_peek && (dst_y_offset < scale_to.origin.y ||
@@ -1017,7 +1012,7 @@ static void prv_scaled_app_fb_copy(const GRect update_rect, bool copy_relative_t
     if (clipped_update_region.size.w > 0 && clipped_update_region.size.h > 0) {
       GBitmap sub_bitmap;
       const GRect src_rect = GRect(clipped_update_region.origin.x - app_offset_x,
-                                   clipped_update_region.origin.y - app_offset_y + offset_y,
+                                   clipped_update_region.origin.y - app_offset_y,
                                    clipped_update_region.size.w, clipped_update_region.size.h);
       gbitmap_init_as_sub_bitmap(&sub_bitmap, &src_bitmap, src_rect);
       bitblt_bitmap_into_bitmap(&dst_bitmap, &sub_bitmap, clipped_update_region.origin,
@@ -1053,12 +1048,11 @@ static void prv_scaled_app_fb_copy(const GRect update_rect, bool copy_relative_t
       grect_clip(&clipped_update_region, &centered_region);
 
       src_rect = GRect(clipped_update_region.origin.x - bezel_width,
-                       clipped_update_region.origin.y - app_offset_y + offset_y,
-                       clipped_update_region.size.w, clipped_update_region.size.h);
+                       clipped_update_region.origin.y - app_offset_y, clipped_update_region.size.w,
+                       clipped_update_region.size.h);
       dst_offset = clipped_update_region.origin;
     } else {
-      src_rect =
-          GRect(0, offset_y, update_rect.size.w - bezel_width, update_rect.size.h - app_offset_y);
+      src_rect = GRect(0, 0, update_rect.size.w - bezel_width, update_rect.size.h - app_offset_y);
       dst_offset = GPoint(bezel_width + update_rect.origin.x, app_offset_y + update_rect.origin.y);
     }
 
