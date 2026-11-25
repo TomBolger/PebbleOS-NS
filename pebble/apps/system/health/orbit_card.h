@@ -4,9 +4,12 @@
 #pragma once
 
 //! @file orbit_card.h
-//! The cards of the round Health app, one per section of the orbit.
+//! The cards of the round Health app, one per section of the orbit: rings round the bezel that
+//! stop short of the sidebar, with the numbers inside them.
 
-#include <applib/graphics/gtypes.h>
+#include "data.h"
+
+#include <applib/graphics/graphics.h>
 
 //! The sections on the orbit, from the top
 typedef enum HealthOrbitSection {
@@ -16,8 +19,48 @@ typedef enum HealthOrbitSection {
   HealthOrbitSectionCount,
 } HealthOrbitSection;
 
+//! Most rings a card has
+#define HEALTH_ORBIT_CARD_MAX_RINGS 2
+//! Most bubbles a card has below its numbers
+#define HEALTH_ORBIT_CARD_MAX_BUBBLES 3
+//! Radius of those bubbles
+#define HEALTH_ORBIT_CARD_BUBBLE_RADIUS 23
+//! A ring's sweep at rest: as far as its value
+#define HEALTH_ORBIT_CARD_SWEEP_REST UINT32_MAX
+
+//! How a card is drawn
+typedef struct HealthOrbitCard {
+  HealthOrbitSection section;
+  //! How far down its numbers and bubbles are moved from where they rest
+  int16_t offset_y;
+  //! Angle each ring sweeps from its start, or HEALTH_ORBIT_CARD_SWEEP_REST
+  uint32_t sweep[HEALTH_ORBIT_CARD_MAX_RINGS];
+  //! Radius of each bubble
+  int16_t bubble_radius[HEALTH_ORBIT_CARD_MAX_BUBBLES];
+} HealthOrbitCard;
+
 //! Color of the sidebar on a section's card
 GColor health_orbit_section_color(HealthOrbitSection section);
 
 //! Background color of a section's card
 GColor health_orbit_section_bg_color(HealthOrbitSection section);
+
+//! A section's card at rest
+void health_orbit_card_init(HealthOrbitCard *card, HealthOrbitSection section);
+
+//! How far each of a section's rings sweeps for the data
+//! @param[out] sweeps_out Angle swept by each ring
+//! @return Number of rings
+int health_orbit_card_get_sweeps(HealthOrbitSection section, HealthData *health_data,
+                                 uint32_t sweeps_out[HEALTH_ORBIT_CARD_MAX_RINGS]);
+
+//! Number of bubbles a section's card has
+int health_orbit_card_get_num_bubbles(HealthOrbitSection section);
+
+//! Draws a card's numbers and bubbles
+void health_orbit_card_draw_content(GContext *ctx, const HealthOrbitCard *card,
+                                    HealthData *health_data, void *i18n_owner);
+
+//! Draws a card's rings, over its content as that slides past them, with their tracks or not
+void health_orbit_card_draw_rings(GContext *ctx, const HealthOrbitCard *card,
+                                  HealthData *health_data, bool tracks);
