@@ -68,6 +68,9 @@ typedef struct NotificationsData {
   Animation *fold_animation;
   int16_t fold_first;
   int16_t fold_count;
+  //! How many of the folding rows move; those past them are off screen once open, so they stay
+  //! closed until the rows open and close first, and are not loaded for each frame
+  int16_t fold_moving;
   int16_t fold_header;
   bool fold_opening;
   //! How open the folding rows are, in thousandths; overshoots a little past FOLD_FULL
@@ -352,6 +355,9 @@ static bool prv_row_is_folding(const NotificationsData *data, int16_t index) {
 static int16_t prv_row_height_at(const NotificationsData *data, int16_t index) {
   const int16_t full = prv_full_row_height(notification_shade_row(&data->shade, index));
   if (prv_row_is_folding(data, index)) {
+    if (index >= data->fold_first + data->fold_moving) {
+      return 0;
+    }
     const int32_t height = full * data->fold_amount / FOLD_FULL;
     return (height > 0) ? height : 0;
   }
@@ -736,6 +742,7 @@ static void prv_fold_finish(NotificationsData *data, bool apply) {
   const int16_t header = data->fold_header;
   data->fold_first = -1;
   data->fold_count = 0;
+  data->fold_moving = 0;
   data->fold_amount = FOLD_FULL;
   Animation *running = data->fold_animation;
   data->fold_animation = nullptr;
@@ -811,8 +818,25 @@ static void prv_fold_stopped(Animation *animation, bool finished, void *context)
   }
 }
 
+//! How many rows below a header fill the screen beneath it, open, at most count.
+static int16_t prv_rows_filling_below(NotificationsData *data, int16_t header, int16_t count) {
+  ScrollLayer *scroll = menu_layer_get_scroll_layer(&data->menu_layer);
+  int16_t bottom = scroll_layer_get_content_offset(scroll).y;
+  for (int16_t i = 0; i <= header; i++) {
+    bottom += prv_row_height_at(data, i);
+  }
+  const int16_t view = menu_layer_get_layer(&data->menu_layer)->bounds.size.h;
+  int16_t rows = 0;
+  while ((rows < count) && (bottom < view)) {
+    bottom += prv_full_row_height(notification_shade_row(&data->shade, header + 1 + rows));
+    rows++;
+  }
+  return PBL_MAX(rows, 1);
+}
+
 static void prv_fold_start(NotificationsData *data, int16_t header, int16_t count, bool opening) {
   data->fold_header = header;
+  data->fold_moving = prv_rows_filling_below(data, header, count);
   data->fold_first = header + 1;
   data->fold_count = count;
   data->fold_opening = opening;
