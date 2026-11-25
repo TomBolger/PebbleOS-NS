@@ -28,11 +28,11 @@ static GPoint prv_polar(int32_t radius, int32_t angle) {
 
 void test_health_orbit_layout__sidebar_is_the_timeline_sidebar(void) {
   // Unnotched, it reaches as deep as the round banner does, notched its notch cuts into it
-  const TimelineListSidebar plain = health_orbit_sidebar(DISPLAY, false);
+  const TimelineListSidebar plain = health_orbit_sidebar(DISPLAY, 0);
   const int16_t depth = HEALTH_ORBIT_CENTER_INSET + HEALTH_ORBIT_RADIUS + 1;
   cl_assert_equal_i(timeline_list_sidebar_depth(&plain, MID_Y), depth);
   cl_assert_equal_i(depth, LAYOUT_TOP_BANNER_HEIGHT_ROUND);
-  const TimelineListSidebar notched = health_orbit_sidebar(DISPLAY, true);
+  const TimelineListSidebar notched = health_orbit_sidebar(DISPLAY, HEALTH_ORBIT_NOTCH_WIDTH);
   cl_assert_equal_i(timeline_list_sidebar_depth(&notched, MID_Y), depth - HEALTH_ORBIT_NOTCH_WIDTH);
   cl_assert_equal_i(timeline_list_sidebar_depth(&notched, MID_Y + HEALTH_ORBIT_NOTCH_HEIGHT),
                     timeline_list_sidebar_depth(&plain, MID_Y + HEALTH_ORBIT_NOTCH_HEIGHT));
@@ -65,7 +65,7 @@ void test_health_orbit_layout__sidebar_turns_into_the_banner(void) {
 }
 
 void test_health_orbit_layout__notch_points_at_the_middle_row(void) {
-  const TimelineListSidebar notched = health_orbit_sidebar(DISPLAY, true);
+  const TimelineListSidebar notched = health_orbit_sidebar(DISPLAY, HEALTH_ORBIT_NOTCH_WIDTH);
   const GPoint tip = health_orbit_notch_tip(DISPLAY, 0);
   cl_assert_equal_i(tip.y, MID_Y);
   cl_assert_equal_i(tip.x, PBL_DISPLAY_WIDTH - timeline_list_sidebar_depth(&notched, MID_Y));
@@ -78,10 +78,12 @@ void test_health_orbit_layout__notch_points_at_the_middle_row(void) {
 void test_health_orbit_layout__bubbles_orbit_the_sidebar(void) {
   const GPoint center = health_orbit_center(DISPLAY, 0);
   const GPoint selected = health_orbit_bubble_center(DISPLAY, 0, 0);
-  // At the notch, inside the sidebar where the banner has its icon
+  // At the notch, inside the sidebar, the gap clear of the notch's tip
   cl_assert_equal_i(selected.y, MID_Y);
   cl_assert_equal_i(center.x - selected.x, HEALTH_ORBIT_BUBBLE_DISTANCE);
-  cl_assert(selected.x > health_orbit_notch_tip(DISPLAY, 0).x);
+  cl_assert_equal_i(
+      selected.x - HEALTH_ORBIT_SELECTED_RADIUS - health_orbit_notch_tip(DISPLAY, 0).x,
+      HEALTH_ORBIT_NOTCH_GAP);
   // Neighbours a step above and below, on the same circle, further right as the circle curves
   const GPoint above = health_orbit_bubble_center(DISPLAY, -HEALTH_ORBIT_STEP, 0);
   const GPoint below = health_orbit_bubble_center(DISPLAY, HEALTH_ORBIT_STEP, 0);
@@ -93,17 +95,39 @@ void test_health_orbit_layout__bubbles_orbit_the_sidebar(void) {
     const GPoint bubble = health_orbit_bubble_center(DISPLAY, offset, 0);
     cl_assert(PBL_ABS(prv_distance(bubble, center) - HEALTH_ORBIT_BUBBLE_DISTANCE) <= 1);
   }
+  // The neighbours stay inside the bezel
+  const int32_t neighbour_radius = 12;
+  const GPoint display_center = GPoint(PBL_DISPLAY_WIDTH / 2, MID_Y);
+  cl_assert(prv_distance(below, display_center) + neighbour_radius <= PBL_DISPLAY_WIDTH / 2);
   // They turn with the sidebar
   const GPoint top = health_orbit_bubble_center(DISPLAY, 0, -QUARTER);
   cl_assert_equal_i(top.x, PBL_DISPLAY_WIDTH / 2);
   cl_assert_equal_i(top.y, PBL_DISPLAY_WIDTH - 1 - selected.x);
 }
 
+void test_health_orbit_layout__banner_bubble_is_centered_in_the_banner(void) {
+  // Turned up into the banner, the selected bubble is as far from the top of the display as from
+  // the banner's edge, across its width
+  const GPoint top = health_orbit_bubble_center(DISPLAY, 0, -QUARTER);
+  const TimelineListSidebar banner = health_orbit_sidebar(DISPLAY, 0);
+  const int16_t r = HEALTH_ORBIT_SELECTED_RADIUS;
+  for (int16_t dx = -r; dx <= r; dx += r) {
+    const int16_t x = top.x + dx;
+    const int16_t bezel_y =
+        MID_Y - integer_sqrt((PBL_DISPLAY_WIDTH / 2) * (PBL_DISPLAY_WIDTH / 2) -
+                             (x - PBL_DISPLAY_WIDTH / 2) * (x - PBL_DISPLAY_WIDTH / 2));
+    const int16_t edge_y = timeline_list_sidebar_depth(&banner, x);
+    const int32_t above = top.y - bezel_y;
+    const int32_t below = edge_y - top.y;
+    cl_assert(PBL_ABS(above - below) <= ((dx == 0) ? 2 : 3));
+  }
+}
+
 void test_health_orbit_layout__text_runs_inside_the_ring_and_clear_of_the_sidebar(void) {
   const int16_t inner = 113;
   const GRangeHorizontal middle = health_orbit_text_range(DISPLAY, inner, MID_Y, MID_Y);
   cl_assert_equal_i(middle.origin_x, PBL_DISPLAY_WIDTH / 2 - inner);
-  const TimelineListSidebar plain = health_orbit_sidebar(DISPLAY, false);
+  const TimelineListSidebar plain = health_orbit_sidebar(DISPLAY, 0);
   cl_assert_equal_i(middle.origin_x + middle.size_w,
                     PBL_DISPLAY_WIDTH - timeline_list_sidebar_depth(&plain, MID_Y));
   // Higher up, the ring narrows it on the left and the sidebar less so on the right
