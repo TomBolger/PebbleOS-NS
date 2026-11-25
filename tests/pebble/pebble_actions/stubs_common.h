@@ -33,9 +33,11 @@ int blob_db_delete(BlobDBId db_id, const uint8_t *key, int key_len) {
 void timeline_pin_window_push_modal(TimelineItem *item) {
 }
 
+static bool s_phone_disconnected;
+
 struct pbl_pp_session *pbl_pp_session_get_system(void) {
-  // This can't be NULL (in that case we don't try to send the message)
-  return (struct pbl_pp_session *)1;
+  // Without a session we don't try to send the message
+  return s_phone_disconnected ? nullptr : (struct pbl_pp_session *)1;
 }
 
 void pbl_pp_session_set_responsiveness(struct pbl_pp_session *session,
