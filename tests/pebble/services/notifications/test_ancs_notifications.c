@@ -280,3 +280,14 @@ void test_ancs_notifications__snapshot_removes_every_gone_notification(void) {
   cl_assert(!fake_notification_storage_is_removed(&from_android));
   cl_assert_equal_i(fake_notification_storage_get_remove_count(), num_ios - 2);
 }
+
+// Notifications that cannot be removed end the snapshot instead of being found again forever.
+void test_ancs_notifications__snapshot_stops_on_what_cannot_be_removed(void) {
+  for (int i = 0; i < 12; i++) {
+    fake_notification_storage_add_header(&(Uuid){.byte0 = i + 1}, 100 + i, true);
+  }
+  fake_notification_storage_set_remove_fails(true);
+  ancs_notifications_handle_snapshot(nullptr, 0);
+  // One batch, then the same notifications come back first and it stops.
+  cl_assert_equal_i(fake_notification_storage_get_remove_count(), 8);
+}

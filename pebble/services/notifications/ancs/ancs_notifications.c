@@ -512,11 +512,17 @@ void ancs_notifications_handle_snapshot(const uint32_t *uids, size_t count) {
     .count = count,
   };
   size_t num_removed = 0;
+  Uuid previous_first = UUID_INVALID;
   notification_storage_lock();
   do {
     // Removed ones are skipped by the next pass
     ctx.num_gone = 0;
     notification_storage_iterate(prv_find_gone_cb, &ctx);
+    if ((ctx.num_gone > 0) && uuid_equal(&ctx.gone[0], &previous_first)) {
+      // It could not be removed: stop rather than find it again and again
+      break;
+    }
+    previous_first = ctx.gone[0];
     for (size_t i = 0; i < ctx.num_gone; i++) {
       prv_remove_stored(&ctx.gone[i]);
     }

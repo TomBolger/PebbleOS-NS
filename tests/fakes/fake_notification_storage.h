@@ -18,6 +18,7 @@ static TimelineItem s_existing_ancs_notification = {
 static SerializedTimelineItemHeader s_iterate_headers[FAKE_NOTIFICATION_STORAGE_MAX_HEADERS];
 static bool s_iterate_header_removed[FAKE_NOTIFICATION_STORAGE_MAX_HEADERS];
 static int s_num_iterate_headers = 0;
+static bool s_remove_fails = false;
 
 extern PBL_T_STATIC bool prv_deep_copy_attributes_actions(AttributeList *attr_list,
                                                           TimelineItemActionGroup *action_group,
@@ -27,6 +28,7 @@ void fake_notification_storage_reset(void) {
   s_notification_store_count = 0;
   s_notification_remove_count = 0;
   s_num_iterate_headers = 0;
+  s_remove_fails = false;
   s_existing_ancs_notification =
       (TimelineItem){.header = (CommonTimelineItemHeader){.id = UUID_INVALID, .ancs_uid = 0}};
 }
@@ -57,6 +59,11 @@ void fake_notification_storage_add_header(const Uuid *id, uint32_t ancs_uid, boo
   };
   s_iterate_header_removed[s_num_iterate_headers] = false;
   s_num_iterate_headers++;
+}
+
+//! Removing leaves the notifications stored, as when the file cannot be written.
+void fake_notification_storage_set_remove_fails(bool fails) {
+  s_remove_fails = fails;
 }
 
 bool fake_notification_storage_is_removed(const Uuid *id) {
@@ -110,6 +117,9 @@ bool notification_storage_get_status(const Uuid *id, uint8_t *status) {
 
 void notification_storage_remove(const Uuid *id) {
   ++s_notification_remove_count;
+  if (s_remove_fails) {
+    return;
+  }
   for (int i = 0; i < s_num_iterate_headers; i++) {
     if (memcmp(&s_iterate_headers[i].common.id, id, sizeof(*id)) == 0) {
       s_iterate_header_removed[i] = true;
