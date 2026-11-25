@@ -317,3 +317,24 @@ void test_timeline_actions__dismiss_all_stored_empty(void) {
   cl_assert_equal_i(s_send_count, 0);
   cl_assert_equal_i(s_removed_events, 0);
 }
+
+// Item action menus
+///////////////////////////
+
+static TimelineItem prv_item(TimelineItemType type, LayoutId layout, TimelineItemAction *actions,
+                             uint8_t num_actions) {
+  return (TimelineItem){
+    .header = {.type = type, .layout = layout},
+    .action_group = {.num_actions = num_actions, .actions = actions},
+  };
+}
+
+// A pin without actions gets Remove; other items don't
+void test_timeline_actions__item_menu_never_empty(void) {
+  TimelineItem pin = prv_item(TimelineItemTypePin, LayoutIdGeneric, nullptr, 0);
+  cl_assert(timeline_actions_has_item_menu(&pin));
+
+  TimelineItem notification =
+      prv_item(TimelineItemTypeNotification, LayoutIdNotification, nullptr, 0);
+  cl_assert(!timeline_actions_has_item_menu(&notification));
+}
