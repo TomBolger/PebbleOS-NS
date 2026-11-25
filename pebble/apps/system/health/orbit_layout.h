@@ -34,8 +34,12 @@
 #define HEALTH_ORBIT_BUBBLE_DISTANCE                                         \
   (HEALTH_ORBIT_RADIUS - HEALTH_ORBIT_NOTCH_WIDTH - HEALTH_ORBIT_NOTCH_GAP - \
    HEALTH_ORBIT_SELECTED_RADIUS)
-//! Rows between the bubbles of neighbouring sections
-#define HEALTH_ORBIT_STEP 42
+//! Length of the orbit, all the way round, mostly off the display: a full turn, with pi as
+//! 355 / 113, rounded
+#define HEALTH_ORBIT_LENGTH ((2 * 355 * HEALTH_ORBIT_BUBBLE_DISTANCE + 113 / 2) / 113)
+//! Distance along the orbit between the bubbles of neighbouring sections, which at rest are 42
+//! rows apart
+#define HEALTH_ORBIT_STEP 43
 
 //! Space kept between the round end of a ring and the sidebar
 #define HEALTH_RING_GAP 4
@@ -65,9 +69,13 @@ GPoint health_orbit_notch_tip(GSize display, int32_t turn);
 //! display is between its middle pixels, so a quarter turn maps the display onto itself.
 GPoint health_orbit_turn(GSize display, GPoint point, int32_t angle);
 
-//! Center of a section bubble \a offset rows below the notch along the orbit, as the timeline puts
-//! its pin icons on the sidebar's circle by row, with the sidebar turned by \a turn.
+//! Center of a section bubble \a offset along the orbit below the notch, round the sidebar's
+//! center as the timeline's pin icons are, with the sidebar turned by \a turn. HEALTH_ORBIT_LENGTH
+//! along is all the way round, back where it started.
 GPoint health_orbit_bubble_center(GSize display, int16_t offset, int32_t turn);
+
+//! \a offset along the orbit taken the shorter way round, from minus to plus half its length.
+int16_t health_orbit_wrap_offset(int16_t offset);
 
 //! Where text runs across the rows from \a top to \a bottom inside a ring whose inside is
 //! \a inner_radius from the middle of the \a display, clear of the sidebar; none on rows that are

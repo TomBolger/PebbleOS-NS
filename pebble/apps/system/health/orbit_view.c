@@ -65,8 +65,10 @@ struct HealthOrbitView {
   //! Whether Up past the first section and Down past the last one wrap round
   bool wrap;
 
-  //! Rows the orbit has turned by, HEALTH_ORBIT_STEP per section from the first
+  //! How far along the orbit it has turned, HEALTH_ORBIT_STEP per section from the first, and
+  //! where it turns to, which is past a full turn when it goes on round to wrap
   int16_t orbit_offset;
+  int16_t orbit_target;
   //! Angle the sidebar is turned by, back to the top as the week shows
   int16_t turn;
   //! Radius of the bubbles of the sections away from the notch
@@ -257,7 +259,7 @@ static void prv_draw_bubble(GContext *ctx, HealthOrbitView *view, HealthOrbitSec
 static void prv_draw_orbit(GContext *ctx, HealthOrbitView *view, GSize display) {
   graphics_context_set_antialiased(ctx, true);
   for (int i = 0; i < HealthOrbitSectionCount; i++) {
-    const int16_t offset = i * HEALTH_ORBIT_STEP - view->orbit_offset;
+    const int16_t offset = health_orbit_wrap_offset(i * HEALTH_ORBIT_STEP - view->orbit_offset);
     const int16_t closeness = PBL_MAX(HEALTH_ORBIT_STEP - PBL_ABS(offset), 0);
     const int16_t radius =
         view->neighbour_radius +
@@ -503,6 +505,7 @@ static void prv_rest(HealthOrbitView *view) {
   view->color_section = view->section;
   health_orbit_card_init(&view->card, view->section);
   view->orbit_offset = view->section * HEALTH_ORBIT_STEP;
+  view->orbit_target = view->orbit_offset;
   view->turn = view->week ? -QUARTER_TURN : 0;
   view->neighbour_radius = view->week ? 0 : NEIGHBOUR_BUBBLE_RADIUS;
   view->card_shown = !view->week;
@@ -555,8 +558,9 @@ static void prv_finish(HealthOrbitView *view) {
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 // Transitions
 
-//! Up or Down: the orbit turns a step, the card slides out the way the button goes as the next
-//! slides in, the old rings snap back, the new ones sweep in and its bubbles pop one after another
+//! Up or Down: the orbit turns a step, Up counterclockwise and Down clockwise, going on round the
+//! way it turns to wrap past the ends. The card slides out the way the button goes as the next
+//! slides in, the old rings snap back, the new ones sweep in and its bubbles pop one after another.
 static void prv_animate_section(HealthOrbitView *view, HealthOrbitSection section, bool down) {
   prv_finish(view);
   const int16_t height = view->layer.bounds.size.h;
@@ -594,7 +598,15 @@ static void prv_animate_section(HealthOrbitView *view, HealthOrbitSection sectio
                   FRAMES(5 + i), interpolate_moook_duration(), prv_moook_curve);
   }
 
-  prv_add_int16(&transition, &view->orbit_offset, section * HEALTH_ORBIT_STEP, 0, SLIDE_MS,
+  // The orbit keeps turning the way the button turns it, on round past the ends to wrap
+  int16_t target = section * HEALTH_ORBIT_STEP;
+  if (down && target < view->orbit_offset) {
+    target += HEALTH_ORBIT_LENGTH;
+  } else if (!down && target > view->orbit_offset) {
+    target -= HEALTH_ORBIT_LENGTH;
+  }
+  view->orbit_target = target;
+  prv_add_int16(&transition, &view->orbit_offset, target, 0, SLIDE_MS,
                 timeline_animation_interpolate_moook_soft);
   prv_play(view, &transition);
 }
