@@ -465,8 +465,8 @@ static GTextNode *prv_create_all_day_text_node(const TimelineLayout *layout) {
     .text.extent.node.type = LayoutNodeType_TextBuffer,
     .str = pbl_i18n_noop("All day"),
     .use_i18n = true,
-    .text.style = LayoutContentSize_Auto,
-    .text.style_font = TextStyleFont_Title,
+    // As heavy as the time it stands for
+    .text.font_key = FONT_KEY_BITHAM_30_BLACK,
     .text.fixed_lines = 1,
     .text.alignment = PBL_IF_RECT_ELSE(LayoutTextAlignment_Left, LayoutTextAlignment_Right),
     // The font leaves blank space above the text; this pulls the header back up. Large rect
