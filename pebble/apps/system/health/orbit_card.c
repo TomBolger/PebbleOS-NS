@@ -70,11 +70,13 @@
 //! The typical tick across a ring
 #define TICK_WIDTH 3
 
-//! The bubbles below the numbers, from the middle of the display
+//! The bubbles below the numbers: the middle row of the three from the middle of the display, and
+//! each one's center from where they are centered on that row
+#define BUBBLES_Y 67
 static const GPoint s_bubble_offsets[HEALTH_ORBIT_CARD_MAX_BUBBLES] = {
-  {-64, 56},
-  {-16, 78},
-  {32, 56},
+  {-48, -11},
+  {0, 11},
+  {48, -11},
 };
 
 #define TYPICAL_COLOR GColorYellow
@@ -82,14 +84,6 @@ static const GPoint s_bubble_offsets[HEALTH_ORBIT_CARD_MAX_BUBBLES] = {
 //! PebbleOS has no sleep goal, so the Sleep ring fills toward the typical sleep, or toward this
 //! much sleep until there is a typical night
 #define SLEEP_RING_FALLBACK_TARGET (8 * PBL_SEC_PER_HOUR)
-
-////////////////////////////////////////////////////////////////////////////////////////////////////
-// Text
-
-//! Middle of where a line \a height tall runs on row \a y inside the ring
-static int16_t prv_line_center_x(GSize display, int16_t inner_radius, int16_t y, int16_t height) {
-  return health_orbit_text_center_x(display, inner_radius, y - height / 2, y + height / 2);
-}
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 // Shapes
@@ -151,7 +145,8 @@ static void prv_draw_bubble(GContext *ctx, GPoint center, int16_t radius,
 
 static void prv_draw_bubbles(GContext *ctx, GSize display, const HealthOrbitCard *card,
                              const OrbitBubble *bubbles, int num_bubbles) {
-  const GPoint middle = prv_display_center(display);
+  const int16_t row = display.h / 2 + BUBBLES_Y;
+  const GPoint middle = GPoint(health_orbit_middle_x(display, CARD_INNER_RADIUS, row), row);
   for (int i = 0; i < num_bubbles; i++) {
     const GPoint center =
         GPoint(middle.x + s_bubble_offsets[i].x, middle.y + s_bubble_offsets[i].y + card->offset_y);
@@ -297,13 +292,13 @@ static void prv_draw_steps(GContext *ctx, GSize display, const HealthOrbitCard *
   /// The title of the Steps card of the round Health app
   health_orbit_draw_text(ctx, pbl_i18n_get("STEPS TODAY", i18n_owner),
                          &health_orbit_font_gothic_14_bold, GColorLightGray,
-                         prv_line_center_x(display, CARD_INNER_RADIUS, middle + CARD_TITLE_Y, 12),
+                         health_orbit_middle_x(display, CARD_INNER_RADIUS, middle + CARD_TITLE_Y),
                          middle + CARD_TITLE_Y + dy);
 
   char count[16];
   health_orbit_format_count(count, sizeof(count), steps);
   health_orbit_draw_text(ctx, count, &health_orbit_font_leco_38_bold, GColorScreaminGreen,
-                         prv_line_center_x(display, CARD_INNER_RADIUS, middle + CARD_VALUE_Y, 28),
+                         health_orbit_middle_x(display, CARD_INNER_RADIUS, middle + CARD_VALUE_Y),
                          middle + CARD_VALUE_Y + dy);
 
   // There is no step goal, so the ring fills toward the typical steps of a whole day
@@ -314,7 +309,7 @@ static void prv_draw_steps(GContext *ctx, GSize display, const HealthOrbitCard *
   snprintf(of_text, sizeof(of_text), pbl_i18n_get("of %s", i18n_owner),
            (typical_day > 0) ? typical_day_text : EM_DASH);
   health_orbit_draw_text(ctx, of_text, &health_orbit_font_gothic_18_bold, GColorLightGray,
-                         prv_line_center_x(display, CARD_INNER_RADIUS, middle + CARD_SUB_Y, 14),
+                         health_orbit_middle_x(display, CARD_INNER_RADIUS, middle + CARD_SUB_Y),
                          middle + CARD_SUB_Y + dy);
 
   char typical_text[16];
@@ -330,7 +325,7 @@ static void prv_draw_steps(GContext *ctx, GSize display, const HealthOrbitCard *
   };
   const int num_pill_runs = (typical_now > 0) ? 3 : 2;
   const GPoint pill_center =
-      GPoint(prv_line_center_x(display, CARD_INNER_RADIUS, middle + CARD_PILL_Y, CARD_PILL_H),
+      GPoint(health_orbit_middle_x(display, CARD_INNER_RADIUS, middle + CARD_PILL_Y),
              middle + CARD_PILL_Y + dy);
   prv_draw_pill(ctx, pill_center, CARD_PILL_W, CARD_PILL_H, GColorArmyGreen, pill_runs,
                 num_pill_runs, 5);
@@ -394,7 +389,7 @@ static void prv_draw_today(GContext *ctx, GSize display, const HealthOrbitCard *
   char date[24];
   prv_format_date(date, sizeof(date));
   health_orbit_draw_text(ctx, date, &health_orbit_font_gothic_14_bold, GColorLightGray,
-                         prv_line_center_x(display, inner, middle + TODAY_DATE_Y, 12),
+                         health_orbit_middle_x(display, inner, middle + TODAY_DATE_Y),
                          middle + TODAY_DATE_Y + dy);
 
   char steps[16];
@@ -405,7 +400,7 @@ static void prv_draw_today(GContext *ctx, GSize display, const HealthOrbitCard *
     {pbl_i18n_get("steps", i18n_owner), &health_orbit_font_gothic_18_bold, GColorWhite},
   };
   health_orbit_draw_runs(ctx, steps_runs, PBL_ARRAY_SIZE(steps_runs), TODAY_LABEL_GAP,
-                         prv_line_center_x(display, inner, middle + TODAY_STEPS_Y, 22),
+                         health_orbit_middle_x(display, inner, middle + TODAY_STEPS_Y),
                          middle + TODAY_STEPS_Y + dy);
 
   const int32_t sleep = health_data_current_sleep_get(health_data);
@@ -425,7 +420,7 @@ static void prv_draw_today(GContext *ctx, GSize display, const HealthOrbitCard *
      TODAY_LABEL_GAP - TODAY_SLEEP_GAP},
   };
   health_orbit_draw_runs(ctx, sleep_runs, PBL_ARRAY_SIZE(sleep_runs), TODAY_SLEEP_GAP,
-                         prv_line_center_x(display, inner, middle + TODAY_SLEEP_Y, 22),
+                         health_orbit_middle_x(display, inner, middle + TODAY_SLEEP_Y),
                          middle + TODAY_SLEEP_Y + dy);
 
   // The sleep against the typical sleep and the deep sleep, the deep sleep alone if both do not fit
@@ -444,13 +439,16 @@ static void prv_draw_today(GContext *ctx, GSize display, const HealthOrbitCard *
   }
   const GRangeHorizontal range = health_orbit_text_range(
       display, inner, middle + TODAY_DETAIL_Y - 7, middle + TODAY_DETAIL_Y + 7);
+  const int16_t detail_x = health_orbit_middle_x(display, inner, middle + TODAY_DETAIL_Y);
+  const int16_t room =
+      2 * PBL_MIN(detail_x - range.origin_x, range.origin_x + range.size_w - detail_x);
   const HealthOrbitRun detail_run = {detail, &health_orbit_font_gothic_14, GColorLightGray};
-  if (detail[0] == '\0' || health_orbit_run_width(ctx, &detail_run) > range.size_w) {
+  if (detail[0] == '\0' || health_orbit_run_width(ctx, &detail_run) > room) {
     /// The deep sleep, as "deep 1h 40m"
     snprintf(detail, sizeof(detail), pbl_i18n_get("deep %s", i18n_owner), deep);
   }
-  health_orbit_draw_text(ctx, detail, &health_orbit_font_gothic_14, GColorLightGray,
-                         range.origin_x + range.size_w / 2, middle + TODAY_DETAIL_Y + dy);
+  health_orbit_draw_text(ctx, detail, &health_orbit_font_gothic_14, GColorLightGray, detail_x,
+                         middle + TODAY_DETAIL_Y + dy);
 
   char distance[HEALTH_WHOLE_AND_DECIMAL_LENGTH];
   health_util_format_whole_and_decimal(distance, sizeof(distance),
@@ -468,9 +466,8 @@ static void prv_draw_today(GContext *ctx, GSize display, const HealthOrbitCard *
     {active, &health_orbit_font_gothic_18_bold, GColorWhite},
     {pbl_i18n_get("min", i18n_owner), &health_orbit_font_gothic_14, GColorLightGray},
   };
-  const GPoint pill_center =
-      GPoint(prv_line_center_x(display, inner, middle + TODAY_PILL_Y, TODAY_PILL_H),
-             middle + TODAY_PILL_Y + dy);
+  const GPoint pill_center = GPoint(health_orbit_middle_x(display, inner, middle + TODAY_PILL_Y),
+                                    middle + TODAY_PILL_Y + dy);
   prv_draw_pill(ctx, pill_center, TODAY_PILL_W, TODAY_PILL_H, GColorDarkGray, pill_runs,
                 PBL_ARRAY_SIZE(pill_runs), 3);
 }
@@ -516,11 +513,11 @@ static void prv_draw_sleep(GContext *ctx, GSize display, const HealthOrbitCard *
   /// The title of the Sleep card of the round Health app
   health_orbit_draw_text(ctx, pbl_i18n_get("LAST NIGHT", i18n_owner),
                          &health_orbit_font_gothic_14_bold, GColorBabyBlueEyes,
-                         prv_line_center_x(display, CARD_INNER_RADIUS, middle + CARD_TITLE_Y, 12),
+                         health_orbit_middle_x(display, CARD_INNER_RADIUS, middle + CARD_TITLE_Y),
                          middle + CARD_TITLE_Y + dy);
 
   prv_draw_sleep_duration(ctx, sleep,
-                          prv_line_center_x(display, CARD_INNER_RADIUS, middle + CARD_VALUE_Y, 28),
+                          health_orbit_middle_x(display, CARD_INNER_RADIUS, middle + CARD_VALUE_Y),
                           middle + CARD_VALUE_Y + dy, i18n_owner);
 
   const int32_t start = health_data_sleep_get_start_time(health_data);
@@ -533,7 +530,7 @@ static void prv_draw_sleep(GContext *ctx, GSize display, const HealthOrbitCard *
     char span[40];
     snprintf(span, sizeof(span), "%s " EN_DASH " %s", start_text, end_text);
     health_orbit_draw_text(ctx, span, &health_orbit_font_gothic_18_bold, GColorBabyBlueEyes,
-                           prv_line_center_x(display, CARD_INNER_RADIUS, middle + CARD_SUB_Y, 14),
+                           health_orbit_middle_x(display, CARD_INNER_RADIUS, middle + CARD_SUB_Y),
                            middle + CARD_SUB_Y + dy);
   }
 
@@ -550,7 +547,7 @@ static void prv_draw_sleep(GContext *ctx, GSize display, const HealthOrbitCard *
   };
   const int num_pill_runs = (typical > 0 && sleep > 0) ? 3 : 2;
   const GPoint pill_center =
-      GPoint(prv_line_center_x(display, CARD_INNER_RADIUS, middle + CARD_PILL_Y, CARD_PILL_H),
+      GPoint(health_orbit_middle_x(display, CARD_INNER_RADIUS, middle + CARD_PILL_Y),
              middle + CARD_PILL_Y + dy);
   prv_draw_pill(ctx, pill_center, CARD_PILL_W, CARD_PILL_H, GColorLiberty, pill_runs, num_pill_runs,
                 5);

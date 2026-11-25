@@ -85,10 +85,17 @@ GRangeHorizontal health_orbit_text_range(GSize display, int16_t inner_radius, in
   return (GRangeHorizontal){.origin_x = start, .size_w = end - start};
 }
 
-int16_t health_orbit_text_center_x(GSize display, int16_t inner_radius, int16_t top,
-                                   int16_t bottom) {
-  const GRangeHorizontal range = health_orbit_text_range(display, inner_radius, top, bottom);
-  return range.origin_x + range.size_w / 2;
+int16_t health_orbit_middle_x(GSize display, int16_t inner_radius, int16_t row) {
+  // In quarter pixels: the middle of an even display is between its middle pixels
+  const int64_t middle_x = 2 * (display.w - 1);
+  const int64_t middle_y = 2 * (display.h - 1);
+  const GPoint sidebar = health_orbit_center(display, 0);
+  const int64_t center_x = (middle_x + 4 * sidebar.x) / 2;
+  const int64_t center_y = (middle_y + 4 * sidebar.y) / 2;
+  const int64_t radius = 2 * (inner_radius + HEALTH_ORBIT_RADIUS);
+  const int64_t dy = 4 * row - center_y;
+  const int64_t dx = (PBL_ABS(dy) < radius) ? integer_sqrt(radius * radius - dy * dy) : 0;
+  return prv_round_div(center_x - dx, 4);
 }
 
 void health_orbit_ring_angles(GSize display, int16_t outer_radius, int16_t thickness,
