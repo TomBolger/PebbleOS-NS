@@ -824,6 +824,9 @@ static void prv_list_pin_create_layout(TimelineLayer *layer, TimelineListPinView
     .context = &pin->info,
   };
   pin->layout = (TimelineLayout *)layout_create(item->header.layout, &config);
+  // Its frame is only ever moved, so nothing is cut off as it moves: the glyphs that reach past
+  // it, such as the descenders of its last line, show at rest and moving alike
+  layer_set_clips((Layer *)pin->layout, false);
   layer_add_child(&layer->layouts_layer, (Layer *)pin->layout);
   layer_add_child(&layer->layouts_layer, (Layer *)&pin->layout->icon_layer);
 }
@@ -1348,7 +1351,6 @@ static void prv_list_reset(TimelineLayer *layer) {
   for (int i = 0; i < list->num_pins; i++) {
     TimelineListPinView *pin = list->pins[i];
     prv_list_set_frame(layer, pin, &pin->frame);
-    layer_set_clips((Layer *)pin->layout, false);
     pin->from = pin->frame;
     pin->from.origin.y += slide;
 #if PBL_ROUND
@@ -1424,8 +1426,6 @@ static void prv_list_start_pin_move(TimelineLayer *layer, TimelineListPinView *p
                                        layer->list.interpolate);
 #endif
   layer_set_frame((Layer *)pin->layout, &pin->from);
-  // A pin growing into the selected one reveals its text as its frame grows
-  layer_set_clips((Layer *)pin->layout, true);
 }
 
 static void prv_list_finish_pin_move(TimelineLayer *layer, TimelineListPinView *pin) {
@@ -1433,8 +1433,6 @@ static void prv_list_finish_pin_move(TimelineLayer *layer, TimelineListPinView *
 #if PBL_RECT
   timeline_layout_finish_icon_up_down(pin->layout);
 #endif
-  // At rest, glyphs may reach past a pin's frame
-  layer_set_clips((Layer *)pin->layout, false);
 }
 
 #define MAX_LIST_UP_DOWN_ANIMATIONS (2 * TIMELINE_LIST_MAX_PINS + 2)
