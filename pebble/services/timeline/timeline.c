@@ -705,7 +705,9 @@ static void prv_do_remote_action(const Uuid *id, TimelineItemActionType type, ui
 
 static void prv_remove_pin_action(const TimelineItem *item, const TimelineItemAction *action,
                                   const AttributeList *attributes) {
-  if (item->header.from_watch) {
+  // The phone only knows the actions it gave: a pin from the watch, or a Remove the watch added
+  // without a phone action id, is removed on the watch
+  if (item->header.from_watch || action->id == TIMELINE_INVALID_ACTION_ID) {
     // remove it via BlobDB
     blob_db_delete(BlobDBIdPins, (uint8_t *)&item->header.id, UUID_SIZE);
 
