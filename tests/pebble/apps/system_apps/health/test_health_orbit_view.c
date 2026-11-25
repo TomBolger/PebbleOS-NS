@@ -198,6 +198,51 @@ void test_health_orbit_view__render_sleep_nap(void) {
   cl_check(gbitmap_pbi_eq(&s_ctx.dest_bitmap, TEST_PBI_FILE));
 }
 
+void test_health_orbit_view__render_steps_week(void) {
+  s_data = prv_sample_data();
+  prv_render(&s_data, HealthOrbitSectionSteps);
+  prv_show_week(s_view, true);
+  window_render(&s_view->window, &s_ctx);
+  cl_check(gbitmap_pbi_eq(&s_ctx.dest_bitmap, TEST_PBI_FILE));
+}
+
+void test_health_orbit_view__render_sleep_week(void) {
+  s_data = prv_sample_data();
+  prv_render(&s_data, HealthOrbitSectionSleep);
+  prv_show_week(s_view, true);
+  window_render(&s_view->window, &s_ctx);
+  cl_check(gbitmap_pbi_eq(&s_ctx.dest_bitmap, TEST_PBI_FILE));
+}
+
+void test_health_orbit_view__render_steps_week_no_data(void) {
+  s_data = (HealthData){};
+  prv_render(&s_data, HealthOrbitSectionSteps);
+  prv_show_week(s_view, true);
+  window_render(&s_view->window, &s_ctx);
+  cl_check(gbitmap_pbi_eq(&s_ctx.dest_bitmap, TEST_PBI_FILE));
+}
+
+void test_health_orbit_view__render_sleep_week_long(void) {
+  // The longest values fit their rows, and the line above them the bezel
+  s_data = prv_sample_data();
+  for (int i = 0; i < HEALTH_ORBIT_WEEK_NUM_ROWS; i++) {
+    s_data.sleep_data[i] = HOURS(11, 58) - i * HOURS(0, 1);
+  }
+  s_data.typical_sleep = HOURS(10, 59);
+  prv_render(&s_data, HealthOrbitSectionSleep);
+  prv_show_week(s_view, true);
+  window_render(&s_view->window, &s_ctx);
+  cl_check(gbitmap_pbi_eq(&s_ctx.dest_bitmap, TEST_PBI_FILE));
+}
+
+void test_health_orbit_view__select_on_today_keeps_the_card(void) {
+  s_data = prv_sample_data();
+  prv_render(&s_data, HealthOrbitSectionToday);
+  prv_select_click_handler(nullptr, s_view);
+  cl_assert(!s_view->week);
+  prv_render(&s_data, HealthOrbitSectionSteps);
+}
+
 void test_health_orbit_view__launch_on_sleep(void) {
   s_launch_args = HealthCardType_Sleep;
   HealthOrbitView *view = health_orbit_view_create(&(HealthData){});
