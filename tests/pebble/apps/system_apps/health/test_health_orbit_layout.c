@@ -141,6 +141,38 @@ void test_health_orbit_layout__orbit_goes_all_the_way_round(void) {
                     2 * HEALTH_ORBIT_STEP);
 }
 
+//! Whether a bubble \a radius big \a offset along the orbit is all off the display
+static bool prv_bubble_out_of_sight(int16_t offset, int16_t radius) {
+  const GPoint bubble = health_orbit_bubble_center(DISPLAY, health_orbit_wrap_offset(offset), 0);
+  // In half pixels, as the middle of an even display is between pixels
+  const int32_t dx = 2 * bubble.x - (PBL_DISPLAY_WIDTH - 1);
+  const int32_t dy = 2 * bubble.y - (PBL_DISPLAY_HEIGHT - 1);
+  return integer_sqrt(dx * dx + dy * dy) >= PBL_DISPLAY_WIDTH + 2 * radius;
+}
+
+void test_health_orbit_layout__days_without_bubbles_are_out_of_sight(void) {
+  // A day comes into reach, or leaves it, out of sight, as big as it can be
+  cl_assert(prv_bubble_out_of_sight(HEALTH_ORBIT_DAY_REACH, HEALTH_ORBIT_SELECTED_RADIUS));
+  cl_assert(prv_bubble_out_of_sight(-HEALTH_ORBIT_DAY_REACH, HEALTH_ORBIT_SELECTED_RADIUS));
+  // Not so near that a day in sight has none: the days a step along show
+  cl_assert(!prv_bubble_out_of_sight(HEALTH_ORBIT_STEP, 12));
+  cl_assert(!prv_bubble_out_of_sight(-HEALTH_ORBIT_STEP, 12));
+}
+
+void test_health_orbit_layout__swap_keeps_each_set_out_of_sight_of_the_other(void) {
+  // Before the swap the days in reach are round the back, and after it the sections, whichever
+  // section is on the notch
+  for (int16_t offset = -HEALTH_ORBIT_DAY_REACH; offset <= HEALTH_ORBIT_DAY_REACH; offset++) {
+    cl_assert(prv_bubble_out_of_sight(offset + HEALTH_ORBIT_SWAP, HEALTH_ORBIT_SELECTED_RADIUS));
+  }
+  for (int16_t offset = -2 * HEALTH_ORBIT_STEP; offset <= 2 * HEALTH_ORBIT_STEP; offset++) {
+    cl_assert(prv_bubble_out_of_sight(offset - HEALTH_ORBIT_SWAP, HEALTH_ORBIT_SELECTED_RADIUS));
+  }
+  // On the way, the days in reach a step after the last section, as the sections are apart
+  cl_assert_equal_i(HEALTH_ORBIT_SWAP - HEALTH_ORBIT_DAY_REACH - 2 * HEALTH_ORBIT_STEP,
+                    HEALTH_ORBIT_STEP);
+}
+
 void test_health_orbit_layout__sidebar_reach(void) {
   // Where a line from the sidebar's center at the reach meets its edge is on the display's edge
   const int32_t reach = health_orbit_sidebar_reach(DISPLAY);

@@ -111,6 +111,38 @@ void health_orbit_format_time_of_day(char *buffer, size_t size, int32_t seconds)
                     true /* add_space */);
 }
 
+void health_orbit_day_time(int days_ago, struct pbl_tm *tm_out) {
+  const time_t time = pbl_realtime() - days_ago * PBL_SEC_PER_DAY;
+  pbl_localtime_r(&time, tm_out);
+}
+
+const char *health_orbit_short_weekday(int wday, void *i18n_owner) {
+  switch (wday) {
+    case PBL_SUNDAY:
+      /// Sunday in two letters, on a bubble of the round Health app's orbit of days
+      return pbl_i18n_get("Su", i18n_owner);
+    case PBL_MONDAY:
+      /// Monday in two letters, on a bubble of the round Health app's orbit of days
+      return pbl_i18n_get("Mo", i18n_owner);
+    case PBL_TUESDAY:
+      /// Tuesday in two letters, on a bubble of the round Health app's orbit of days
+      return pbl_i18n_get("Tu", i18n_owner);
+    case PBL_WEDNESDAY:
+      /// Wednesday in two letters, on a bubble of the round Health app's orbit of days
+      return pbl_i18n_get("We", i18n_owner);
+    case PBL_THURSDAY:
+      /// Thursday in two letters, on a bubble of the round Health app's orbit of days
+      return pbl_i18n_get("Th", i18n_owner);
+    case PBL_FRIDAY:
+      /// Friday in two letters, on a bubble of the round Health app's orbit of days
+      return pbl_i18n_get("Fr", i18n_owner);
+    case PBL_SATURDAY:
+      /// Saturday in two letters, on a bubble of the round Health app's orbit of days
+      return pbl_i18n_get("Sa", i18n_owner);
+  }
+  return "";
+}
+
 GDrawState health_orbit_clip(GContext *ctx, GRect box) {
   const GDrawState state = graphics_context_get_drawing_state(ctx);
   box.origin = gpoint_add(box.origin, state.drawing_box.origin);
