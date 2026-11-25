@@ -1151,10 +1151,6 @@ static void prv_round_actions_did_close(NotificationWindowData *data) {
   }
   prv_refresh_pop_timer(data);
 }
-
-static void prv_round_actions_closed(ActionMenu *action_menu, void *context) {
-  action_menu_hosted_did_close(action_menu);
-}
 #endif
 
 static void prv_action_menu_did_close(ActionMenu *action_menu, const ActionMenuItem *item,
@@ -1172,14 +1168,6 @@ static void prv_action_menu_did_close(ActionMenu *action_menu, const ActionMenuI
 }
 
 #if PBL_ROUND
-static void prv_round_actions_host_close(ActionMenu *action_menu, bool animated, void *context) {
-  notification_round_actions_close(animated);
-}
-
-static const ActionMenuHost s_round_actions_host = {
-  .close = prv_round_actions_host_close,
-};
-
 //! Where the current card's banner is on screen, for the menu to swing it from.
 static NotificationRoundActionsBanner prv_round_actions_banner(NotificationWindowData *data,
                                                                LayoutLayer *layout, GColor color) {
@@ -1197,21 +1185,11 @@ static NotificationRoundActionsBanner prv_round_actions_banner(NotificationWindo
 //! Opens the actions over the card instead of in a menu window.
 static bool prv_open_round_actions(NotificationWindowData *data, ActionMenuConfig *config,
                                    LayoutLayer *layout) {
-  data->action_menu = timeline_actions_open_hosted_action_menu(
-      config, window_manager_get_window_stack(NOTIFICATION_PRIORITY), &s_round_actions_host, data);
-  if (!data->action_menu) {
-    action_menu_hierarchy_destroy(config->root_level, nullptr, nullptr);
-    pbl_i18n_free_all(config->root_level);
-    return false;
-  }
   const NotificationRoundActionsBanner banner =
       prv_round_actions_banner(data, layout, config->colors.background);
-  if (!notification_round_actions_open(&data->window, data->action_menu, &banner,
-                                       prv_round_actions_closed, data)) {
-    // Nothing on screen to close: finish it off right away
-    ActionMenu *action_menu = data->action_menu;
-    action_menu_close(action_menu, false);
-    action_menu_hosted_did_close(action_menu);
+  data->action_menu = notification_round_actions_open_timeline_menu(
+      &data->window, config, window_manager_get_window_stack(NOTIFICATION_PRIORITY), &banner);
+  if (!data->action_menu) {
     return false;
   }
   swap_layer_stop_hold(&data->swap_layer);
