@@ -6,6 +6,7 @@
 #include "orbit_card.h"
 #include "orbit_layout.h"
 
+#include <pbl/i18n/i18n.h>
 #include <pbl/services/timeline/health_layout.h>
 #include <pbl/util/math.h>
 #include <pbl/util/size.h>
@@ -46,6 +47,7 @@ struct HealthOrbitView {
   HealthOrbitIcon icons[HealthOrbitSectionCount];
   //! Section of the card shown
   HealthOrbitSection section;
+  HealthOrbitCard card;
   //! Whether Up past the first section and Down past the last one wrap round
   bool wrap;
 
@@ -206,6 +208,8 @@ static void prv_layer_update_proc(Layer *layer, GContext *ctx) {
   graphics_context_set_fill_color(ctx, bg);
   graphics_fill_rect(ctx, &layer->bounds);
 
+  health_orbit_card_draw_content(ctx, &view->card, view->health_data, view);
+  health_orbit_card_draw_rings(ctx, &view->card, view->health_data, true /* tracks */);
   prv_fill_sidebar(ctx, display, view->turn, health_orbit_section_color(view->section), bg);
   prv_draw_orbit(ctx, view, display);
 }
@@ -215,6 +219,7 @@ static void prv_layer_update_proc(Layer *layer, GContext *ctx) {
 
 static void prv_show_section(HealthOrbitView *view, HealthOrbitSection section) {
   view->section = section;
+  health_orbit_card_init(&view->card, section);
   view->orbit_offset = section * HEALTH_ORBIT_STEP;
   layer_mark_dirty(&view->layer);
 }
@@ -288,6 +293,7 @@ void health_orbit_view_destroy(HealthOrbitView *view) {
   }
   layer_deinit(&view->layer);
   window_deinit(&view->window);
+  pbl_i18n_free_all(view);
   app_free(view);
 }
 
