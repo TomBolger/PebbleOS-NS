@@ -60,10 +60,12 @@ static void prv_port_hole_transition_animation_update(GContext *ctx, Animation *
                                      direction_negative ? ring_max_thickness : -ring_max_thickness);
 
   if (distance_normalized > transition_progress_threshold) {
-    // Second half of the transition: the new frame, moved the way the first half moved the old
-    // one. What it uncovers lies under the ring.
+    // Second half of the transition: the new frame, with transparent modals such as the timeline
+    // peek as part of it, moved the way the first half moved the old one. What it uncovers lies
+    // under the ring.
     compositor_scaled_app_fb_copy(GRect(0, 0, PBL_DISPLAY_WIDTH, PBL_DISPLAY_HEIGHT),
                                   true /* copy_relative_to_origin */);
+    compositor_render_modal();
     if (direction_vertical) {
       graphics_private_move_pixels_vertically(&ctx->dest_bitmap, -current_offset_px);
     } else {
@@ -95,6 +97,7 @@ const CompositorTransition *compositor_port_hole_transition_app_get(
   static const CompositorTransition s_impl = {
     .init = prv_port_hole_transition_animation_init,
     .update = prv_port_hole_transition_animation_update,
+    .skip_modal_render_after_update = true, // Modals are rendered under the ring
   };
 
   return &s_impl;

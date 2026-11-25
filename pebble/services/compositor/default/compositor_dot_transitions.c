@@ -230,12 +230,17 @@ static void prv_collapse_animation_update_round(GContext *ctx,
   if (!config.collapse_starting_animation) {
     compositor_scaled_app_fb_copy(GRect(0, 0, PBL_DISPLAY_WIDTH, PBL_DISPLAY_HEIGHT),
                                   false /* copy_relative_to_origin */);
+    // Transparent modals, e.g. the timeline peek, are part of the frame being revealed
+    compositor_render_modal();
   }
 
   compositor_dot_transitions_collapsing_ring_animation_update(
       ctx, distance_normalized, config.background_color, config.collapse_dot_color);
 }
 #endif
+
+//! Round renders the modals itself, under the ring; rect leaves them to the compositor
+#define DOT_TRANSITION_SKIP_MODAL_RENDER PBL_IF_ROUND_ELSE(true, false)
 
 static void prv_collapse_animation_update(GContext *ctx, DotTransitionAnimationConfiguration config,
                                           uint32_t distance_normalized) {
@@ -330,12 +335,14 @@ const CompositorTransition *compositor_dot_transition_timeline_get(bool timeline
       static const CompositorTransition s_impl = {
         .init = prv_dot_transition_to_timeline_future_animation_init,
         .update = prv_static_dot_transition_animation_update,
+        .skip_modal_render_after_update = DOT_TRANSITION_SKIP_MODAL_RENDER,
       };
       return &s_impl;
     } else {
       static const CompositorTransition s_impl = {
         .init = prv_dot_transition_from_timeline_future_animation_init,
         .update = prv_static_dot_transition_animation_update,
+        .skip_modal_render_after_update = DOT_TRANSITION_SKIP_MODAL_RENDER,
       };
       return &s_impl;
     }
@@ -344,12 +351,14 @@ const CompositorTransition *compositor_dot_transition_timeline_get(bool timeline
       static const CompositorTransition s_impl = {
         .init = prv_dot_transition_from_timeline_past_animation_init,
         .update = prv_static_dot_transition_animation_update,
+        .skip_modal_render_after_update = DOT_TRANSITION_SKIP_MODAL_RENDER,
       };
       return &s_impl;
     } else {
       static const CompositorTransition s_impl = {
         .init = prv_dot_transition_to_timeline_past_animation_init,
         .update = prv_static_dot_transition_animation_update,
+        .skip_modal_render_after_update = DOT_TRANSITION_SKIP_MODAL_RENDER,
       };
       return &s_impl;
     }
@@ -364,6 +373,7 @@ const CompositorTransition *compositor_dot_transition_app_fetch_get(void) {
   static const CompositorTransition s_impl = {
     .init = prv_dot_transition_from_app_fetch_animation_init,
     .update = prv_static_dot_transition_animation_update,
+    .skip_modal_render_after_update = DOT_TRANSITION_SKIP_MODAL_RENDER,
   };
   return &s_impl;
 }
