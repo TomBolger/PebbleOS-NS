@@ -13,6 +13,7 @@
 #include <pbl/i18n/i18n.h>
 #include <pbl/kernel/fatal.h>
 #include <pbl/kernel/time.h>
+#include <pbl/pp/session.h>
 #include <pbl/services/blob_db/pin_db.h>
 #include <pbl/services/clock.h>
 #include <pbl/services/notifications/alerts_preferences_private.h>
@@ -20,6 +21,7 @@
 #include <pbl/services/notifications/notification_style.h>
 #include <pbl/services/time.h>
 #include <pbl/services/timeline/notification_layout.h>
+#include <pbl/services/timeline/timeline_actions.h>
 #include <pbl/util/list.h>
 #include <pbl/util/size.h>
 #include <pbl/util/string.h>
@@ -38,6 +40,7 @@
 #include <applib/ui/menu_cell_layer.h>
 #include <applib/ui/menu_layer_private.h>
 #include <applib/ui/ui.h>
+#include <comm/ble/gap_le_connect.h>
 #include <kernel/ui/system_icons.h>
 #include <popups/notifications/notification_window.h>
 #include <process_state/app_state/app_state.h>
@@ -216,13 +219,15 @@ static void prv_dialog_unloaded(void *context) {
   data->actionable_dialog = nullptr;
 }
 
+// Whether a dismissal can reach the phone: over the Pebble protocol, or ANCS on an LE link
+static bool prv_phone_is_connected(void) {
+  return (pbl_pp_session_get_system() != nullptr) || gap_le_connect_is_connected_as_slave();
+}
+
 static void prv_confirmed_handler(ClickRecognizerRef recognizer, void *context) {
   NotificationsData *data = context;
-  notification_storage_reset_and_init();
-  prv_loaded_notification_list_deinit(data->loaded_notification_list);
-  data->loaded_notification_list = nullptr;
-  notification_shade_deinit(&data->shade);
-  notification_shade_init_with_prefs(&data->shade);
+  // The phone resends the notifications it still has, so dismiss them there too
+  timeline_actions_dismiss_all_stored();
   actionable_dialog_pop(data->actionable_dialog);
 
   // Create and display DONE dialog
@@ -254,7 +259,12 @@ static void prv_settings_clear_history_window_push(NotificationsData *data) {
   actionable_dialog_set_click_config_provider(actionable_dialog, prv_dialog_click_config);
   actionable_dialog_set_action_bar_type(actionable_dialog, DialogActionBarConfirm, nullptr);
   Dialog *dialog = actionable_dialog_get_dialog(actionable_dialog);
-  dialog_set_text(dialog, pbl_i18n_get("Clear history?", data));
+  dialog_set_text(dialog,
+                  prv_phone_is_connected()
+                      /// Asked before dismissing every notification on the phone and the watch
+                      ? pbl_i18n_get("Dismiss all notifications on your phone and watch?", data)
+                      /// Asked before clearing the watch's notifications while the phone is away
+                      : pbl_i18n_get("Phone not connected. Clear the watch only?", data));
   TimelineResourceInfo timeline_res = {
     .res_id = TIMELINE_RESOURCE_GENERIC_QUESTION,
   };
