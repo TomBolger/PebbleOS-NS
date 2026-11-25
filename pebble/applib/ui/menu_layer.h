@@ -422,6 +422,11 @@ typedef struct MenuLayer {
   AppTimer *scrollbar_hide_timer;
 
   //! @internal
+  //! Round only: the wrap around in progress, on the heap while it runs, see list_wrap.h. Carved
+  //! from \ref padding.
+  struct MenuLayerWrap *wrap;
+
+  //! @internal
   //! If true, there will be padding after the bottom item in the menu
   //! Defaults to 'true'
   bool pad_bottom : 1;
@@ -534,7 +539,7 @@ typedef struct MenuLayer {
   //! Add some padding to keep track of the \ref MenuLayer size budget.
   //! As long as the size stays within this budget, 2.x apps can safely use the 3.x MenuLayer type.
   //! The actual size check is generated from applib_malloc.json, not asserted here.
-  uint8_t padding[12];
+  uint8_t padding[8];
 } MenuLayer;
 
 //! Padding used below the last item in pixels
