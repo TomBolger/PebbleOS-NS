@@ -42,7 +42,7 @@ static const Mare s_maria[] = {
   {-0.06f, 0.50f, 0.14f},  // Nubium
 };
 
-// Single-precision only: there is no FPU, and soft doubles cost flash.
+// Single precision only: doubles are always soft-float, and cost flash.
 static float prv_wrap_degrees(float deg) {
   const int32_t turns = (int32_t)(deg / 360.0f);
   deg -= (float)turns * 360.0f;
