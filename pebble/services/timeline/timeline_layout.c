@@ -812,7 +812,7 @@ static void prv_get_pin_view_bounds(TimelineLayout *layout, GRect *box_out) {
 
 static void prv_get_card_view_bounds(TimelineLayout *layout, GRect *box_out) {
   const GRect *frame = &((Layer *)layout)->frame;
-  int16_t left_margin = TIMELINE_CARD_MARGIN;
+  int16_t left_margin = TIMELINE_CARD_COLUMN_MARGIN;
 #if PBL_RECT
   if (!timeline_layer_sidebar_is_on_right()) {
     // Keep the text clear of the action button on the left edge
@@ -820,14 +820,15 @@ static void prv_get_card_view_bounds(TimelineLayout *layout, GRect *box_out) {
     left_margin = PBL_MAX(left_margin, action_button_get_visible_width() + action_button_gap);
   }
 #endif
-  *box_out = GRect(left_margin, 0, frame->size.w - left_margin - TIMELINE_CARD_MARGIN,
+  *box_out = GRect(left_margin, 0, frame->size.w - left_margin - TIMELINE_CARD_COLUMN_MARGIN,
                    TIMELINE_MAX_BOX_HEIGHT);
 }
 
 static void prv_render_view(TimelineLayout *layout, GContext *ctx, bool render, GSize *size_out) {
   const bool is_card = (layout->layout_layer.mode == LayoutLayerModeCard);
   const bool is_peek = (layout->layout_layer.mode == LayoutLayerModePeek);
-  [[maybe_unused]] const bool paging = PBL_IF_ROUND_ELSE((is_card || is_peek), false);
+  // Cards scroll freely in a fixed column, as notifications do
+  [[maybe_unused]] const bool paging = PBL_IF_ROUND_ELSE(is_peek, false);
   GRect box;
   (is_card ? prv_get_card_view_bounds : prv_get_pin_view_bounds)(layout, &box);
   graphics_context_set_text_color(ctx,
@@ -990,7 +991,12 @@ static void prv_page_break_node_callback(GContext *ctx, const GRect *box,
                                          const GTextNodeDrawConfig *config, bool render,
                                          GSize *size_out, void *user_data) {
   TimelineLayout *layout = user_data;
-  const GRect *bounds = &layout->layout_layer.layer.bounds;
+  // The card's first page fills the screen below the status bar, however tall the card is
+  const GRect page = {
+    GPointZero,
+    {layout->layout_layer.layer.bounds.size.w, TIMELINE_CARD_PAGE_HEIGHT}
+  };
+  const GRect *bounds = &page;
   const int16_t height = bounds->size.h - box->origin.y;
   if (render) {
     graphics_context_set_fill_color(ctx, layout_get_colors((LayoutLayer *)layout)->primary_color);

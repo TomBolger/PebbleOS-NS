@@ -4,22 +4,20 @@
 #pragma once
 
 #include <pbl/services/timeline/item.h>
+#include <pbl/services/timeline/swap_layer.h>
 #include <pbl/services/timeline/timeline_layout.h>
 
 #include <applib/graphics/text.h>
 #include <applib/ui/layer.h>
-#include <applib/ui/property_animation_private.h>
 #include <kernel/events.h>
 
-//! The timeline item layer is a mock UI used to display timeline items
-//! until actual layouts are implemented. It is somewhat related to the
-//! notification layer, although it does not swap between items.
+//! The timeline item layer shows the card of a timeline item. It scrolls the card as a
+//! notification's, in a swap layer that holds this one card and never swaps.
 
 typedef struct {
   Layer layer;
-  //!< The line that's currently at the top of the frame.
-  int16_t scroll_offset_pixels;
-  PropertyAnimation *animation;
+  //! Scrolls the card
+  SwapLayer swap_layer;
   TimelineItem *item;
   TimelineLayout *timeline_layout;
 } TimelineItemLayer;
@@ -42,14 +40,8 @@ void timeline_item_layer_deinit(TimelineItemLayer *item_layer);
 void timeline_item_layer_set_item(TimelineItemLayer *item_layer, TimelineItem *item,
                                   TimelineLayoutInfo *info);
 
-//! Down click handler for the TimelineItemLayer
-void timeline_item_layer_down_click_handler(ClickRecognizerRef recognizer, void *context);
-
-//! Up click handler for the TimelineItemLayer
-void timeline_item_layer_up_click_handler(ClickRecognizerRef recognizer, void *context);
-
 //! Convenience function to set the \ref ClickConfigProvider callback on the
-//! given window to menu layer's internal click config provider. This internal
-//! click configuration provider, will set up the default UP & DOWN handlers
+//! given window to the item layer's click config provider: the swap layer's UP & DOWN
+//! scrolling, SELECT for the item's actions and, in the timeline app, BACK to its pin
 void timeline_item_layer_set_click_config_onto_window(TimelineItemLayer *item_layer,
                                                       struct Window *window);
