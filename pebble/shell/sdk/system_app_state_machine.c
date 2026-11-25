@@ -45,6 +45,13 @@ AppInstallId system_app_state_machine_get_last_registered_app(void) {
   return APP_ID_LAUNCHER_MENU;
 }
 
+const void *system_app_state_machine_get_last_registered_app_args(void) {
+  return nullptr;
+}
+
+void system_app_state_machine_return_next_app_to(AppInstallId app_id, const void *args) {
+}
+
 const PebbleProcessMd *system_app_state_machine_get_default_app(void) {
   return launcher_menu_app_get_app_info();
 }
