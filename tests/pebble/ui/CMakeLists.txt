@@ -34,6 +34,15 @@ pbl_clar_test(test_list_wrap
     tests/stubs/stubs_animation.c
 )
 
+pbl_clar_test(test_menu_layer_wrap
+  MODULES gtypes menu_layer
+  SOURCES
+    pebble/applib/ui/animation_interpolate.c
+    pebble/applib/ui/layer.c
+    tests/stubs/stubs_animation.c
+  PLATFORMS gabbro
+)
+
 pbl_clar_test(test_pill_action_menu
   MODULES gtypes menu_layer
   SOURCES
@@ -225,6 +234,7 @@ pbl_clar_test(test_menu_layer
   SOURCES
     pebble/applib/ui/layer.c
     pebble/applib/ui/scroll_layer.c
+    pebble/applib/ui/list_wrap.c
     pebble/applib/ui/menu_layer.c
     pebble/applib/ui/menu_layer_round.c
     pebble/applib/ui/menu_text_scroll.c
@@ -248,6 +258,7 @@ pbl_clar_test(test_action_menu_layer
     pebble/applib/ui/action_menu_layer.c
     pebble/applib/ui/layer.c
     pebble/applib/ui/scroll_layer.c
+    pebble/applib/ui/list_wrap.c
     pebble/applib/ui/menu_layer.c
     pebble/applib/ui/menu_layer_round.c
     pebble/applib/ui/menu_text_scroll.c

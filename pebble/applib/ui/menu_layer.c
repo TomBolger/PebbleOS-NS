@@ -19,6 +19,7 @@
 #include <applib/legacy2/ui/menu_layer_legacy2.h>
 #include <applib/ui/animation_timing.h>
 #include <applib/ui/click.h>
+#include <applib/ui/list_wrap.h>
 #include <applib/ui/menu_text_scroll.h>
 #include <applib/ui/window.h>
 #include <process_management/process_manager.h>
@@ -232,8 +233,96 @@ static void prv_menu_scroll_offset_changed_handler(ScrollLayer *scroll_layer, vo
 #endif
 }
 
+#if PBL_ROUND
+//! A wrap around in progress, see list_wrap.h
+typedef struct MenuLayerWrap {
+  ListWrap list_wrap;
+  //! The row the list leaves, laid out where it is
+  MenuCellSpan from;
+  //! The highlight as the wrap starts, in the content's coordinates where the list rests once done
+  int16_t highlight_from_y;
+  int16_t highlight_from_h;
+  //! How far from where they are laid out the rows of the lap being drawn are drawn
+  int16_t lap_shift;
+} MenuLayerWrap;
+
+static void prv_wrap_update(ListWrap *list_wrap, void *context) {
+  MenuLayer *menu_layer = context;
+  const MenuLayerWrap *wrap = menu_layer->wrap;
+  // The highlight moves from the row left to the row landed on as they are on screen
+  const int16_t h =
+      interpolate_int16(list_wrap->progress, wrap->highlight_from_h, menu_layer->selection.h);
+  const GSize size = GSize(menu_layer->scroll_layer.layer.frame.size.w, h);
+  const int16_t y =
+      list_wrap_interpolate(list_wrap, wrap->highlight_from_y, menu_layer->selection.y);
+  menu_layer->inverter.layer.bounds = (GRect){.size = size};
+  menu_layer->inverter.layer.frame = (GRect){.origin = GPoint(0, y), .size = size};
+  layer_mark_dirty(&menu_layer->scroll_layer.layer);
+}
+
+static void prv_wrap_stopped(ListWrap *list_wrap, void *context) {
+  MenuLayer *menu_layer = context;
+  applib_free(menu_layer->wrap);
+  menu_layer->wrap = nullptr;
+}
+#endif
+
+//! Lands a wrap around in progress
+static void prv_wrap_stop(MenuLayer *menu_layer) {
+#if PBL_ROUND
+  if (menu_layer->wrap) {
+    list_wrap_stop(&menu_layer->wrap->list_wrap);
+  }
+#endif
+}
+
+#if PBL_ROUND
+//! Selects \a index past the end the list moves to going \a down, or up, carrying on round the
+//! list as if it were a loop instead of scrolling back through it, see list_wrap.h
+static void prv_wrap_around(MenuLayer *menu_layer, MenuIndex index, bool down) {
+  // Whatever moves stops where it is, for the wrap to carry on from there
+  prv_wrap_stop(menu_layer);
+  prv_cancel_selection_animation(menu_layer);
+  Animation *scroll_animation =
+      property_animation_get_animation(menu_layer->scroll_layer.animation);
+  if (animation_is_scheduled(scroll_animation)) {
+    animation_unschedule(scroll_animation);
+  }
+  ScrollLayer *scroll_layer = &menu_layer->scroll_layer;
+  const MenuCellSpan from = menu_layer->selection;
+  const int16_t from_offset = scroll_layer_get_content_offset(scroll_layer).y;
+  const GRect highlight = menu_layer->inverter.layer.frame;
+
+  // The list is where it rests from the start; the wrap only draws it shifted from there
+  menu_layer_set_selected_index(menu_layer, index, MenuRowAlignCenter, false /* animated */);
+
+  const int16_t to_offset = scroll_layer_get_content_offset(scroll_layer).y;
+  MenuLayerWrap *wrap = applib_malloc(sizeof(MenuLayerWrap));
+  if (!wrap) {
+    return;
+  }
+  *wrap = (MenuLayerWrap){
+    .from = from,
+    .highlight_from_y = (int16_t)(highlight.origin.y + from_offset - to_offset),
+    .highlight_from_h = highlight.size.h,
+  };
+  const ListWrapLaps laps =
+      list_wrap_laps(down, scroll_layer->layer.frame.size.h,
+                     scroll_layer_get_content_size(scroll_layer).h, from_offset, to_offset);
+  menu_layer->wrap = wrap;
+  if (!list_wrap_start(&wrap->list_wrap, laps, prv_wrap_update, prv_wrap_stopped, menu_layer)) {
+    menu_layer->wrap = nullptr;
+    applib_free(wrap);
+    return;
+  }
+  // Until its first frame, the wrap shows what was on screen
+  prv_wrap_update(&wrap->list_wrap, menu_layer);
+}
+#endif
+
 static void prv_menu_select_click_handler(ClickRecognizerRef recognizer, void *context) {
   MenuLayer *menu_layer = context;
+  prv_wrap_stop(menu_layer);
   // If the selection animation is running, complete it. Note that 2.x apps don't have a selection
   // animation.
   if (menu_layer->animation.animation) {
@@ -339,8 +428,16 @@ static bool prv_menu_scroll_handle_wrap_around(MenuLayer *menu_layer, ClickRecog
     *wraparound_dest_index = new_index;
   }
 
-  const bool animated = true;
-  menu_layer_set_selected_index(menu_layer, *wraparound_dest_index, MenuRowAlignCenter, animated);
+#if PBL_ROUND
+  if (!process_manager_compiled_with_legacy2_sdk() &&
+      (menu_index_compare(wraparound_dest_index, &current_index) != 0)) {
+    prv_wrap_around(menu_layer, *wraparound_dest_index, !scrolling_up);
+  } else
+#endif
+  {
+    const bool animated = true;
+    menu_layer_set_selected_index(menu_layer, *wraparound_dest_index, MenuRowAlignCenter, animated);
+  }
   if (menu_layer->scroll_vibe_on_wrap_around) {
     menu_layer_play_scroll_vibe();
   }
@@ -783,6 +880,16 @@ static inline void prv_menu_layer_draw_section_header(MenuLayer *menu_layer, Lay
 
   prv_prepare_row(ctx, menu_layer, cell_layer, false);
 #if PBL_ROUND
+  // A highlight moving across the header shows over it too, as over the rows on either side
+  MenuRoundShape shape;
+  if (prv_draws_round_pill(menu_layer) && !menu_layer->round_pill_hidden &&
+      grect_overlaps_grect(&cell_layer->frame, &menu_layer->inverter.layer.frame) &&
+      prv_round_shape(menu_layer,
+                      GPoint(ctx->draw_state.drawing_box.origin.x,
+                             ctx->draw_state.drawing_box.origin.y - cursor->y),
+                      &shape)) {
+    prv_fill_round_shape(ctx, menu_layer, &shape);
+  }
   // The header bumps with the rows' content as the selection moves
   ctx->draw_state.drawing_box.origin.y += menu_layer->animation.cell_content_origin_offset_y;
 #endif
@@ -795,19 +902,41 @@ static inline void prv_menu_layer_draw_section_header(MenuLayer *menu_layer, Lay
   graphics_context_set_drawing_state(ctx, prev_state);
 }
 
+//! How far from where they are laid out the rows being drawn are drawn
+static int16_t prv_render_shift(const MenuLayer *menu_layer) {
+#if PBL_ROUND
+  if (menu_layer->wrap) {
+    return menu_layer->wrap->lap_shift;
+  }
+#endif
+  return 0;
+}
+
+//! Whether the cell at the iterator's cursor is in frame where it is drawn, \a shift from where
+//! it is laid out
+static bool prv_render_iterator_cell_in_frame(const MenuRenderIterator *it, int16_t shift,
+                                              int16_t *top_diff) {
+  const int16_t y = it->it.cursor.y + shift;
+  const int16_t bottom_y = it->it.cell_bottom_y + shift;
+  *top_diff = y - it->content_top_y;
+  return (*top_diff >= 0 && y <= it->content_bottom_y) ||
+         (bottom_y >= it->content_top_y && bottom_y <= it->content_bottom_y);
+}
+
 static void prv_menu_layer_render_section_from_iterator(MenuIterator *iterator) {
   MenuRenderIterator *it = (MenuRenderIterator *)iterator;
-  const int16_t top_diff = it->it.cursor.y - it->content_top_y;
-  const bool is_header_in_frame =
-      (top_diff >= 0 && it->it.cursor.y <= it->content_bottom_y) ||
-      (it->it.cell_bottom_y >= it->content_top_y && it->it.cell_bottom_y <= it->content_bottom_y);
-  if (is_header_in_frame) {
+  const int16_t shift = prv_render_shift(it->it.menu_layer);
+  int16_t top_diff;
+  if (prv_render_iterator_cell_in_frame(it, shift, &top_diff)) {
+    const int16_t iter_y = it->it.cursor.y;
+    it->it.cursor.y += shift;
     // Draw section header:
     prv_menu_layer_draw_section_header(it->it.menu_layer, &it->cell_layer, &it->it.cursor, it->ctx);
     // Draw the separator on top of the cell:
     if (top_diff >= it->it.cursor.sep) {
       prv_menu_layer_draw_separator(it->it.menu_layer, &it->cell_layer, &it->it.cursor, it->ctx);
     }
+    it->it.cursor.y = iter_y;
   }
 }
 
@@ -815,12 +944,11 @@ static void prv_menu_layer_render_row_from_iterator(MenuIterator *iterator) {
   MenuRenderIterator *it = (MenuRenderIterator *)iterator;
   const int16_t iter_y = it->it.cursor.y;
 
-  const int16_t top_diff = it->it.cursor.y - it->content_top_y;
-  const bool is_row_in_frame =
-      (top_diff >= 0 && it->it.cursor.y <= it->content_bottom_y) ||
-      (it->it.cell_bottom_y >= it->content_top_y && it->it.cell_bottom_y <= it->content_bottom_y);
-  if (is_row_in_frame) {
+  const int16_t shift = prv_render_shift(it->it.menu_layer);
+  int16_t top_diff;
+  if (prv_render_iterator_cell_in_frame(it, shift, &top_diff)) {
     it->cursor_in_frame = true;
+    it->it.cursor.y += shift;
     // Draw the cell
     prv_menu_layer_draw_row(it->it.menu_layer, &it->cell_layer, &it->it.cursor, it->ctx);
     // Draw the separator on top of the cell
@@ -1013,6 +1141,27 @@ static void PBL_NOINLINE prv_draw_background(MenuLayer *menu_layer, GContext *ct
   graphics_context_set_drawing_state(ctx, prev_state);
 }
 
+//! Draws the rows in frame, walking from \a start, a row laid out where it is, each drawn
+//! \a y_shift from there, see prv_render_shift()
+static void prv_render_lap(MenuRenderIterator *it, MenuCellSpan start, int16_t y_shift) {
+  it->cursor_in_frame = false;
+  it->it.cursor = start;
+  // We're caching the y-coord and index of the one row, as our "anchor" point in the menu.
+  // We'll be walking downward and upward from that index until the rows fall off the screen.
+  const int16_t content_center_y = (it->content_top_y + it->content_bottom_y) / 2;
+  if (content_center_y >= start.y + y_shift) {
+    // Walk downward from start, then upward
+    prv_menu_layer_walk_downward_from_iterator(&it->it);
+    it->it.cursor = start;
+    prv_menu_layer_walk_upward_from_iterator(&it->it);
+  } else {
+    // Walk upward from start, then downward
+    prv_menu_layer_walk_upward_from_iterator(&it->it);
+    it->it.cursor = start;
+    prv_menu_layer_walk_downward_from_iterator(&it->it);
+  }
+}
+
 void menu_layer_update_proc(Layer *scroll_content_layer, GContext *ctx) {
   MenuLayer *menu_layer = (MenuLayer *)(((uint8_t *)scroll_content_layer) -
                                         offsetof(MenuLayer, scroll_layer.content_sublayer));
@@ -1025,9 +1174,14 @@ void menu_layer_update_proc(Layer *scroll_content_layer, GContext *ctx) {
     prv_draw_background(menu_layer, ctx, &menu_layer->scroll_layer.layer, false);
   }
 
-  if (menu_layer->overscroll_stretched) {
-    // The overscroll-stretched selection background: cells paint over their own part, so only
-    // the gap beyond the content edge shows it.
+  bool highlight_beyond_rows = menu_layer->overscroll_stretched;
+#if PBL_ROUND
+  // A wrap around moves the highlight across the gap between the laps of the list too
+  highlight_beyond_rows = highlight_beyond_rows || menu_layer->wrap;
+#endif
+  if (highlight_beyond_rows) {
+    // The selection background, overscroll-stretched or wrapping round: cells paint over their own
+    // part, so only the gaps beyond the content's edges show it.
 #if PBL_ROUND
     MenuRoundShape shape;
     if (prv_draws_round_pill(menu_layer)) {
@@ -1055,7 +1209,6 @@ void menu_layer_update_proc(Layer *scroll_content_layer, GContext *ctx) {
     .it =
         {
           .menu_layer = menu_layer,
-          .cursor = menu_layer->cache.cursor,
           .row_callback_after_geometry = prv_menu_layer_render_row_from_iterator,
           .section_callback = prv_menu_layer_render_section_from_iterator,
         },
@@ -1084,19 +1237,32 @@ void menu_layer_update_proc(Layer *scroll_content_layer, GContext *ctx) {
   // Set separator color
   graphics_context_set_fill_color(ctx, GColorBlack);
 
-  // We're caching the y-coord and index of the one row, as our "anchor" point in the menu.
-  // We'll be walking downward and upward from that index until the rows fall off the screen.
-  const int16_t content_center_y = (content_top_y + content_bottom_y) / 2;
-  if (content_center_y >= menu_layer->cache.cursor.y) {
-    // Walk downward from cache.cursor, then upward
-    prv_menu_layer_walk_downward_from_iterator(&render_iter->it);
-    render_iter->it.cursor = menu_layer->cache.cursor;
-    prv_menu_layer_walk_upward_from_iterator(&render_iter->it);
-  } else {
-    // Walk upward from cache.cursor, then downward
-    prv_menu_layer_walk_upward_from_iterator(&render_iter->it);
-    render_iter->it.cursor = menu_layer->cache.cursor;
-    prv_menu_layer_walk_downward_from_iterator(&render_iter->it);
+#if PBL_ROUND
+  if (menu_layer->wrap) {
+    // Wrapping around: the lap the list lands on, then the one it leaves
+    MenuLayerWrap *wrap = menu_layer->wrap;
+    const int16_t content_h = scroll_layer_get_content_size(&menu_layer->scroll_layer).h;
+    const int16_t shift = list_wrap_shift(&wrap->list_wrap);
+    const int16_t shifts[] = {shift, shift + wrap->list_wrap.laps.loop};
+    const MenuCellSpan starts[] = {menu_layer->cache.cursor, wrap->from};
+    for (unsigned i = 0; i < PBL_ARRAY_SIZE(shifts); i++) {
+      if ((shifts[i] >= content_bottom_y) || (shifts[i] + content_h <= content_top_y)) {
+        // Off the frame
+        continue;
+      }
+      wrap->lap_shift = shifts[i];
+      prv_render_lap(render_iter, starts[i], shifts[i]);
+      // Only rows of the lap landed on are anchors where they are laid out
+      if (!render_iter->cache_set) {
+        render_iter->new_cache = menu_layer->cache.cursor;
+        render_iter->cache_set = true;
+      }
+    }
+    wrap->lap_shift = 0;
+  } else
+#endif
+  {
+    prv_render_lap(render_iter, menu_layer->cache.cursor, 0);
   }
   layer_remove_from_parent(&render_iter->cell_layer);
 
@@ -1187,6 +1353,7 @@ void menu_layer_deinit(MenuLayer *menu_layer) {
   // cancelled with no client callbacks before its client state is torn down (double-deinit safe).
   prv_menu_touch_nav_deregister(menu_layer);
 #endif
+  prv_wrap_stop(menu_layer);
   prv_cancel_selection_animation(menu_layer);
   prv_scrollbar_cancel_hide_timer(menu_layer);
   menu_text_scroll_layer_deinit(&menu_layer->scroll_layer.content_sublayer);
@@ -1780,6 +1947,8 @@ typedef struct {
 
 static MenuLayerBeforeSelectionChangeState prv_capture_state_and_cancel_center_focus_animation(
     MenuLayer *menu_layer) {
+  // A wrap around lands before anything else moves
+  prv_wrap_stop(menu_layer);
   // it's critical to cancel the animation for center focus here so that any potential in-between
   // selection state will be cleaned up
   const bool was_animating =
@@ -2382,6 +2551,8 @@ static void prv_menu_touch_pin_center_highlight(MenuLayer *menu_layer) {
 }
 
 void menu_layer_touch_handle_touchdown(MenuLayer *menu_layer) {
+  // A finger takes over from a wrap around where it lands
+  prv_wrap_stop(menu_layer);
   // Finger down while the content is coasting: catch it. The tap this gesture may become is then a
   // stop, not a select. The flag is ASSIGNED (never OR-ed) so it always reflects this gesture: a
   // caught-then-abandoned gesture's leftover is overwritten by the next Touchdown.
