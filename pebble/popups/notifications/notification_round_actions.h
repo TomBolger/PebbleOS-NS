@@ -56,10 +56,6 @@ ActionMenu *notification_round_actions_open_timeline_menu(
 //! the layer is gone, which is immediately if not animated.
 void notification_round_actions_close(bool animated);
 
-//! The opening progress for time @p t, both in thousandths: an ease out with a small overshoot,
-//! played backwards for closing.
-int32_t notification_round_actions_ease(int32_t t);
-
 //! Scroll position of the rows for @p selected of @p count rows of @p row_height: the first row
 //! starts two rows above the centre, the selection walks down to the centre, the list then
 //! scrolls under it and stops with the last row two below the centre.

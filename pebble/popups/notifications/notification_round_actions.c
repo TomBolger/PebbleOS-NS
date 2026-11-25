@@ -23,6 +23,7 @@
 #include <applib/ui/action_menu_hierarchy.h>
 #include <applib/ui/action_menu_window_private.h>
 #include <applib/ui/animation.h>
+#include <applib/ui/animation_interpolate.h>
 #include <applib/ui/layer.h>
 #include <applib/ui/status_bar_layer.h>
 #include <applib/ui/vibes.h>
@@ -114,14 +115,6 @@ static RoundActions s_menu;
 
 // ---------------------------------------------------------------------------------------------
 // Pure helpers
-
-int32_t notification_round_actions_ease(int32_t t) {
-  // 1 + (s + 1)(t - 1)^3 + s (t - 1)^2 with s = 1.2, in thousandths
-  const int64_t u = t - 1000;
-  const int64_t u2 = u * u / 1000;
-  const int64_t u3 = u2 * u / 1000;
-  return (int32_t)(1000 + (2200 * u3) / 1000 + (1200 * u2) / 1000);
-}
 
 int32_t notification_round_actions_scroll_for(uint16_t selected, uint16_t count,
                                               int16_t row_height) {
@@ -223,7 +216,7 @@ static void prv_draw_rows(GContext *ctx, int16_t shift) {
 
 static void prv_update_proc(Layer *layer, GContext *ctx) {
   const GRect bounds = layer->bounds;
-  const int32_t e = notification_round_actions_ease(s_menu.progress);
+  const int32_t e = interpolate_ease_out_overshoot(s_menu.progress);
 
   graphics_context_set_fill_color(ctx, notification_style_bg());
   if (s_menu.progress >= 1000) {
@@ -403,7 +396,7 @@ static void prv_slide_card(void) {
   if (!s_menu.card) {
     return;
   }
-  const int32_t e = notification_round_actions_ease(s_menu.progress);
+  const int32_t e = interpolate_ease_out_overshoot(s_menu.progress);
   GRect frame = s_menu.card->frame;
   frame.origin.x = s_menu.card_x - (int16_t)(PBL_DISPLAY_WIDTH * e / 1000);
   layer_set_frame(s_menu.card, &frame);

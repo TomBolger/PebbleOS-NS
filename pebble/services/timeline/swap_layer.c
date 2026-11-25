@@ -11,6 +11,7 @@
 #include <applib/applib_malloc.auto.h>
 #include <applib/graphics/graphics.h>
 #include <applib/graphics/gtypes.h>
+#include <applib/ui/animation_interpolate.h>
 #include <applib/ui/kino/kino_reel.h>
 #include <applib/ui/property_animation.h>
 #include <applib/ui/status_bar_layer.h>
@@ -662,14 +663,6 @@ static int16_t prv_get_max_scroll_dy(SwapLayer *swap_layer) {
 // Next bubble
 
 #if PBL_ROUND
-// Ease out with a slight overshoot, in thousandths: 1 + (s + 1)(t - 1)^3 + s (t - 1)^2, s = 1.2
-static int32_t prv_banner_rise_ease(int32_t t) {
-  const int64_t u = t - 1000;
-  const int64_t u2 = u * u / 1000;
-  const int64_t u3 = u2 * u / 1000;
-  return (int32_t)(1000 + (2200 * u3) / 1000 + (1200 * u2) / 1000);
-}
-
 static SwapLayer *prv_banners_owner(Layer *layer) {
   return (SwapLayer *)((uint8_t *)layer - offsetof(SwapLayer, banners.layer));
 }
@@ -797,7 +790,7 @@ static void prv_banners_update_proc(Layer *layer, GContext *ctx) {
   ctx->draw_state.clip_box.size.h = PBL_DISPLAY_HEIGHT;
   grect_clip(&ctx->draw_state.clip_box, &DISP_FRAME);
   prv_draw_banner(swap_layer, ctx, swap_layer->current, &swap_layer->banners.current, 0);
-  const int32_t risen = prv_banner_rise_ease(swap_layer->banners.rise_progress);
+  const int32_t risen = interpolate_ease_out_overshoot(swap_layer->banners.rise_progress);
   const int16_t drop = (int16_t)((LAYOUT_PEEK_HEIGHT_ROUND * (1000 - risen)) / 1000);
   prv_draw_banner(swap_layer, ctx, swap_layer->next, &swap_layer->banners.next, drop);
 }
