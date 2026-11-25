@@ -9,6 +9,7 @@
 #include <pbl/kernel/assert.h>
 #include <pbl/services/timeline/layout_layer.h>
 #include <pbl/services/timeline/timeline_actions.h>
+#include <pbl/services/timeline/timeline_resources.h>
 #include <pbl/util/math.h>
 #include <pbl/util/testing.h>
 
@@ -20,7 +21,52 @@
 #include <kernel/pebble_tasks.h>
 #include <kernel/ui/kernel_ui.h>
 #include <kernel/ui/modals/modal_manager.h>
+#include <popups/notifications/notification_round_actions.h>
 #include <process_state/app_state/app_state.h>
+
+#if PBL_ROUND
+//! The item layer whose round action menu is open
+static TimelineItemLayer *s_round_actions_item_layer;
+
+static void prv_round_actions_did_close(ActionMenu *action_menu, const ActionMenuItem *item,
+                                        void *context) {
+  TimelineItemLayer *item_layer = s_round_actions_item_layer;
+  s_round_actions_item_layer = nullptr;
+  Window *window = item_layer ? layer_get_window(&item_layer->layer) : nullptr;
+  if (window) {
+    // The menu took the window's clicks over
+    swap_layer_set_click_config_onto_window(&item_layer->swap_layer, window);
+  }
+}
+
+//! Opens the actions over the card, sliding it out, as a notification's.
+static bool prv_open_round_actions(TimelineItemLayer *item_layer, ActionMenuConfig *config,
+                                   WindowStack *window_stack) {
+  Window *window = layer_get_window(&item_layer->layer);
+  TimelineLayout *layout = item_layer->timeline_layout;
+  if (!window || !layout || s_round_actions_item_layer) {
+    return false;
+  }
+  NotificationRoundActionsBanner banner = {
+    .color = config->colors.background,
+    // A card has no banner: the bubble grows in from above the screen
+    .bottom = 0,
+    .card = &item_layer->layer,
+  };
+  timeline_resources_get_id(&layout->icon_info, TimelineResourceSizeTiny, &banner.icon);
+  config->did_close = prv_round_actions_did_close;
+  s_round_actions_item_layer = item_layer;
+  if (!notification_round_actions_open_timeline_menu(window, config, window_stack, &banner)) {
+    s_round_actions_item_layer = nullptr;
+    return false;
+  }
+  swap_layer_stop_hold(&item_layer->swap_layer);
+#ifdef CONFIG_TOUCH
+  swap_layer_touch_release(&item_layer->swap_layer);
+#endif
+  return true;
+}
+#endif
 
 static void prv_handle_select_click(ClickRecognizerRef recognizer, void *context) {
   TimelineItemLayer *item_layer = context;
@@ -41,6 +87,19 @@ static void prv_handle_select_click(ClickRecognizerRef recognizer, void *context
     .colors.foreground = colors->primary_color,
   };
   WindowStack *window_stack = window_manager_get_window_stack(ModalPriorityNotification);
+#if PBL_ROUND
+  if (prv_open_round_actions(item_layer, &config, window_stack)) {
+    return;
+  }
+  // Could not draw it over the card: a menu window, with a fresh hierarchy (the first went with
+  // the hosted menu)
+  config.did_close = nullptr;
+  config.root_level =
+      timeline_actions_create_item_root_level(item, TimelineItemActionSourceTimeline);
+  if (!config.root_level) {
+    return;
+  }
+#endif
   timeline_actions_push_action_menu(&config, window_stack);
 }
 
@@ -111,6 +170,13 @@ void timeline_item_layer_init(TimelineItemLayer *item_layer, const GRect *frame)
 }
 
 void timeline_item_layer_deinit(TimelineItemLayer *item_layer) {
+#if PBL_ROUND
+  if (s_round_actions_item_layer == item_layer) {
+    // The menu is drawn over this card
+    s_round_actions_item_layer = nullptr;
+    notification_round_actions_close(false /* animated */);
+  }
+#endif
   // Destroys the layout through the layout removed handler
   swap_layer_deinit(&item_layer->swap_layer);
   layer_deinit(&item_layer->layer);
