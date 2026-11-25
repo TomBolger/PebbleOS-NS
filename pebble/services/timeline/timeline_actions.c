@@ -18,6 +18,7 @@
 #include <pbl/services/notifications/ancs/ancs_notifications.h>
 #include <pbl/services/notifications/notification_constants.h>
 #include <pbl/services/notifications/notification_storage.h>
+#include <pbl/services/notifications/notifications.h>
 #include <pbl/services/time.h>
 #include <pbl/services/timeline/timeline.h>
 #include <pbl/services/timeline/timeline_actions.h>
@@ -1167,11 +1168,12 @@ ActionMenu *timeline_actions_push_response_menu(TimelineItem *item,
 }
 
 typedef struct {
-  ActionResultData *data;
+  ActionResultData *data; //!< Results shown to the user; nullptr when clearing storage
   int num_notifications;
   int next;
   bool performed_actions;
   bool ancs_bulk_mode;
+  bool remove_from_watch; //!< Also remove each item from notification storage
   NotificationInfo notif_list[];
 } DismissAllContext;
 
@@ -1190,6 +1192,21 @@ static bool prv_dismiss_all_load_item(NotificationInfo *info, TimelineItem *item
   return true;
 }
 
+static bool prv_is_ancs_action(const TimelineItemAction *action) {
+  return (action->type == TimelineItemActionTypeAncsNegative) ||
+         (action->type == TimelineItemActionTypeAncsPositive) ||
+         (action->type == TimelineItemActionTypeAncsDelete);
+}
+
+// Whether a dismissal sent while clearing would tell the phone anything new
+static bool prv_dismiss_reaches_phone(const TimelineItem *item, const TimelineItemAction *action) {
+  if (item->header.status & TimelineItemStatusDismissed) {
+    return false;
+  }
+  // ANCS dismissals are dropped quietly while disconnected; Pebble protocol ones would fail
+  return prv_is_ancs_action(action) || (pbl_pp_session_get_system() != nullptr);
+}
+
 static void prv_dismiss_all_step(void *context);
 
 // Queued after the dismiss send, so only one dismiss is in flight
@@ -1204,7 +1221,10 @@ static void prv_dismiss_all_step(void *context) {
   DismissAllContext *ctx = context;
 
   if (ctx->next == ctx->num_notifications) {
-    if (!ctx->performed_actions) {
+    if (ctx->remove_from_watch) {
+      PBL_LOG_DBG("Cleared %d notifications", ctx->num_notifications);
+      prv_reset_session_responsiveness();
+    } else if (!ctx->performed_actions) {
       PBL_LOG_DBG("Didn't take any actions, cleaning up");
       const bool success = false;
       prv_cleanup_action_result(ctx->data, success);
@@ -1217,7 +1237,10 @@ static void prv_dismiss_all_step(void *context) {
   TimelineItem item;
   if (prv_dismiss_all_load_item(info, &item)) {
     const TimelineItemAction *action = timeline_item_find_dismiss_action(&item);
-    if (action) {
+    // A bulk ANCS dismissal removes the notification from the UI itself
+    bool removed_from_ui = false;
+    if (action && (!ctx->remove_from_watch || prv_dismiss_reaches_phone(&item, action))) {
+      removed_from_ui = ctx->ancs_bulk_mode && prv_is_ancs_action(action);
       timeline_enable_ancs_bulk_action_mode(ctx->ancs_bulk_mode);
       timeline_enable_async_remote_action_mode(true);
       timeline_invoke_action(&item, action, nullptr);
@@ -1229,6 +1252,12 @@ static void prv_dismiss_all_step(void *context) {
       // notifications on Android while disconnected
       if (action->type == TimelineItemActionTypeAncsNegative) {
         ctx->ancs_bulk_mode = true;
+      }
+    }
+    if (ctx->remove_from_watch) {
+      notification_storage_remove(&info->id);
+      if (!removed_from_ui) {
+        notifications_handle_notification_removed(&info->id);
       }
     }
     timeline_item_free_allocated_buffer(&item);
@@ -1276,4 +1305,44 @@ void timeline_actions_dismiss_all(NotificationInfo *notif_list, int num_notifica
   memcpy(ctx->notif_list, notif_list, num_notifications * sizeof(NotificationInfo));
 
   prv_dismiss_all_step(ctx);
+}
+
+static bool prv_count_stored(void *data, SerializedTimelineItemHeader *header) {
+  (*(int *)data)++;
+  return true;
+}
+
+static bool prv_list_stored(void *data, SerializedTimelineItemHeader *header) {
+  DismissAllContext *ctx = data;
+  if (ctx->num_notifications == ctx->next) {
+    return false;
+  }
+  ctx->notif_list[ctx->num_notifications++] = (NotificationInfo){
+    .type = NotificationMobile,
+    .id = header->common.id,
+  };
+  return true;
+}
+
+static void prv_dismiss_all_stored_start(void *unused) {
+  int count = 0;
+  notification_storage_iterate(prv_count_stored, &count);
+
+  DismissAllContext *ctx =
+      pbl_malloc_check(sizeof(DismissAllContext) + count * sizeof(NotificationInfo));
+  *ctx = (DismissAllContext){
+    .next = count, // the capacity while listing
+    .ancs_bulk_mode = true,
+    .remove_from_watch = true,
+  };
+  notification_storage_iterate(prv_list_stored, ctx);
+  ctx->next = 0;
+
+  PBL_LOG_DBG("Clearing %d notifications", ctx->num_notifications);
+  prv_request_responsive_session();
+  prv_dismiss_all_step(ctx);
+}
+
+void timeline_actions_dismiss_all_stored(void) {
+  launcher_task_add_callback(prv_dismiss_all_stored_start, nullptr);
 }
