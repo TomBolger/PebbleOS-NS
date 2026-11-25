@@ -4,6 +4,7 @@
 #include "orbit_view.h"
 
 #include "orbit_card.h"
+#include "orbit_draw.h"
 #include "orbit_layout.h"
 
 #include <pbl/i18n/i18n.h>
@@ -176,11 +177,8 @@ static void prv_draw_bubble(GContext *ctx, HealthOrbitView *view, HealthOrbitSec
     return;
   }
   // A shrinking bubble shrinks its icon's view with it
-  const GDrawState state = graphics_context_get_drawing_state(ctx);
-  GRect clip = GRect(center.x - radius, center.y - radius, 2 * radius, 2 * radius);
-  clip.origin = gpoint_add(clip.origin, state.drawing_box.origin);
-  grect_clip(&clip, &state.clip_box);
-  ctx->draw_state.clip_box = clip;
+  const GDrawState state = health_orbit_clip(
+      ctx, GRect(center.x - radius, center.y - radius, 2 * radius, 2 * radius));
   const GSize size = gdraw_command_image_get_bounds_size(icon);
   gdraw_command_image_draw(ctx, icon, GPoint(center.x - size.w / 2, center.y - size.h / 2));
   graphics_context_set_drawing_state(ctx, state);
