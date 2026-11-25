@@ -84,6 +84,11 @@ int32_t health_data_current_distance_meters_get(HealthData *health_data);
 //! @return the current calories
 int32_t health_data_current_calories_get(HealthData *health_data);
 
+//! Get the time spent active today
+//! @param health_data A pointer to the health data to use
+//! @return the active time today in seconds
+int32_t health_data_current_active_seconds_get(HealthData *health_data);
+
 //! Get current number of steps that should be taken by this time today
 //! @param health_data A pointer to the health data to use
 //! @return The integer number of steps that should be taken by this time today
@@ -122,6 +127,11 @@ int32_t health_data_sleep_get_cur_wday_average(HealthData *health_data);
 //! @param health_data A pointer to the health data to use
 //! @return the current deep sleep length
 int32_t health_data_current_deep_sleep_get(HealthData *health_data);
+
+//! Get the historical deep sleep data
+//! @param health_data A pointer to the health data to use
+//! @return A pointer to the deep sleep of each night, as health_data_sleep_get() has its sleep
+int32_t *health_data_deep_sleep_get(HealthData *health_data);
 
 //! Get the sleep average over the past month
 //! @param health_data A pointer to the health data to use

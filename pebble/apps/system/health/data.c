@@ -100,9 +100,9 @@ void health_data_update(HealthData *health_data) {
 
   activity_get_metric_typical(ActivityMetricSleepTotalSeconds, wday, &health_data->typical_sleep);
 
-  int32_t deep_sleep_history[2];
-  activity_get_metric(ActivityMetricSleepRestfulSeconds, 2, deep_sleep_history);
-  health_data->deep_sleep = deep_sleep_history[day_offset];
+  activity_get_metric(ActivityMetricSleepRestfulSeconds, PBL_DAY_PER_WEEK,
+                      health_data->deep_sleep_data);
+  health_data->deep_sleep = health_data->deep_sleep_data[day_offset];
 
   int32_t sleep_start_history[2];
   activity_get_metric(ActivityMetricSleepEnterAtSeconds, 2, sleep_start_history);
@@ -144,6 +144,8 @@ void health_data_update_step_derived_metrics(HealthData *health_data) {
   // get calories
   health_data->current_calories = health_service_sum_today(HealthMetricActiveKCalories) +
                                   health_service_sum_today(HealthMetricRestingKCalories);
+
+  health_data->current_active_seconds = health_service_sum_today(HealthMetricActiveSeconds);
 }
 
 void health_data_update_steps(HealthData *health_data, uint32_t new_steps) {
@@ -155,6 +157,7 @@ void health_data_update_sleep(HealthData *health_data, uint32_t new_sleep,
                               uint32_t new_deep_sleep) {
   health_data->sleep_data[0] = new_sleep;
   health_data->deep_sleep = new_deep_sleep;
+  health_data->deep_sleep_data[0] = new_deep_sleep;
 }
 
 void health_data_update_current_bpm(HealthData *health_data) {
@@ -218,6 +221,10 @@ int32_t health_data_current_calories_get(HealthData *health_data) {
   return health_data->current_calories;
 }
 
+int32_t health_data_current_active_seconds_get(HealthData *health_data) {
+  return health_data->current_active_seconds;
+}
+
 static int32_t prv_health_data_get_n_average_chunks(HealthData *health_data, int number_of_chunks) {
   uint32_t total_steps_avg = 0;
   for (int i = 0; (i < ACTIVITY_NUM_METRIC_AVERAGES) && (i < number_of_chunks); i++) {
@@ -277,6 +284,10 @@ int32_t health_data_sleep_get_cur_wday_average(HealthData *health_data) {
 
 int32_t health_data_current_deep_sleep_get(HealthData *health_data) {
   return health_data->deep_sleep;
+}
+
+int32_t *health_data_deep_sleep_get(HealthData *health_data) {
+  return health_data->deep_sleep_data;
 }
 
 int32_t health_data_sleep_get_monthly_average(HealthData *health_data) {
