@@ -135,6 +135,35 @@ void notification_storage_iterate(bool (*iter_callback)(void *data,
 uint16_t notification_storage_get_count(void);
 
 /**
+ * @brief Digest of a set of notification ids, the same whatever their order.
+ *
+ * @p hash is the XOR of the FNV-1a 32-bit hash of each id's 16 bytes, so a phone can compute
+ * the same digest from the ids it sent.
+ */
+typedef struct NotificationStorageDigest {
+  uint16_t count;
+  uint32_t hash;
+} NotificationStorageDigest;
+
+/**
+ * @brief Add a notification id to a digest.
+ *
+ * @param digest Digest, zeroed for an empty set.
+ * @param id Notification id.
+ */
+void notification_storage_digest_add(NotificationStorageDigest *digest, const Uuid *id);
+
+/**
+ * @brief Digest of the stored notifications not marked deleted that come from one source.
+ *
+ * Hidden ones count too: they are still stored.
+ *
+ * @param parent_id Source of the notifications, e.g. UUID_NOTIFICATIONS_DATA_SOURCE.
+ * @param[out] digest Digest of their ids.
+ */
+void notification_storage_digest(const Uuid *parent_id, NotificationStorageDigest *digest);
+
+/**
  * @brief Iterate over all notifications, reading selected string attributes of recent ones.
  *
  * For notifications with a timestamp at or after @p item_cutoff, the string attributes listed in
