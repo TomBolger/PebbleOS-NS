@@ -27,6 +27,13 @@ pbl_clar_test(test_menu_layer_round
     pebble/applib/ui/menu_layer_round.c
 )
 
+pbl_clar_test(test_list_wrap
+  SOURCES
+    pebble/applib/ui/animation_interpolate.c
+    pebble/applib/ui/list_wrap.c
+    tests/stubs/stubs_animation.c
+)
+
 pbl_clar_test(test_pill_action_menu
   MODULES gtypes menu_layer
   SOURCES
