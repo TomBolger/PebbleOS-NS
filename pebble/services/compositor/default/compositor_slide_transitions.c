@@ -44,14 +44,13 @@ static void prv_shift_framebuffer_rows(GBitmap *dest_bitmap, int16_t start_row, 
   prv_copy_framebuffer_rows(dest_bitmap, &src_bitmap, start_row, end_row, -1, shift_amount);
 }
 
-static void prv_duplicate_framebuffer_row(GBitmap *dest_bitmap, int16_t start_row, int16_t end_row,
-                                          GBitmap *src_bitmap, int16_t dupe_row) {
-  const int16_t delta = start_row > end_row ? -1 : 1;
-  for (int16_t dest_row = start_row; dest_row != end_row; dest_row += delta) {
-    int16_t offset_y = (dupe_row >= 0 ? dupe_row : dest_row) - dest_row;
-    compositor_scaled_app_fb_copy_offset(GRect(0, dest_row, PBL_DISPLAY_WIDTH, 1),
-                                         false /* copy_relative_to_origin */, offset_y);
-  }
+//! Fills the rows from start_row up to end_row with row end_row, the app's edge where the app
+//! framebuffer ends short of the display
+static void prv_duplicate_framebuffer_row(GBitmap *dest_bitmap, int16_t start_row,
+                                          int16_t end_row) {
+  GBitmap src_bitmap = *dest_bitmap;
+  prv_copy_framebuffer_rows(dest_bitmap, &src_bitmap, start_row, end_row, end_row,
+                            0 /* shift_amount */);
 }
 
 static void prv_slide_transition_animation_update(GContext *ctx, Animation *animation,
@@ -123,9 +122,7 @@ static void prv_slide_transition_animation_update(GContext *ctx, Animation *anim
     compositor_scaled_app_fb_copy(GRect(0, app_offset_y, PBL_DISPLAY_WIDTH, PBL_DISPLAY_HEIGHT),
                                   false /* copy_relative_to_origin */);
     if (app_should_dupe) {
-      GBitmap app_bitmap = compositor_get_app_framebuffer_as_bitmap();
-      prv_duplicate_framebuffer_row(&dest_bitmap, app_dupe_row, app_offset_y + app_dupe_row,
-                                    &app_bitmap, app_dupe_row);
+      prv_duplicate_framebuffer_row(&dest_bitmap, app_dupe_row, app_offset_y + app_dupe_row);
     }
   }
   framebuffer_dirty_all(compositor_get_framebuffer());
