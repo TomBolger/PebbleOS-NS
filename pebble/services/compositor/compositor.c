@@ -283,7 +283,7 @@ static bool prv_render_app_dirty_rect(const AppFrameFit *fit) {
   rect = display_rect;
 #endif
   if (!grect_is_empty(&rect) && prv_narrow_to_changed_rows(&rect)) {
-    prv_scaled_app_fb_copy(rect, false /* copy_relative_to_origin */, fit);
+    prv_scaled_app_fb_copy(rect, true /* copy_relative_to_origin */, fit);
     framebuffer_mark_dirty_rect(&s_framebuffer, rect);
   }
 
@@ -809,9 +809,21 @@ static void prv_scaled_app_fb_copy(const GRect update_rect, bool copy_relative_t
   GBitmap dst_bitmap = compositor_get_framebuffer_as_bitmap();
 
   if (prv_app_frame_fit_is_verbatim(fit)) {
+    // The part of update_rect on the display, and where in the app framebuffer it comes from: the
+    // same place, or as far from the app's origin as from update_rect's
+    GRect visible_rect = update_rect;
+    grect_clip(&visible_rect, &dst_bitmap.bounds);
+    GRect src_rect = visible_rect;
+    if (!copy_relative_to_origin) {
+      src_rect.origin = gpoint_sub(visible_rect.origin, update_rect.origin);
+    }
+    grect_clip(&src_rect, &src_bitmap.bounds);
+    if (grect_is_empty(&src_rect)) {
+      return;
+    }
     GBitmap sub_bitmap;
-    gbitmap_init_as_sub_bitmap(&sub_bitmap, &src_bitmap, update_rect);
-    bitblt_bitmap_into_bitmap(&dst_bitmap, &sub_bitmap, update_rect.origin, GCompOpAssign,
+    gbitmap_init_as_sub_bitmap(&sub_bitmap, &src_bitmap, src_rect);
+    bitblt_bitmap_into_bitmap(&dst_bitmap, &sub_bitmap, visible_rect.origin, GCompOpAssign,
                               GColorWhite);
     return;
   }
