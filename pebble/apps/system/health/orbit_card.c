@@ -55,6 +55,10 @@
 #define TODAY_PILL_W   124
 #define TODAY_PILL_H   24
 
+//! Space between the sleep's numbers and their units, and between a number and its word
+#define TODAY_SLEEP_GAP 2
+#define TODAY_LABEL_GAP 5
+
 //! Space between the text and the ends of a pill
 #define PILL_PADDING 6
 
@@ -400,7 +404,7 @@ static void prv_draw_today(GContext *ctx, GSize display, const HealthOrbitCard *
     /// After the step count on the Today card of the round Health app
     {pbl_i18n_get("steps", i18n_owner), &health_orbit_font_gothic_18_bold, GColorWhite},
   };
-  health_orbit_draw_runs(ctx, steps_runs, PBL_ARRAY_SIZE(steps_runs), 5,
+  health_orbit_draw_runs(ctx, steps_runs, PBL_ARRAY_SIZE(steps_runs), TODAY_LABEL_GAP,
                          prv_line_center_x(display, inner, middle + TODAY_STEPS_Y, 22),
                          middle + TODAY_STEPS_Y + dy);
 
@@ -417,9 +421,10 @@ static void prv_draw_today(GContext *ctx, GSize display, const HealthOrbitCard *
     {minutes_text, &health_orbit_font_leco_28_light, sleep_color},
     {pbl_i18n_get("m", i18n_owner), &health_orbit_font_gothic_18_bold, sleep_color},
     /// After the hours and minutes slept on the Today card of the round Health app
-    {pbl_i18n_get("sleep", i18n_owner), &health_orbit_font_gothic_18_bold, GColorWhite},
+    {pbl_i18n_get("sleep", i18n_owner), &health_orbit_font_gothic_18_bold, GColorWhite,
+     TODAY_LABEL_GAP - TODAY_SLEEP_GAP},
   };
-  health_orbit_draw_runs(ctx, sleep_runs, PBL_ARRAY_SIZE(sleep_runs), 2,
+  health_orbit_draw_runs(ctx, sleep_runs, PBL_ARRAY_SIZE(sleep_runs), TODAY_SLEEP_GAP,
                          prv_line_center_x(display, inner, middle + TODAY_SLEEP_Y, 22),
                          middle + TODAY_SLEEP_Y + dy);
 
