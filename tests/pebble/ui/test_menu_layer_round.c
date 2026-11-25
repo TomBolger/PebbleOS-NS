@@ -393,6 +393,7 @@ void test_menu_layer_round__list_scroll(void) {
   // ... and stops with the last row two below the middle
   cl_assert_equal_i(menu_round_list_scroll(7, 8, 38, 2), 3 * 38);
   cl_assert_equal_i(menu_round_list_scroll(5, 8, 38, 2), 3 * 38);
-  // A short list never scrolls
+  // A short list never scrolls, up to five rows
   cl_assert_equal_i(menu_round_list_scroll(2, 3, 38, 2), 0);
+  cl_assert_equal_i(menu_round_list_scroll(4, 5, 38, 2), 0);
 }

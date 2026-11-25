@@ -8,10 +8,7 @@
 #if PBL_ROUND
 ActionMenu *PBL_WEAK notification_round_actions_open_timeline_menu(
     Window *window, ActionMenuConfig *config, WindowStack *window_stack,
-    const NotificationRoundActionsBanner *banner) {
+    const PillActionMenuBanner *banner) {
   return nullptr;
-}
-
-void PBL_WEAK notification_round_actions_close(bool animated) {
 }
 #endif

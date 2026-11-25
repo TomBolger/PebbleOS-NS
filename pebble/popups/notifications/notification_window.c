@@ -1138,13 +1138,12 @@ static bool prv_play_dismissed(ActionMenu *action_menu, void *context) {
 #if PBL_ROUND
 static bool s_round_actions_unloading;
 
-//! The round menu is gone: the card takes the buttons and touch back, and catches up on what
+//! The round menu is gone, and the card has the buttons and touch back: it catches up on what
 //! changed while it was covered, as it would on reappearing from under a menu window.
 static void prv_round_actions_did_close(NotificationWindowData *data) {
   if (!s_in_use || s_round_actions_unloading) {
     return;
   }
-  swap_layer_set_click_config_onto_window(&data->swap_layer, &data->window);
   if (data->notifications_modified) {
     data->notifications_modified = false;
     prv_reload_swap_layer(data);
@@ -1169,12 +1168,11 @@ static void prv_action_menu_did_close(ActionMenu *action_menu, const ActionMenuI
 
 #if PBL_ROUND
 //! Where the current card's banner is on screen, for the menu to swing it from.
-static NotificationRoundActionsBanner prv_round_actions_banner(NotificationWindowData *data,
-                                                               LayoutLayer *layout, GColor color) {
+static PillActionMenuBanner prv_round_actions_banner(NotificationWindowData *data,
+                                                     LayoutLayer *layout) {
   const int16_t layout_top =
       swap_layer_get_layer(&data->swap_layer)->frame.origin.y + layout->layer.frame.origin.y;
-  return (NotificationRoundActionsBanner){
-    .color = color,
+  return (PillActionMenuBanner){
     .icon = ((NotificationLayout *)layout)->icon_res_info,
     .bottom = layout_top + LAYOUT_TOP_BANNER_ORIGIN_Y + BANNER_CIRCLE_RADIUS,
     .icon_center_y = layout_top + CARD_ICON_UPPER_PADDING + NOTIFICATION_TINY_RESOURCE_HEIGHT / 2,
@@ -1185,8 +1183,7 @@ static NotificationRoundActionsBanner prv_round_actions_banner(NotificationWindo
 //! Opens the actions over the card instead of in a menu window.
 static bool prv_open_round_actions(NotificationWindowData *data, ActionMenuConfig *config,
                                    LayoutLayer *layout) {
-  const NotificationRoundActionsBanner banner =
-      prv_round_actions_banner(data, layout, config->colors.background);
+  const PillActionMenuBanner banner = prv_round_actions_banner(data, layout);
   data->action_menu = notification_round_actions_open_timeline_menu(
       &data->window, config, window_manager_get_window_stack(NOTIFICATION_PRIORITY), &banner);
   if (!data->action_menu) {
@@ -1339,9 +1336,11 @@ static void prv_window_unload(Window *window) {
 
 #if PBL_ROUND
   // The round menu lives in this window
-  s_round_actions_unloading = true;
-  notification_round_actions_close(false /* animated */);
-  s_round_actions_unloading = false;
+  if (data->action_menu && action_menu_is_hosted(data->action_menu)) {
+    s_round_actions_unloading = true;
+    action_menu_close(data->action_menu, false /* animated */);
+    s_round_actions_unloading = false;
+  }
 #endif
   prv_poof_cleanup(data);
   prv_cleanup_timer(&data->deferred_focus_timer);

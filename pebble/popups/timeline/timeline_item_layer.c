@@ -25,18 +25,14 @@
 #include <process_state/app_state/app_state.h>
 
 #if PBL_ROUND
-//! The item layer whose round action menu is open
+//! The item layer whose round action menu is open, and the menu
 static TimelineItemLayer *s_round_actions_item_layer;
+static ActionMenu *s_round_actions_menu;
 
 static void prv_round_actions_did_close(ActionMenu *action_menu, const ActionMenuItem *item,
                                         void *context) {
-  TimelineItemLayer *item_layer = s_round_actions_item_layer;
   s_round_actions_item_layer = nullptr;
-  Window *window = item_layer ? layer_get_window(&item_layer->layer) : nullptr;
-  if (window) {
-    // The menu took the window's clicks over
-    swap_layer_set_click_config_onto_window(&item_layer->swap_layer, window);
-  }
+  s_round_actions_menu = nullptr;
 }
 
 //! Opens the actions over the card, sliding it out, as a notification's.
@@ -47,8 +43,7 @@ static bool prv_open_round_actions(TimelineItemLayer *item_layer, ActionMenuConf
   if (!window || !layout || s_round_actions_item_layer) {
     return false;
   }
-  NotificationRoundActionsBanner banner = {
-    .color = config->colors.background,
+  PillActionMenuBanner banner = {
     // A card has no banner: the bubble grows in from above the screen
     .bottom = 0,
     .card = &item_layer->layer,
@@ -56,7 +51,9 @@ static bool prv_open_round_actions(TimelineItemLayer *item_layer, ActionMenuConf
   timeline_resources_get_id(&layout->icon_info, TimelineResourceSizeTiny, &banner.icon);
   config->did_close = prv_round_actions_did_close;
   s_round_actions_item_layer = item_layer;
-  if (!notification_round_actions_open_timeline_menu(window, config, window_stack, &banner)) {
+  s_round_actions_menu =
+      notification_round_actions_open_timeline_menu(window, config, window_stack, &banner);
+  if (!s_round_actions_menu) {
     s_round_actions_item_layer = nullptr;
     return false;
   }
@@ -173,8 +170,7 @@ void timeline_item_layer_deinit(TimelineItemLayer *item_layer) {
 #if PBL_ROUND
   if (s_round_actions_item_layer == item_layer) {
     // The menu is drawn over this card
-    s_round_actions_item_layer = nullptr;
-    notification_round_actions_close(false /* animated */);
+    action_menu_close(s_round_actions_menu, false /* animated */);
   }
 #endif
   // Destroys the layout through the layout removed handler

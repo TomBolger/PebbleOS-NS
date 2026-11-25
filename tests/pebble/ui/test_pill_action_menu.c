@@ -69,6 +69,10 @@ GDrawCommandImage *gdraw_command_image_clone(GDrawCommandImage *image) {
 GDrawCommandImage *gdraw_command_image_create_with_resource(uint32_t resource_id) {
   return nullptr;
 }
+GDrawCommandImage *gdraw_command_image_create_with_resource_system(ResAppNum app_num,
+                                                                   uint32_t resource_id) {
+  return nullptr;
+}
 void gdraw_command_image_destroy(GDrawCommandImage *image) {
 }
 void gdraw_command_image_draw(GContext *ctx, GDrawCommandImage *image, GPoint offset) {
@@ -141,6 +145,8 @@ bool animation_schedule(Animation *animation) {
 
 static Window s_window;
 static MenuLayer s_menu_layer;
+// A card the menu opens over from its banner, instead of out of the menu
+static Layer s_card;
 
 typedef struct {
   ClickHandler handler;
@@ -318,6 +324,27 @@ static ActionMenu *prv_open(void) {
   return pill_action_menu_open(&config, &s_config);
 }
 
+static ActionMenu *prv_open_from_banner(void) {
+  layer_init(&s_card, &GRect(0, 0, PBL_DISPLAY_WIDTH, PBL_DISPLAY_HEIGHT));
+  layer_add_child(&s_window.layer, &s_card);
+  const PillActionMenuBannerConfig config = {
+    .window = &s_window,
+    .banner =
+        {
+          .bottom = 60,
+          .icon_center_y = 30,
+          .card = &s_card,
+        },
+    .color = GColorRed,
+    .text_color = GColorWhite,
+    .background = GColorWhite,
+    .foreground = GColorBlack,
+    .font = {.points = 24},
+    .small_font = {.points = 18},
+  };
+  return pill_action_menu_open_from_banner(&config, &s_config);
+}
+
 //! Draws a frame of the action menu, the window's last layer
 static void prv_draw(void) {
   Layer *layer = s_window.layer.first_child;
@@ -418,4 +445,27 @@ void test_pill_action_menu__labels_are_measured_once_per_level(void) {
   prv_click(BUTTON_ID_BACK);
   prv_draw();
   cl_assert_equal_i(s_num_measures, 10);
+}
+
+void test_pill_action_menu__opens_from_a_banner_as_out_of_a_menu(void) {
+  const ClickConfigProvider provider = s_window.click_config_provider;
+  s_root->selection_changed = prv_selection_changed;
+  cl_assert(prv_open_from_banner());
+  // Its first item is announced, as an ActionMenu does on opening
+  cl_assert_equal_i(s_num_selections, 1);
+  cl_assert(s_selections[0] == &s_root->items[0]);
+  // Open at once (animations never run here): the card slid out, the menu left alone
+  cl_assert_equal_i(s_card.frame.origin.x, -PBL_DISPLAY_WIDTH);
+  cl_assert(!s_menu_layer.round_pill_hidden);
+  prv_load_click_config();
+  cl_assert(s_clicks[BUTTON_ID_DOWN].repeat_interval_ms > 0);
+  prv_draw();
+  cl_assert_equal_i(s_num_measures, 4);
+
+  prv_click(BUTTON_ID_BACK);
+  cl_assert_equal_i(s_num_did_close, 1);
+  // The card is back, and the window has its clicks back
+  cl_assert_equal_i(s_card.frame.origin.x, 0);
+  cl_assert(s_window.click_config_provider == provider);
+  layer_remove_from_parent(&s_card);
 }
