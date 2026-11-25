@@ -718,25 +718,6 @@ void timeline_actions_invoke_action(const TimelineItemAction *action, const Time
   }
 }
 
-static void prv_push_dismiss_first_use_dialog(ActionMenu *action_menu) {
-  if (alerts_preferences_check_and_set_first_use_complete(FirstUseSourceDismiss)) {
-    return;
-  }
-
-  const char *tutorial_msg = pbl_i18n_get(
-      "Quickly dismiss all notifications by holding the "
-      "Select button for 2 seconds from any incoming "
-      "notification.",
-      action_menu);
-
-  ExpandableDialog *first_use_dialog = expandable_dialog_create_with_params(
-      "Dismiss First Use", RESOURCE_ID_QUICK_DISMISS, tutorial_msg,
-      gcolor_legible_over(GColorLightGray), GColorLightGray, nullptr,
-      RESOURCE_ID_ACTION_BAR_ICON_CHECK, expandable_dialog_close_cb);
-  pbl_i18n_free(tutorial_msg, action_menu);
-  expandable_dialog_push(first_use_dialog, action_menu_get_window_stack(action_menu));
-}
-
 static void prv_action_menu_cb(ActionMenu *action_menu, const ActionMenuItem *item, void *context) {
   TimelineActionMenu *timeline_action_menu = context;
   const TimelineItem *pin = timeline_action_menu->item;
@@ -759,10 +740,6 @@ static void prv_action_menu_cb(ActionMenu *action_menu, const ActionMenuItem *it
   }
 
   prv_do_action_analytics(pin, item);
-
-  if (timeline_item_action_is_dismiss(action)) {
-    prv_push_dismiss_first_use_dialog(action_menu);
-  }
 
   prv_invoke_action(action_menu, action, pin, item->label);
 }
@@ -1416,9 +1393,6 @@ void timeline_actions_dismiss_all(NotificationInfo *notif_list, int num_notifica
     prv_set_action_result(timeline_action_menu, data);
 
     action_menu_freeze(action_menu);
-
-    // We only show the first use tutorial if this was called from an action menu
-    prv_push_dismiss_first_use_dialog(action_menu);
   }
 
   DismissAllContext *ctx =
