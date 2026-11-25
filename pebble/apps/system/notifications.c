@@ -866,8 +866,8 @@ static void prv_toggle_row(NotificationsData *data, uint16_t index) {
     const uint16_t before = notification_shade_row_count(&data->shade);
     notification_shade_toggle_row(&data->shade, index);
     const uint16_t after = notification_shade_row_count(&data->shade);
-    prv_save_collapsed_sections(data);
     if (after > before) {
+      prv_save_collapsed_sections(data);
       prv_fold_start(data, index, after - before, true /* opening */);
       return;
     }
