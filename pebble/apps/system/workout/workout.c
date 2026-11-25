@@ -16,6 +16,7 @@
 #include <pbl/services/activity/activity_private.h>
 #include <pbl/services/activity/health_util.h>
 #include <pbl/services/activity/workout_service.h>
+#include <pbl/services/timeline/health_layout.h>
 
 #include <applib/app.h>
 #include <applib/app_malloc.h>
@@ -23,8 +24,10 @@
 #include <applib/ui/preferred_durations.h>
 #include <applib/ui/ui.h>
 #include <popups/health_tracking_ui.h>
+#include <process_management/app_manager.h>
 #include <process_state/app_state/app_state.h>
 #include <resource/resource_ids.auto.h>
+#include <shell/system_app_ids.auto.h>
 
 // Workout app versions
 // 0: Invalid (app was never opened)
@@ -85,6 +88,7 @@ static void prv_select_workout_cb(ActivitySessionType type) {
   s_activity_type = type;
 }
 
+#if !PBL_ROUND
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 //! Detected Workout
 
@@ -172,6 +176,8 @@ static void prv_show_workout_ended_dialog(WorkoutAppData *data) {
   app_workout_dialog_push(workout_dialog);
 }
 
+#endif
+
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 // Public Functions
 
@@ -183,6 +189,7 @@ void workout_push_summary_window(void) {
   workout_summary_window_push(data->summary_window);
 }
 
+#if !PBL_ROUND
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 // Initialization
 
@@ -248,14 +255,35 @@ static void prv_deinit(void) {
   app_free(data);
 }
 
+#endif
+
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 // App Main
 
+#if PBL_ROUND
+//! On round the Health app has the workouts on its Workout section: whatever opened this app, a
+//! notification's action, a quick launch or a pin, opens Health there instead, ending the workout
+//! going on first if that is what it asked
+static void prv_main(void) {
+  const HealthLaunchArgs args = {
+    .card_type = HealthCardType_Workout,
+    .end_workout = (app_launch_get_args() == WorkoutLaunchArg_EndWorkout),
+  };
+  app_manager_put_launch_app_event(&(AppLaunchEventConfig){
+    .id = APP_ID_HEALTH_APP,
+    .common.args = (void *)(uintptr_t)args.args,
+    // An app only gets its launch arguments when launched for an action, as from a pin
+    .common.reason = APP_LAUNCH_TIMELINE_ACTION,
+  });
+  app_event_loop();
+}
+#else
 static void prv_main(void) {
   prv_init();
   app_event_loop();
   prv_deinit();
 }
+#endif
 
 const PebbleProcessMd *workout_app_get_info(void) {
   static const PebbleProcessMdSystem s_workout_app_info = {
@@ -265,6 +293,10 @@ const PebbleProcessMd *workout_app_get_info(void) {
           .uuid =
               {0xfe, 0xf8, 0x2c, 0x82, 0x71, 0x76, 0x4e, 0x22, 0x88, 0xde, 0x35, 0xa3, 0xfc, 0x18,
                0xd4, 0x3f},
+#if PBL_ROUND
+          // Its own launcher entry is gone: Health's Workout section has it
+          .visibility = ProcessVisibilityHidden,
+#endif
         },
     .name = pbl_i18n_noop("Workout"),
     .icon_resource_id = RESOURCE_ID_ACTIVITY_TINY,

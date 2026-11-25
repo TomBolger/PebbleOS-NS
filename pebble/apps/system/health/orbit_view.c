@@ -1482,6 +1482,27 @@ static void prv_workout_back(HealthOrbitView *view) {
   prv_animate_week_out(view, false /* to_day */);
 }
 
+//! Opened on the Workout section, as the Workout app does: the workout going on if there is one,
+//! ended first and its summary shown if asked, or else the Workout card
+static void prv_show_workout(HealthOrbitView *view, bool end) {
+  prv_finish(view);
+  view->section = HealthOrbitSectionWorkout;
+  health_data_update_workout(view->health_data);
+  const HealthWorkoutData *workout = health_data_workout_get(view->health_data);
+  if (workout->state == HealthWorkoutStateRunning || workout->state == HealthWorkoutStatePaused) {
+    view->week = true;
+    view->list = HealthOrbitListWorkout;
+    view->workout = (HealthOrbitWorkoutScreen){.status = prv_workout_status(workout)};
+    prv_show_workout_data(view);
+    if (end) {
+      workout_service_stop_workout();
+      health_data_update_workout(view->health_data);
+      view->workout.status = HealthOrbitWorkoutStatusComplete;
+    }
+  }
+  prv_rest(view);
+}
+
 static void prv_up_down(HealthOrbitView *view, bool down) {
   if (view->week && view->section == HealthOrbitSectionWorkout) {
     prv_workout_up_down(view, down);
@@ -1597,8 +1618,17 @@ HealthOrbitView *health_orbit_view_create(HealthData *health_data) {
   layer_add_child(root, &view->layer);
 
   const HealthLaunchArgs launch_args = {.args = app_launch_get_args()};
-  prv_show_section(view, (launch_args.card_type == HealthCardType_Sleep) ? HealthOrbitSectionSleep
-                                                                         : HealthOrbitSectionToday);
+  switch (launch_args.card_type) {
+    case HealthCardType_Sleep:
+      prv_show_section(view, HealthOrbitSectionSleep);
+      break;
+    case HealthCardType_Workout:
+      prv_show_workout(view, launch_args.end_workout);
+      break;
+    default:
+      prv_show_section(view, HealthOrbitSectionToday);
+      break;
+  }
   return view;
 }
 

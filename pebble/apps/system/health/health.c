@@ -8,6 +8,7 @@
 #include "orbit_view.h"
 
 #include <pbl/services/activity/activity.h>
+#include <pbl/services/activity/workout_service.h>
 #include <pbl/services/timeline/timeline.h>
 
 #include <applib/app.h>
@@ -149,6 +150,8 @@ static void prv_initialize(void) {
   // The round view shows sleep and averages from its first frame, while it opens, so it reads them
   // all before it is drawn rather than filling them in once it is open
   health_data_update(health_app_data->health_data);
+  // It is the workout app's front end too
+  workout_service_frontend_opened();
   health_app_data->orbit_view = health_orbit_view_create(health_app_data->health_data);
   health_orbit_view_push(health_app_data->orbit_view);
 #else
@@ -181,6 +184,7 @@ static void prv_terminate(void) {
   if (health_app_data) {
 #if PBL_ROUND
     health_orbit_view_destroy(health_app_data->orbit_view);
+    workout_service_frontend_closed();
 #else
     health_card_view_destroy(health_app_data->health_card_view);
 #endif
