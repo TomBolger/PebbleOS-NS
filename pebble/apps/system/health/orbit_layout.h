@@ -50,11 +50,15 @@
 //! filled a column at a time.
 TimelineListSidebar health_orbit_sidebar(GSize display, int16_t notch_width);
 
+//! Depth of the notch with the sidebar turned by \a turn: all of it on the right, closing as the
+//! sidebar turns to the top, where the banner has none.
+int16_t health_orbit_notch_width(int32_t turn);
+
 //! Center of the sidebar's circle with the sidebar turned by \a turn about the middle of the
 //! \a display, clockwise, a negative quarter turn taking it to the top.
 GPoint health_orbit_center(GSize display, int32_t turn);
 
-//! Tip of the sidebar's notch with the sidebar turned by \a turn.
+//! Tip of the sidebar's notch with the sidebar turned by \a turn, as deep as it is there.
 GPoint health_orbit_notch_tip(GSize display, int32_t turn);
 
 //! Turns \a point by \a angle about the middle of the \a display, clockwise, which on an even
