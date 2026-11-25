@@ -110,6 +110,12 @@ static void prv_render(HealthData *health_data, HealthOrbitSection section) {
   window_render(&s_view->window, &s_ctx);
 }
 
+//! Shows the week at rest
+static void prv_show_week(HealthOrbitView *view) {
+  view->week = true;
+  prv_rest(view);
+}
+
 // Tests
 //////////////////////
 
@@ -201,7 +207,7 @@ void test_health_orbit_view__render_sleep_nap(void) {
 void test_health_orbit_view__render_steps_week(void) {
   s_data = prv_sample_data();
   prv_render(&s_data, HealthOrbitSectionSteps);
-  prv_show_week(s_view, true);
+  prv_show_week(s_view);
   window_render(&s_view->window, &s_ctx);
   cl_check(gbitmap_pbi_eq(&s_ctx.dest_bitmap, TEST_PBI_FILE));
 }
@@ -209,7 +215,7 @@ void test_health_orbit_view__render_steps_week(void) {
 void test_health_orbit_view__render_sleep_week(void) {
   s_data = prv_sample_data();
   prv_render(&s_data, HealthOrbitSectionSleep);
-  prv_show_week(s_view, true);
+  prv_show_week(s_view);
   window_render(&s_view->window, &s_ctx);
   cl_check(gbitmap_pbi_eq(&s_ctx.dest_bitmap, TEST_PBI_FILE));
 }
@@ -217,7 +223,7 @@ void test_health_orbit_view__render_sleep_week(void) {
 void test_health_orbit_view__render_steps_week_no_data(void) {
   s_data = (HealthData){};
   prv_render(&s_data, HealthOrbitSectionSteps);
-  prv_show_week(s_view, true);
+  prv_show_week(s_view);
   window_render(&s_view->window, &s_ctx);
   cl_check(gbitmap_pbi_eq(&s_ctx.dest_bitmap, TEST_PBI_FILE));
 }
@@ -230,7 +236,7 @@ void test_health_orbit_view__render_sleep_week_long(void) {
   }
   s_data.typical_sleep = HOURS(10, 59);
   prv_render(&s_data, HealthOrbitSectionSleep);
-  prv_show_week(s_view, true);
+  prv_show_week(s_view);
   window_render(&s_view->window, &s_ctx);
   cl_check(gbitmap_pbi_eq(&s_ctx.dest_bitmap, TEST_PBI_FILE));
 }
