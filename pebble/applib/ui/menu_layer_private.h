@@ -46,6 +46,10 @@ GRect menu_cell_round_follow_bezel(const GContext *ctx, GRect frame);
 //! @return false if the menu doesn't draw a pill, or there is no room for one
 bool menu_layer_get_round_highlight(MenuLayer *menu_layer, MenuRoundShape *shape);
 
+//! Hides the highlight pill of \a menu_layer, a round list with the pill, e.g. while something
+//! drawn over the list takes its place. The selected row keeps its layout, in the normal colours.
+void menu_layer_set_round_pill_hidden(MenuLayer *menu_layer, bool hidden);
+
 //! Moves the left end of the highlight pill \a margin further in from the bezel, e.g. to keep it
 //! clear of something drawn along the rim. 0 restores the default.
 void menu_layer_set_round_pill_left_margin(MenuLayer *menu_layer, uint8_t margin);

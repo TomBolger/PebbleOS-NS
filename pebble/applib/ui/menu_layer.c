@@ -627,6 +627,13 @@ bool menu_layer_get_round_highlight(MenuLayer *menu_layer, MenuRoundShape *shape
   return prv_round_shape(menu_layer, content.origin, shape);
 }
 
+void menu_layer_set_round_pill_hidden(MenuLayer *menu_layer, bool hidden) {
+  if (menu_layer->round_pill_hidden != hidden) {
+    menu_layer->round_pill_hidden = hidden;
+    layer_mark_dirty(menu_layer_get_layer(menu_layer));
+  }
+}
+
 void menu_layer_set_round_pill_left_margin(MenuLayer *menu_layer, uint8_t margin) {
   if (menu_layer->round_pill_left_margin != margin) {
     menu_layer->round_pill_left_margin = margin;
@@ -645,7 +652,9 @@ void menu_layer_set_round_subtitle_height(MenuLayer *menu_layer, uint8_t height)
 static void prv_prepare_row(GContext *ctx, MenuLayer *menu_layer, Layer *cell_layer,
                             bool highlight) {
   if (!process_manager_compiled_with_legacy2_sdk()) {
-    GColor *colors = (highlight) ? menu_layer->highlight_colors : menu_layer->normal_colors;
+    // A hidden round pill leaves the highlighted row in the normal colours
+    GColor *colors = (highlight && !menu_layer->round_pill_hidden) ? menu_layer->highlight_colors
+                                                                   : menu_layer->normal_colors;
     ctx->draw_state.fill_color = colors[MenuLayerColorBackground];
     ctx->draw_state.text_color = colors[MenuLayerColorForeground];
     ctx->draw_state.tint_color = colors[MenuLayerColorForeground];
@@ -694,7 +703,8 @@ static void prv_menu_layer_draw_row_round(MenuLayer *menu_layer, Layer *cell_lay
   const GPoint content_origin = GPoint(ctx->draw_state.drawing_box.origin.x,
                                        ctx->draw_state.drawing_box.origin.y - cursor->y);
   MenuRoundShape shape;
-  const bool has_shape = prv_round_shape(menu_layer, content_origin, &shape);
+  const bool has_shape =
+      !menu_layer->round_pill_hidden && prv_round_shape(menu_layer, content_origin, &shape);
   if (grect_equal(&cell_layer->frame, &rows)) {
     graphics_context_set_fill_color(ctx, menu_layer->normal_colors[MenuLayerColorBackground]);
     graphics_fill_rect(ctx, &cell_layer->bounds);
@@ -1036,7 +1046,8 @@ void menu_layer_update_proc(Layer *scroll_content_layer, GContext *ctx) {
 #if PBL_ROUND
     MenuRoundShape shape;
     if (prv_draws_round_pill(menu_layer)) {
-      if (prv_round_shape(menu_layer, ctx->draw_state.drawing_box.origin, &shape)) {
+      if (!menu_layer->round_pill_hidden &&
+          prv_round_shape(menu_layer, ctx->draw_state.drawing_box.origin, &shape)) {
         prv_fill_round_shape(ctx, menu_layer, &shape);
       }
     } else
