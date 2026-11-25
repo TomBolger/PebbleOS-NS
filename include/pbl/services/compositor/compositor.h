@@ -261,14 +261,4 @@ void compositor_scaled_app_fb_copy(const GRect update_rect, bool copy_relative_t
  */
 GRect compositor_get_scaled_app_frame(GSize app_size);
 
-/**
- * @brief compositor_scaled_app_fb_copy() with a vertical offset applied to the source.
- *
- * @param update_rect Region of the system framebuffer to update.
- * @param copy_relative_to_origin See compositor_scaled_app_fb_copy().
- * @param offset_y Vertical offset of the source, in pixels.
- */
-void compositor_scaled_app_fb_copy_offset(const GRect update_rect, bool copy_relative_to_origin,
-                                          int16_t offset_y);
-
 /** @} */
