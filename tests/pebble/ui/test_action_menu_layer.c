@@ -96,8 +96,9 @@ void graphics_context_set_text_color(GContext *ctx, GColor color) {
 void graphics_context_set_compositing_mode(GContext *ctx, GCompOp mode) {
 }
 
-void graphics_fill_radial_internal(GContext *ctx, GPoint center, uint16_t radius_inner,
-                                   uint16_t radius_outer, int32_t angle_start, int32_t angle_end) {
+void graphics_fill_radial_capped_internal(GContext *ctx, GPoint center, uint16_t radius_inner,
+                                          uint16_t radius_outer, int32_t angle_start,
+                                          int32_t angle_end) {
 }
 void graphics_draw_bitmap_in_rect(GContext *ctx, const GBitmap *bitmap, const GRect *rect) {
 }
