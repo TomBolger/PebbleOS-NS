@@ -121,7 +121,10 @@ typedef struct {
   TimelineScrollDirection scroll_direction;
   /** The pin is all day, or spans the whole current day. */
   bool all_day;
-  /** The pin is in the compact timeline list, where it is as tall as its content. */
+  /**
+   * The pin is in the compact timeline list, where it is as tall as its content. Such pins are
+   * always laid out in LayoutLayerModePinnedFat.
+   */
   bool compact;
   /**
    * Number of concurrent events besides the first: 0 for a single event, 1 for two overlapping

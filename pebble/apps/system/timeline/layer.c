@@ -592,11 +592,6 @@ Animation *timeline_layer_create_day_sep_show(TimelineLayer *timeline_layer) {
 #define LIST_ARC_ICON_OUT_INSET (3 * TIMELINE_TINY_RESOURCE_SIZE.h / 4 + 1)
 #endif
 
-//! Every pin shows all its text, as it does when selected
-static LayoutLayerMode prv_list_mode(void) {
-  return LayoutLayerModePinnedFat;
-}
-
 static int16_t prv_list_pin_height(const TimelineListPinView *pin) {
   return TIMELINE_LAYOUT_COMPACT_PADDING_TOP + pin->layout->view_size.h;
 }
@@ -849,7 +844,8 @@ static void prv_list_pin_create_layout(TimelineLayer *layer, TimelineListPinView
   const LayoutLayerConfig config = {
     .frame = &frame,
     .attributes = &item->attr_list,
-    .mode = prv_list_mode(),
+    // Every pin shows all its text, as it does when selected
+    .mode = LayoutLayerModePinnedFat,
     .app_id = &item->header.parent_id,
     .context = &pin->info,
   };
