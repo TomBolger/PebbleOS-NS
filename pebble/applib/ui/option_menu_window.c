@@ -10,6 +10,7 @@
 #include <applib/ui/menu_text_scroll.h>
 #include <kernel/ui/kernel_ui.h>
 #include <resource/resource_ids.auto.h>
+#include <shell/prefs.h>
 #include <shell/system_theme.h>
 #include <shell/system_theme_style.h>
 
@@ -203,6 +204,15 @@ static void prv_window_load(Window *window) {
                              .select_click = prv_select_callback
                            });
   menu_layer_set_click_config_onto_window(&option_menu->menu_layer, window);
+  // Wrap round and vibrate as the user set for every system list
+  menu_layer_set_scroll_wrap_around(&option_menu->menu_layer,
+                                    shell_prefs_get_menu_scroll_wrap_around_enable());
+  menu_layer_set_scroll_vibe_on_wrap(
+      &option_menu->menu_layer,
+      shell_prefs_get_menu_scroll_vibe_behavior() == MenuScrollVibeOnWrapAround);
+  menu_layer_set_scroll_vibe_on_blocked(
+      &option_menu->menu_layer,
+      shell_prefs_get_menu_scroll_vibe_behavior() == MenuScrollVibeOnLocked);
   if (option_menu->choice != OPTION_MENU_CHOICE_NONE) {
     menu_layer_set_selected_index(&option_menu->menu_layer, MenuIndex(0, option_menu->choice),
                                   MenuRowAlignCenter, false);
