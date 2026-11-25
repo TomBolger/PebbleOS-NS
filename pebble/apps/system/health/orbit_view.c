@@ -7,8 +7,10 @@
 #include "orbit_draw.h"
 #include "orbit_layout.h"
 #include "orbit_week.h"
+#include "orbit_workout.h"
 
 #include <pbl/i18n/i18n.h>
+#include <pbl/services/activity/workout_service.h>
 #include <pbl/services/timeline/health_layout.h>
 #include <pbl/util/math.h>
 #include <pbl/util/size.h>
@@ -37,7 +39,7 @@
 #define SELECTED_ICON_SIZE      21
 #define NEIGHBOUR_ICON_SIZE     13
 
-//! The kinds of workout's icons, on the Workout card's bubbles
+//! The kinds of workout's icons, on the Workout card's bubbles and the rows to start one
 #define KIND_ICON_SIZE 28
 
 //! The crown by the best day of the week
@@ -104,11 +106,15 @@ struct HealthOrbitView {
   //! How far the orbit has turned clockwise from the sections to the days, to HEALTH_ORBIT_SWAP
   int16_t swap;
 
-  //! Whether the week of the section shows, in place of its card, or is coming in
+  //! Whether the week of the section shows, in place of its card, or is coming in, or one of the
+  //! workout's screens below the banner as the week is, and which
   bool week;
-  //! Icons of the kinds of workout
+  HealthOrbitList list;
+  //! What the workout screens show, and the icons of the kinds of workout
+  HealthOrbitWorkoutScreen workout;
   GDrawCommandImage *kind_icons[HEALTH_WORKOUT_NUM_KINDS];
-  //! Ticks every second the Workout section shows, to read the workout going on
+  //! Ticks every second the Workout section shows, to read the workout going on, and to count down
+  //! to one
   AppTimer *workout_timer;
   //! Row of the week selected, the one it was on as the selection moves, and how far it has
   //! moved, down the rows from it
@@ -119,8 +125,8 @@ struct HealthOrbitView {
   bool card_shown;
   bool week_shown;
   //! How far each row of the week has come from where it leaves the notch, or ROW_AT_REST
-  int16_t row_travel[HEALTH_ORBIT_WEEK_NUM_ROWS];
-  GPoint row_start[HEALTH_ORBIT_WEEK_NUM_ROWS];
+  int16_t row_travel[HEALTH_ORBIT_LIST_MAX_ROWS];
+  GPoint row_start[HEALTH_ORBIT_LIST_MAX_ROWS];
   //! How far the line above the rows is below where it rests
   int16_t week_header_offset_y;
 };
@@ -129,6 +135,7 @@ struct HealthOrbitView {
 #define ROW_AT_REST INT16_MAX
 
 _Static_assert(HealthOrbitSectionCount == HEALTH_ORBIT_NUM_SECTIONS, "orbit sections");
+_Static_assert(HEALTH_ORBIT_WEEK_NUM_ROWS <= HEALTH_ORBIT_LIST_MAX_ROWS, "week rows");
 
 //! A section's card at rest
 static void prv_init_section_card(HealthOrbitView *view, HealthOrbitCard *card,
@@ -534,9 +541,15 @@ static void prv_draw_orbit(GContext *ctx, HealthOrbitView *view, GSize display) 
 }
 
 //! Distance from where a week row leaves the notch to where it rests
+//! Distance between the rows of the list shown, as the selection moves between them
+static int16_t prv_list_pitch(HealthOrbitView *view) {
+  return (view->list == HealthOrbitListWorkoutKinds) ? HEALTH_WORKOUT_KIND_ROW_PITCH
+                                                     : HEALTH_WEEK_ROW_PITCH;
+}
+
 static int32_t prv_row_path_length(HealthOrbitView *view, int index) {
   MenuRoundShape rest;
-  health_orbit_week_row(view->layer.bounds.size, index, &rest);
+  health_orbit_list_row(view->layer.bounds.size, view->list, index, &rest);
   const int32_t dx = rest.box.origin.x + rest.box.size.w / 2 - view->row_start[index].x;
   const int32_t dy = rest.box.origin.y + rest.box.size.h / 2 - view->row_start[index].y;
   return integer_sqrt(dx * dx + dy * dy);
@@ -545,9 +558,12 @@ static int32_t prv_row_path_length(HealthOrbitView *view, int index) {
 //! The pill each row of the week is in: a ball leaving the notch, stretching into its pill on the
 //! way to its row
 static void prv_get_week_rows(HealthOrbitView *view,
-                              MenuRoundShape rows_out[HEALTH_ORBIT_WEEK_NUM_ROWS]) {
-  health_orbit_week_get_rest_rows(rows_out);
-  for (int i = 0; i < HEALTH_ORBIT_WEEK_NUM_ROWS; i++) {
+                              MenuRoundShape rows_out[HEALTH_ORBIT_LIST_MAX_ROWS]) {
+  const GSize display = view->layer.bounds.size;
+  for (int i = 0; i < HEALTH_ORBIT_LIST_MAX_ROWS; i++) {
+    health_orbit_list_row(display, view->list, i, &rows_out[i]);
+  }
+  for (int i = 0; i < HEALTH_ORBIT_LIST_MAX_ROWS; i++) {
     const int16_t travel = view->row_travel[i];
     if (travel == ROW_AT_REST) {
       continue;
@@ -616,15 +632,27 @@ static void prv_layer_update_proc(Layer *layer, GContext *ctx) {
     prv_draw_cards(ctx, view);
   }
   if (view->week_shown) {
-    MenuRoundShape rows[HEALTH_ORBIT_WEEK_NUM_ROWS];
+    MenuRoundShape rows[HEALTH_ORBIT_LIST_MAX_ROWS];
     prv_get_week_rows(view, rows);
     // The selection's outline goes round its row as it comes and goes, and moves between rows
-    const int16_t distance = (view->week_selection - view->selection_from) * HEALTH_WEEK_ROW_PITCH;
+    const int16_t distance = (view->week_selection - view->selection_from) * prv_list_pitch(view);
     const int32_t progress = distance ? ((int32_t)view->selection_travel * 1000 / distance) : 1000;
     const MenuRoundShape highlight =
         menu_round_morph(&rows[view->selection_from], &rows[view->week_selection], progress);
-    health_orbit_week_draw(ctx, view->section, view->health_data, rows, view->week_header_offset_y,
-                           &highlight, view->week_selection, view->crown, view);
+    switch (view->list) {
+      case HealthOrbitListWeek:
+        health_orbit_week_draw(ctx, view->section, view->health_data, rows,
+                               view->week_header_offset_y, &highlight, view->week_selection,
+                               view->crown, view);
+        break;
+      case HealthOrbitListWorkoutKinds:
+        health_orbit_workout_draw_kinds(ctx, &view->workout, rows, view->week_header_offset_y,
+                                        &highlight, view->week_selection, view->kind_icons, view);
+        break;
+      case HealthOrbitListWorkout:
+        health_orbit_workout_draw(ctx, &view->workout, rows, view->week_header_offset_y, view);
+        break;
+    }
   }
   const SidebarSweep sweep = prv_get_sidebar_sweep(view, display);
   prv_fill_sidebar(ctx, display, view->turn, &sweep, bg);
@@ -816,12 +844,18 @@ static void prv_rest(HealthOrbitView *view) {
   view->neighbour_radius = (view->week || prv_days_from_week(view)) ? 0 : NEIGHBOUR_BUBBLE_RADIUS;
   view->card_shown = !view->week;
   view->week_shown = view->week;
-  for (int i = 0; i < HEALTH_ORBIT_WEEK_NUM_ROWS; i++) {
-    view->row_travel[i] = ROW_AT_REST;
+  // Counting down to a workout, its rows are yet to come out of the notch
+  const bool rows_hidden = (view->workout.countdown > 0);
+  for (int i = 0; i < HEALTH_ORBIT_LIST_MAX_ROWS; i++) {
+    view->row_travel[i] = rows_hidden ? 0 : ROW_AT_REST;
   }
   view->week_header_offset_y = 0;
   view->selection_from = view->week_selection;
   view->selection_travel = 0;
+  view->workout.status_from = view->workout.status;
+  view->workout.status_roll = 0;
+  view->workout.countdown_from = view->workout.countdown;
+  view->workout.time_roll = 0;
   prv_schedule_workout_tick(view);
   layer_mark_dirty(&view->layer);
 }
@@ -1010,6 +1044,22 @@ static void prv_animate_days_out_to_today(HealthOrbitView *view) {
 //! How far the line above the week rows is moved up to be off the display, under the banner
 #define HEADER_HIDDEN_OFFSET (-(HEALTH_WEEK_ROW_TOP + 2))
 
+//! How far up the line under the banner goes to be off the display: with the workout's time below
+//! it, the time off the top as well, as the banner turns away from it
+static int16_t prv_header_hidden_offset(HealthOrbitView *view) {
+  return (view->list == HealthOrbitListWorkout)
+             ? -(HEALTH_WORKOUT_TIME_Y + HEALTH_WORKOUT_TIME_ROLL / 2 + 4)
+             : HEADER_HIDDEN_OFFSET;
+}
+
+//! The line under the banner, with the workout's time below it, slides out from under the banner
+//! and back as cards slide, through the middle frames, rather than coming or leaving at once
+static void prv_add_header_slide(HealthOrbitView *view, Transition *transition, int16_t to,
+                                 uint32_t delay) {
+  prv_add_int16(transition, &view->week_header_offset_y, to, delay, SLIDE_MS,
+                timeline_animation_interpolate_moook_soft);
+}
+
 //! Each row leaves the notch where the notch is when it starts: the first two four frames into the
 //! turn, then two more a frame
 static uint32_t prv_row_out_delay(int index) {
@@ -1028,6 +1078,9 @@ static int prv_week_row(int day) {
 //! turns up, the days' bubbles going out as the section's comes back, alone, its color sweeping in.
 static void prv_animate_week_in(HealthOrbitView *view) {
   prv_finish(view);
+  if (view->section != HealthOrbitSectionWorkout) {
+    view->list = HealthOrbitListWeek;
+  }
   const GSize display = view->layer.bounds.size;
   Transition transition = {};
   if (view->days) {
@@ -1067,7 +1120,7 @@ static void prv_animate_week_in(HealthOrbitView *view) {
 
   const uint32_t turn_duration = interpolate_moook_custom_duration(&s_turn);
   prv_add_int16(&transition, &view->turn, -QUARTER_TURN, 0, turn_duration, prv_turn_curve);
-  for (int i = 0; i < HEALTH_ORBIT_WEEK_NUM_ROWS; i++) {
+  for (int i = 0; i < HEALTH_ORBIT_LIST_MAX_ROWS; i++) {
     const uint32_t delay = prv_row_out_delay(i);
     const int32_t turn = prv_turn_curve(
         (int64_t)PBL_MIN(delay, turn_duration) * ANIMATION_NORMALIZED_MAX / turn_duration, 0,
@@ -1078,9 +1131,8 @@ static void prv_animate_week_in(HealthOrbitView *view) {
                   interpolate_moook_duration(), prv_moook_curve);
   }
   // The line above the rows comes out from under the banner as the first rows land
-  view->week_header_offset_y = HEADER_HIDDEN_OFFSET;
-  prv_add_int16(&transition, &view->week_header_offset_y, 0, prv_row_out_delay(0) + FRAMES(3),
-                interpolate_moook_duration(), prv_moook_curve);
+  view->week_header_offset_y = prv_header_hidden_offset(view);
+  prv_add_header_slide(view, &transition, 0, prv_row_out_delay(0) + FRAMES(3));
   prv_play(view, &transition);
 }
 
@@ -1097,16 +1149,18 @@ static void prv_animate_week_out(HealthOrbitView *view, bool to_day) {
   view->card_shown = true;
 
   const GPoint notch = health_orbit_notch_tip(display, -QUARTER_TURN);
-  for (int i = 0; i < HEALTH_ORBIT_WEEK_NUM_ROWS; i++) {
+  for (int i = 0; i < HEALTH_ORBIT_LIST_MAX_ROWS; i++) {
     view->row_start[i] = notch;
-    view->row_travel[i] = prv_row_path_length(view, i);
+    // From where it is, if it is yet to come out
+    if (view->row_travel[i] == ROW_AT_REST) {
+      view->row_travel[i] = prv_row_path_length(view, i);
+    }
     // Three rows a frame
-    const uint32_t delay = FRAMES((HEALTH_ORBIT_WEEK_NUM_ROWS - 1 - i) / 3);
+    const uint32_t delay = FRAMES((HEALTH_ORBIT_LIST_MAX_ROWS - 1 - i) / 3);
     prv_add_int16(&transition, &view->row_travel[i], 0, delay, interpolate_moook_duration(),
                   prv_moook_curve);
   }
-  prv_add_int16(&transition, &view->week_header_offset_y, HEADER_HIDDEN_OFFSET, 0,
-                interpolate_moook_in_duration(), prv_in_only_curve);
+  prv_add_header_slide(view, &transition, prv_header_hidden_offset(view), 0);
 
   const uint32_t turn_delay = FRAMES(3);
   prv_add_int16(&transition, &view->turn, 0, turn_delay,
@@ -1164,7 +1218,7 @@ static void prv_show_section(HealthOrbitView *view, HealthOrbitSection section) 
 //! moves, stopping at the ends, where all the days show
 static void prv_move_selection(HealthOrbitView *view, bool down) {
   const int next = view->week_selection + (down ? 1 : -1);
-  if (next < 0 || next >= HEALTH_ORBIT_WEEK_NUM_ROWS) {
+  if (next < 0 || next >= health_orbit_list_num_rows(view->list)) {
     return;
   }
   prv_finish(view);
@@ -1173,7 +1227,7 @@ static void prv_move_selection(HealthOrbitView *view, bool down) {
   view->week_selection = next;
   view->selection_travel = 0;
   prv_add_int16(&transition, &view->selection_travel,
-                down ? HEALTH_WEEK_ROW_PITCH : -HEALTH_WEEK_ROW_PITCH, 0, SLIDE_MS,
+                down ? prv_list_pitch(view) : -prv_list_pitch(view), 0, SLIDE_MS,
                 timeline_animation_interpolate_moook_soft);
   prv_play(view, &transition);
 }
@@ -1209,21 +1263,230 @@ static void prv_cancel_workout_tick(HealthOrbitView *view) {
   }
 }
 
-//! Every second: the workout going on as it is now
+//! The line under the banner rolls up to say \a status, the time with it when its color changes
+static void prv_roll_status(HealthOrbitView *view, HealthOrbitWorkoutStatus status) {
+  if (view->workout.status == status) {
+    return;
+  }
+  prv_finish(view);
+  Transition transition = {};
+  view->workout.status_from = view->workout.status;
+  view->workout.status = status;
+  view->workout.status_roll = HEALTH_WORKOUT_STATUS_ROLL;
+  prv_add_int16(&transition, &view->workout.status_roll, 0, 0, interpolate_moook_duration(),
+                prv_moook_curve);
+  prv_play(view, &transition);
+}
+
+//! What the line under the banner says for the workout going on
+static HealthOrbitWorkoutStatus prv_workout_status(const HealthWorkoutData *workout) {
+  return (workout->state == HealthWorkoutStatePaused) ? HealthOrbitWorkoutStatusPaused
+                                                      : HealthOrbitWorkoutStatusRunning;
+}
+
+//! Shows the workout going on as the health data has it
+static void prv_show_workout_data(HealthOrbitView *view) {
+  const HealthWorkoutData *workout = health_data_workout_get(view->health_data);
+  view->workout.workout = *workout;
+  view->workout.type = workout->type;
+}
+
+//! Every second: the workout going on as it is now, or the next second of the countdown
+static void prv_count_down(HealthOrbitView *view);
+
 static void prv_workout_tick(void *context) {
   HealthOrbitView *view = context;
   view->workout_timer = nullptr;
   if (view->section != HealthOrbitSectionWorkout || view->days) {
     return;
   }
+  if (view->workout.countdown > 0) {
+    prv_count_down(view);
+    prv_schedule_workout_tick(view);
+    return;
+  }
   health_data_update_workout(view->health_data);
+  const HealthWorkoutData *workout = health_data_workout_get(view->health_data);
+  const HealthOrbitWorkoutStatus status = view->workout.status;
+  if (view->week && view->list == HealthOrbitListWorkout &&
+      status != HealthOrbitWorkoutStatusComplete) {
+    if (workout->state == HealthWorkoutStateRunning || workout->state == HealthWorkoutStatePaused) {
+      prv_show_workout_data(view);
+      // Paused or resumed elsewhere
+      const HealthOrbitWorkoutStatus now = prv_workout_status(workout);
+      if (now != status &&
+          !(status == HealthOrbitWorkoutStatusEnd && now == HealthOrbitWorkoutStatusPaused)) {
+        prv_roll_status(view, now);
+      }
+    } else {
+      // Ended elsewhere: its summary, as it was last
+      prv_roll_status(view, HealthOrbitWorkoutStatusComplete);
+    }
+  }
   layer_mark_dirty(&view->layer);
   prv_schedule_workout_tick(view);
 }
 
-static void prv_up_down_click_handler(ClickRecognizerRef recognizer, void *context) {
-  HealthOrbitView *view = context;
-  const bool down = (click_recognizer_get_button_id(recognizer) == BUTTON_ID_DOWN);
+//! Starts the workout counted down to, or shows the one another client started meanwhile
+static void prv_start_workout(HealthOrbitView *view) {
+  workout_service_start_workout(view->workout.type);
+  health_data_update_workout(view->health_data);
+  if (health_data_workout_get(view->health_data)->state != HealthWorkoutStateNone) {
+    prv_show_workout_data(view);
+  }
+}
+
+//! The next second of the countdown rolls up into place; after the last, the workout starts, its
+//! time rolling up in its place as its rows drop out of the notch
+static void prv_count_down(HealthOrbitView *view) {
+  prv_finish(view);
+  const GSize display = view->layer.bounds.size;
+  Transition transition = {};
+  HealthOrbitWorkoutScreen *screen = &view->workout;
+  view->list = HealthOrbitListWorkout;
+  screen->countdown_from = screen->countdown;
+  screen->countdown--;
+  screen->time_roll = HEALTH_WORKOUT_TIME_ROLL;
+  prv_add_int16(&transition, &screen->time_roll, 0, 0, interpolate_moook_duration(),
+                prv_moook_curve);
+  if (screen->countdown == 0) {
+    prv_start_workout(view);
+    const GPoint notch = health_orbit_notch_tip(display, -QUARTER_TURN);
+    for (int i = 0; i < HEALTH_ORBIT_LIST_MAX_ROWS; i++) {
+      view->row_start[i] = notch;
+      view->row_travel[i] = 0;
+      prv_add_int16(&transition, &view->row_travel[i], prv_row_path_length(view, i),
+                    FRAMES(2 + i / 2), interpolate_moook_duration(), prv_moook_curve);
+    }
+  }
+  prv_play(view, &transition);
+}
+
+//! Select on a kind of workout: the rows fold into the notch as the line under the banner rolls up
+//! to the kind's name, and the countdown to it rolls up below it
+static void prv_animate_workout_countdown(HealthOrbitView *view) {
+  prv_finish(view);
+  const GSize display = view->layer.bounds.size;
+  Transition transition = {};
+  HealthOrbitWorkoutScreen *screen = &view->workout;
+  screen->type = health_orbit_workout_kinds[view->week_selection];
+  screen->workout = (HealthWorkoutData){.type = screen->type};
+  const GPoint notch = health_orbit_notch_tip(display, -QUARTER_TURN);
+  for (int i = 0; i < HEALTH_ORBIT_LIST_MAX_ROWS; i++) {
+    view->row_start[i] = notch;
+    view->row_travel[i] = prv_row_path_length(view, i);
+    prv_add_int16(&transition, &view->row_travel[i], 0, FRAMES(HEALTH_WORKOUT_NUM_KINDS - 1 - i),
+                  interpolate_moook_duration(), prv_moook_curve);
+  }
+  screen->status_from = screen->status;
+  screen->status = HealthOrbitWorkoutStatusRunning;
+  screen->status_roll = HEALTH_WORKOUT_STATUS_ROLL;
+  prv_add_int16(&transition, &screen->status_roll, 0, 0, interpolate_moook_duration(),
+                prv_moook_curve);
+  screen->countdown_from = -1;
+  screen->countdown = HEALTH_WORKOUT_COUNTDOWN;
+  screen->time_roll = HEALTH_WORKOUT_TIME_ROLL;
+  prv_add_int16(&transition, &screen->time_roll, 0, FRAMES(2), interpolate_moook_duration(),
+                prv_moook_curve);
+  prv_play(view, &transition);
+  // Each second from now
+  prv_cancel_workout_tick(view);
+  prv_schedule_workout_tick(view);
+}
+
+//! Select on the Workout card: the kinds of workout to start, or the workout going on, turning the
+//! one the watch detected into a workout, come out below the banner as the week does
+static void prv_open_workout(HealthOrbitView *view) {
+  health_data_update_workout(view->health_data);
+  const HealthWorkoutData *workout = health_data_workout_get(view->health_data);
+  if (workout->state == HealthWorkoutStateDetected) {
+    ActivitySession session = workout->session;
+    workout_service_takeover_activity_session(&session);
+    health_data_update_workout(view->health_data);
+  }
+  HealthOrbitWorkoutScreen *screen = &view->workout;
+  if (workout->state == HealthWorkoutStateNone) {
+    view->list = HealthOrbitListWorkoutKinds;
+    *screen = (HealthOrbitWorkoutScreen){
+      .status = HealthOrbitWorkoutStatusKinds,
+      .countdown = -1,
+      .countdown_from = -1
+    };
+  } else {
+    view->list = HealthOrbitListWorkout;
+    *screen = (HealthOrbitWorkoutScreen){.status = prv_workout_status(workout)};
+    prv_show_workout_data(view);
+  }
+  prv_animate_week_in(view);
+}
+
+//! Select on a kind of workout counts down to it; on the workout, pause or resume it, end it once
+//! asked, or after its summary, back to the card
+static void prv_workout_select(HealthOrbitView *view) {
+  if (view->workout.countdown > 0) {
+    return;
+  }
+  if (view->list == HealthOrbitListWorkoutKinds) {
+    prv_animate_workout_countdown(view);
+    return;
+  }
+  switch (view->workout.status) {
+    case HealthOrbitWorkoutStatusRunning:
+    case HealthOrbitWorkoutStatusPaused:
+      workout_service_pause_workout(!workout_service_is_paused());
+      health_data_update_workout(view->health_data);
+      prv_show_workout_data(view);
+      prv_roll_status(view, prv_workout_status(health_data_workout_get(view->health_data)));
+      return;
+    case HealthOrbitWorkoutStatusEnd:
+      workout_service_stop_workout();
+      health_data_update_workout(view->health_data);
+      prv_roll_status(view, HealthOrbitWorkoutStatusComplete);
+      return;
+    case HealthOrbitWorkoutStatusComplete:
+      prv_animate_week_out(view, false /* to_day */);
+      return;
+    case HealthOrbitWorkoutStatusKinds:
+      break;
+  }
+}
+
+//! Up or Down on the kinds of workout moves the selection; on the workout, paused, Down asks
+//! whether to end it, and Up or Down takes that back
+static void prv_workout_up_down(HealthOrbitView *view, bool down) {
+  if (view->workout.countdown > 0) {
+    return;
+  }
+  if (view->list == HealthOrbitListWorkoutKinds) {
+    prv_move_selection(view, down);
+    return;
+  }
+  if (view->workout.status == HealthOrbitWorkoutStatusEnd) {
+    prv_roll_status(view, HealthOrbitWorkoutStatusPaused);
+  } else if (down && view->workout.status == HealthOrbitWorkoutStatusPaused) {
+    prv_roll_status(view, HealthOrbitWorkoutStatusEnd);
+  }
+}
+
+//! Back on the workout: takes back asking to end it, or goes back to the card, the countdown
+//! called off
+static void prv_workout_back(HealthOrbitView *view) {
+  if (view->workout.status == HealthOrbitWorkoutStatusEnd) {
+    prv_roll_status(view, HealthOrbitWorkoutStatusPaused);
+    return;
+  }
+  if (view->workout.countdown > 0) {
+    prv_finish(view);
+    view->workout.countdown = -1;
+  }
+  prv_animate_week_out(view, false /* to_day */);
+}
+
+static void prv_up_down(HealthOrbitView *view, bool down) {
+  if (view->week && view->section == HealthOrbitSectionWorkout) {
+    prv_workout_up_down(view, down);
+    return;
+  }
   if (view->week) {
     prv_move_selection(view, down);
     return;
@@ -1245,12 +1508,20 @@ static void prv_up_down_click_handler(ClickRecognizerRef recognizer, void *conte
   prv_animate_section(view, next, down);
 }
 
+static void prv_up_down_click_handler(ClickRecognizerRef recognizer, void *context) {
+  prv_up_down(context, click_recognizer_get_button_id(recognizer) == BUTTON_ID_DOWN);
+}
+
 static void prv_select_click_handler(ClickRecognizerRef recognizer, void *context) {
   HealthOrbitView *view = context;
-  if (view->week) {
+  if (view->week && view->section == HealthOrbitSectionWorkout) {
+    prv_workout_select(view);
+  } else if (view->week) {
     prv_animate_week_out(view, true /* to_day */);
   } else if (view->days) {
     return;
+  } else if (view->section == HealthOrbitSectionWorkout) {
+    prv_open_workout(view);
   } else if (view->section == HealthOrbitSectionToday) {
     prv_animate_days_in(view);
   } else if (health_orbit_week_has_section(view->section)) {
@@ -1261,7 +1532,9 @@ static void prv_select_click_handler(ClickRecognizerRef recognizer, void *contex
 static void prv_back_click_handler(ClickRecognizerRef recognizer, void *context) {
   HealthOrbitView *view = context;
   // Back to where the days were opened from, as it was
-  if (prv_days_from_week(view)) {
+  if (view->week && view->section == HealthOrbitSectionWorkout) {
+    prv_workout_back(view);
+  } else if (prv_days_from_week(view)) {
     prv_animate_week_in(view);
   } else if (view->days) {
     prv_animate_days_out_to_today(view);

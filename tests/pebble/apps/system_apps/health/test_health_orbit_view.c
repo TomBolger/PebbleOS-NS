@@ -707,6 +707,11 @@ static void prv_render_workout(void) {
   prv_render(&s_data, HealthOrbitSectionWorkout);
 }
 
+static void prv_rerender(void) {
+  prv_rest(s_view);
+  window_render(&s_view->window, &s_ctx);
+}
+
 void test_health_orbit_view__render_workout(void) {
   // No workout: the minutes active today and the three kinds of workout to start
   prv_render_workout();
@@ -737,6 +742,65 @@ void test_health_orbit_view__render_workout_open_paused(void) {
   cl_check(gbitmap_pbi_eq(&s_ctx.dest_bitmap, TEST_PBI_FILE));
 }
 
+void test_health_orbit_view__render_workout_kinds(void) {
+  // Select with no workout: the kinds to start, Walk selected
+  prv_render_workout();
+  prv_select_click_handler(nullptr, s_view);
+  prv_rest(s_view);
+  cl_assert(s_view->week);
+  cl_assert_equal_i(s_view->list, HealthOrbitListWorkoutKinds);
+  prv_up_down(s_view, true /* down */);
+  prv_rerender();
+  cl_check(gbitmap_pbi_eq(&s_ctx.dest_bitmap, TEST_PBI_FILE));
+}
+
+void test_health_orbit_view__render_workout_active(void) {
+  // Select with a run going on: the run, its time over its measures
+  prv_set_run();
+  prv_render_workout();
+  prv_select_click_handler(nullptr, s_view);
+  prv_rerender();
+  cl_assert_equal_i(s_view->list, HealthOrbitListWorkout);
+  cl_check(gbitmap_pbi_eq(&s_ctx.dest_bitmap, TEST_PBI_FILE));
+}
+
+void test_health_orbit_view__render_workout_end(void) {
+  // Paused, Down asks whether to end it
+  prv_set_run();
+  prv_render_workout();
+  prv_select_click_handler(nullptr, s_view);
+  prv_rest(s_view);
+  prv_select_click_handler(nullptr, s_view);
+  prv_rest(s_view);
+  cl_assert(s_workout.paused);
+  prv_up_down(s_view, true /* down */);
+  prv_rerender();
+  cl_assert_equal_i(s_view->workout.status, HealthOrbitWorkoutStatusEnd);
+  cl_check(gbitmap_pbi_eq(&s_ctx.dest_bitmap, TEST_PBI_FILE));
+}
+
+void test_health_orbit_view__render_workout_complete(void) {
+  // An open workout ended: its summary, as it was last
+  workout_service_start_workout(ActivitySessionType_Open);
+  s_workout.metrics = (WorkoutServiceMetrics){
+    .duration_s = 41 * PBL_SEC_PER_MIN + 2,
+    .steps = 2310,
+    .active_kcal = 254
+  };
+  prv_render_workout();
+  prv_select_click_handler(nullptr, s_view);
+  prv_rest(s_view);
+  prv_select_click_handler(nullptr, s_view);
+  prv_rest(s_view);
+  prv_up_down(s_view, true /* down */);
+  prv_rest(s_view);
+  prv_select_click_handler(nullptr, s_view);
+  prv_rerender();
+  cl_assert(!s_workout.ongoing);
+  cl_assert_equal_i(s_view->workout.status, HealthOrbitWorkoutStatusComplete);
+  cl_check(gbitmap_pbi_eq(&s_ctx.dest_bitmap, TEST_PBI_FILE));
+}
+
 void test_health_orbit_view__workout_is_after_sleep_and_wraps(void) {
   s_data = prv_sample_data();
   prv_render(&s_data, HealthOrbitSectionToday);
@@ -752,7 +816,108 @@ void test_health_orbit_view__workout_is_after_sleep_and_wraps(void) {
   cl_assert(s_view->kind_icons[0] && s_view->kind_icons[1] && s_view->kind_icons[2]);
 }
 
-void test_health_orbit_view__detected_workout_shows(void) {
+void test_health_orbit_view__workout_starts_after_its_countdown(void) {
+  prv_render_workout();
+  prv_select_click_handler(nullptr, s_view);
+  prv_rest(s_view);
+  // Walk, then Select counts down to it
+  prv_up_down(s_view, true /* down */);
+  prv_rest(s_view);
+  prv_select_click_handler(nullptr, s_view);
+  prv_rest(s_view);
+  cl_assert_equal_i(s_view->workout.countdown, HEALTH_WORKOUT_COUNTDOWN);
+  cl_assert_equal_i(s_view->workout.type, ActivitySessionType_Walk);
+  // Its rows are folded away while it counts down, and the buttons wait
+  cl_assert_equal_i(s_view->row_travel[0], 0);
+  prv_select_click_handler(nullptr, s_view);
+  prv_up_down(s_view, true /* down */);
+  cl_assert_equal_i(s_view->workout.countdown, HEALTH_WORKOUT_COUNTDOWN);
+  cl_assert_equal_i(s_workout.starts, 0);
+  // A second at a time
+  for (int i = HEALTH_WORKOUT_COUNTDOWN - 1; i >= 0; i--) {
+    prv_workout_tick(s_view);
+    prv_rest(s_view);
+    cl_assert_equal_i(s_view->workout.countdown, i);
+    cl_assert_equal_i(s_workout.starts, (i == 0) ? 1 : 0);
+  }
+  cl_assert(s_workout.ongoing);
+  cl_assert_equal_i(s_workout.type, ActivitySessionType_Walk);
+  cl_assert_equal_i(s_view->list, HealthOrbitListWorkout);
+  cl_assert_equal_i(s_view->workout.status, HealthOrbitWorkoutStatusRunning);
+  cl_assert_equal_i(s_view->row_travel[0], ROW_AT_REST);
+}
+
+void test_health_orbit_view__back_calls_off_the_countdown(void) {
+  prv_render_workout();
+  prv_select_click_handler(nullptr, s_view);
+  prv_rest(s_view);
+  prv_select_click_handler(nullptr, s_view);
+  prv_rest(s_view);
+  prv_back_click_handler(nullptr, s_view);
+  prv_rest(s_view);
+  cl_assert(!s_view->week);
+  prv_workout_tick(s_view);
+  prv_workout_tick(s_view);
+  prv_workout_tick(s_view);
+  cl_assert_equal_i(s_workout.starts, 0);
+}
+
+void test_health_orbit_view__workout_pauses_ends_and_shows_its_summary(void) {
+  prv_set_run();
+  prv_render_workout();
+  prv_select_click_handler(nullptr, s_view);
+  prv_rest(s_view);
+  // Down does nothing while it runs
+  prv_up_down(s_view, true /* down */);
+  cl_assert_equal_i(s_view->workout.status, HealthOrbitWorkoutStatusRunning);
+  // Select pauses and resumes
+  prv_select_click_handler(nullptr, s_view);
+  prv_rest(s_view);
+  cl_assert(s_workout.paused);
+  cl_assert_equal_i(s_view->workout.status, HealthOrbitWorkoutStatusPaused);
+  prv_select_click_handler(nullptr, s_view);
+  prv_rest(s_view);
+  cl_assert(!s_workout.paused);
+  cl_assert_equal_i(s_view->workout.status, HealthOrbitWorkoutStatusRunning);
+  // Paused, Down asks, Up or Back takes it back, Select ends it
+  prv_select_click_handler(nullptr, s_view);
+  prv_rest(s_view);
+  prv_up_down(s_view, true /* down */);
+  prv_rest(s_view);
+  cl_assert_equal_i(s_view->workout.status, HealthOrbitWorkoutStatusEnd);
+  prv_back_click_handler(nullptr, s_view);
+  prv_rest(s_view);
+  cl_assert(s_view->week);
+  cl_assert_equal_i(s_view->workout.status, HealthOrbitWorkoutStatusPaused);
+  prv_up_down(s_view, true /* down */);
+  prv_rest(s_view);
+  prv_select_click_handler(nullptr, s_view);
+  prv_rest(s_view);
+  cl_assert_equal_i(s_workout.stops, 1);
+  cl_assert_equal_i(s_view->workout.status, HealthOrbitWorkoutStatusComplete);
+  cl_assert_equal_i(s_view->workout.workout.steps, 3912);
+  // Its summary stays as the ticks go on
+  prv_workout_tick(s_view);
+  cl_assert_equal_i(s_view->workout.status, HealthOrbitWorkoutStatusComplete);
+  // Select goes back to the card, nothing going on
+  prv_select_click_handler(nullptr, s_view);
+  prv_rest(s_view);
+  cl_assert(!s_view->week);
+  cl_assert_equal_i(health_data_workout_get(&s_data)->state, HealthWorkoutStateNone);
+}
+
+void test_health_orbit_view__workout_ended_elsewhere_shows_its_summary(void) {
+  prv_set_run();
+  prv_render_workout();
+  prv_select_click_handler(nullptr, s_view);
+  prv_rest(s_view);
+  workout_service_stop_workout();
+  prv_workout_tick(s_view);
+  prv_rest(s_view);
+  cl_assert_equal_i(s_view->workout.status, HealthOrbitWorkoutStatusComplete);
+}
+
+void test_health_orbit_view__detected_workout_is_taken_over(void) {
   prv_set_detected_walk();
   prv_render_workout();
   const HealthWorkoutData *workout = health_data_workout_get(&s_data);
@@ -760,6 +925,15 @@ void test_health_orbit_view__detected_workout_shows(void) {
   cl_assert_equal_i(workout->type, ActivitySessionType_Walk);
   cl_assert_equal_i(workout->duration_s, 18 * PBL_SEC_PER_MIN);
   cl_assert(workout->auto_detected);
+  // Select turns it into a workout, still known as detected
+  prv_select_click_handler(nullptr, s_view);
+  prv_rest(s_view);
+  cl_assert_equal_i(s_workout.takeovers, 1);
+  cl_assert(s_workout.ongoing);
+  cl_assert_equal_i(workout->state, HealthWorkoutStateRunning);
+  cl_assert(workout->auto_detected);
+  cl_assert_equal_i(s_view->list, HealthOrbitListWorkout);
+  cl_assert_equal_i(s_view->workout.workout.steps, 1874);
 }
 
 void test_health_orbit_view__workout_card_follows_the_workout_every_second(void) {

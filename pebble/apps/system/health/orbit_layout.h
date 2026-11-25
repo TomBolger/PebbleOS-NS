@@ -60,6 +60,26 @@
 #define HEALTH_WEEK_ROW_PITCH  23
 #define HEALTH_WEEK_ROW_HEIGHT 20
 
+//! The rows below the banner the sidebar turns into: the week of a section, the kinds of workout
+//! to start, or the measures of the workout going on
+typedef enum HealthOrbitList {
+  HealthOrbitListWeek,
+  HealthOrbitListWorkoutKinds,
+  HealthOrbitListWorkout,
+} HealthOrbitList;
+
+//! Most rows a list has
+#define HEALTH_ORBIT_LIST_MAX_ROWS 7
+
+//! The kinds of workout: three tall rows, room for each kind's icon
+#define HEALTH_WORKOUT_KIND_ROW_TOP    84
+#define HEALTH_WORKOUT_KIND_ROW_PITCH  46
+#define HEALTH_WORKOUT_KIND_ROW_HEIGHT 38
+
+//! The workout's measures are on the week's rows below the two its time takes
+#define HEALTH_WORKOUT_FIRST_ROW 2
+#define HEALTH_WORKOUT_MAX_ROWS  (HEALTH_ORBIT_LIST_MAX_ROWS - HEALTH_WORKOUT_FIRST_ROW)
+
 //! The sidebar with a notch \a notch_width deep, as the round timeline fills it a row at a time on
 //! the right of the \a display. Turned a quarter round, the same circle is the banner at the top,
 //! filled a column at a time.
@@ -121,3 +141,11 @@ int16_t health_orbit_week_row_center_y(int index);
 //! The pill of week row \a index, as a round menu's pill on that row, its ends following the bezel.
 //! @return false if the row has no room for a pill
 bool health_orbit_week_row(GSize display, int index, MenuRoundShape *pill);
+
+//! Number of rows of \a list
+int health_orbit_list_num_rows(HealthOrbitList list);
+
+//! The pill of row \a index of \a list, a round menu's pill on its row, its ends following the
+//! bezel.
+//! @return false if the list has no such row, or it has no room for a pill
+bool health_orbit_list_row(GSize display, HealthOrbitList list, int index, MenuRoundShape *pill);

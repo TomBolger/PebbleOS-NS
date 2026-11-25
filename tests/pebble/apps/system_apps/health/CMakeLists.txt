@@ -388,6 +388,7 @@ pbl_clar_test(test_health_orbit_view
     pebble/apps/system/health/orbit_draw.c
     pebble/apps/system/health/orbit_layout.c
     pebble/apps/system/health/orbit_week.c
+    pebble/apps/system/health/orbit_workout.c
     pebble/apps/system/timeline/animations.c
     pebble/apps/system/timeline/list_layout.c
     pebble/services/activity/health_util.c
