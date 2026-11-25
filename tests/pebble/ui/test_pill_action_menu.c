@@ -6,6 +6,7 @@
 
 #include <applib/graphics/gdraw_command_image.h>
 #include <applib/graphics/graphics_private.h>
+#include <applib/graphics/text.h>
 #include <applib/ui/action_menu_hierarchy.h>
 #include <applib/ui/action_menu_window.h>
 #include <applib/ui/action_menu_window_private.h>
@@ -200,10 +201,19 @@ void *window_get_user_data(const Window *window) {
   return window->user_data;
 }
 
-// What the action menu plays
+// What the action menu measures and plays
 /////////////////////
 
+static int s_num_measures;
 static int s_num_vibes;
+
+GSize graphics_text_layout_get_max_used_size(GContext *ctx, const char *text, GFont const font,
+                                             const GRect box, const GTextOverflowMode overflow_mode,
+                                             const GTextAlignment alignment,
+                                             GTextLayoutCacheRef layout) {
+  s_num_measures++;
+  return GSize(60, 24);
+}
 
 void vibes_enqueue_custom_pattern(VibePattern pattern) {
   s_num_vibes++;
@@ -274,6 +284,7 @@ void test_pill_action_menu__initialize(void) {
 
   s_num_selections = 0;
   s_num_did_close = 0;
+  s_num_measures = 0;
   s_num_vibes = 0;
   shell_prefs_set_menu_scroll_vibe_behavior(MenuScrollNoVibe);
   s_root = prv_create_level(4);
@@ -305,6 +316,16 @@ static ActionMenu *prv_open(void) {
     .window = &s_window,
   };
   return pill_action_menu_open(&config, &s_config);
+}
+
+//! Draws a frame of the action menu, the window's last layer
+static void prv_draw(void) {
+  Layer *layer = s_window.layer.first_child;
+  while (layer->next_sibling) {
+    layer = layer->next_sibling;
+  }
+  GContext ctx = {};
+  layer->update_proc(layer, &ctx);
 }
 
 // Tests
@@ -376,4 +397,25 @@ void test_pill_action_menu__pulses_at_the_ends_as_menus_do(void) {
   // Moving on is not an end
   prv_click(BUTTON_ID_DOWN);
   cl_assert_equal_i(s_num_vibes, 1);
+}
+
+void test_pill_action_menu__labels_are_measured_once_per_level(void) {
+  cl_assert(prv_open());
+  prv_draw();
+  // Four labels, each measured once, whatever is drawn after
+  cl_assert_equal_i(s_num_measures, 4);
+  for (int i = 0; i < 3; i++) {
+    prv_click(BUTTON_ID_DOWN);
+    prv_draw();
+  }
+  cl_assert_equal_i(s_num_measures, 4);
+
+  // The submenu's two, then the root's four again
+  prv_click(BUTTON_ID_SELECT);
+  prv_draw();
+  prv_draw();
+  cl_assert_equal_i(s_num_measures, 6);
+  prv_click(BUTTON_ID_BACK);
+  prv_draw();
+  cl_assert_equal_i(s_num_measures, 10);
 }

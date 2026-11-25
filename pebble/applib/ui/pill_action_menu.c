@@ -100,6 +100,8 @@ typedef struct PillActionMenu {
   const ActionMenuLevel *levels[MAX_DEPTH];
   uint16_t selected[MAX_DEPTH];
   uint8_t depth;
+  // How wide each label of the level shown is at the large size, -1 until first drawn
+  int16_t *label_widths;
 
   // The selected row of the menu, on screen with the menu at rest: its pill and its cell
   MenuRoundShape row_pill;
@@ -197,6 +199,21 @@ static void prv_draw_icon(PillActionMenu *menu, GContext *ctx, GPoint center, in
                            GPoint(center.x - scaled.w / 2, center.y - scaled.h / 2));
 }
 
+//! How wide label \a i of the level shown is at the large size, measured once per level
+static int16_t prv_label_width(PillActionMenu *menu, GContext *ctx, uint16_t i, GFont font) {
+  int16_t *width = menu->label_widths ? &menu->label_widths[i] : nullptr;
+  if (width && (*width >= 0)) {
+    return *width;
+  }
+  const GSize size = graphics_text_layout_get_max_used_size(
+      ctx, prv_level(menu)->items[i].label ?: "", font, GRect(0, 0, 400, ROW_PILL_HEIGHT),
+      GTextOverflowModeTrailingEllipsis, GTextAlignmentLeft, nullptr);
+  if (width) {
+    *width = size.w;
+  }
+  return size.w;
+}
+
 static void prv_draw_rows(PillActionMenu *menu, GContext *ctx, int16_t shift) {
   const ActionMenuLevel *level = prv_level(menu);
   const uint16_t selected = prv_selected(menu);
@@ -218,10 +235,7 @@ static void prv_draw_rows(PillActionMenu *menu, GContext *ctx, int16_t shift) {
     const char *text = level->items[i].label ?: "";
     int16_t points = 24;
     GFont font = fonts_get_system_font(FONT_KEY_GOTHIC_24_BOLD);
-    const GSize size = graphics_text_layout_get_max_used_size(
-        ctx, text, font, GRect(0, 0, 400, ROW_PILL_HEIGHT), GTextOverflowModeTrailingEllipsis,
-        GTextAlignmentLeft, nullptr);
-    if (size.w > right - left - 12) {
+    if (prv_label_width(menu, ctx, i, font) > right - left - 12) {
       // Too long: a step smaller
       points = 18;
       font = fonts_get_system_font(FONT_KEY_GOTHIC_18_BOLD);
@@ -530,6 +544,7 @@ static void prv_destroy(PillActionMenu *menu) {
                                                 menu->window_click_context);
   gdraw_command_image_destroy(menu->scaled_icon);
   gdraw_command_image_destroy(menu->icon);
+  applib_free(menu->label_widths);
   ActionMenu *action_menu = menu->action_menu;
   applib_free(menu);
   action_menu_hosted_did_close(action_menu);
@@ -641,6 +656,17 @@ static void prv_selection_changed(PillActionMenu *menu, bool animated) {
   menu->list_pos = target;
 }
 
+//! Shows the level at the top of the stack, measuring its labels anew
+static void prv_show_level(PillActionMenu *menu) {
+  applib_free(menu->label_widths);
+  const size_t size = prv_count(menu) * sizeof(int16_t);
+  menu->label_widths = applib_malloc(size);
+  if (menu->label_widths) {
+    memset(menu->label_widths, 0xff, size);
+  }
+  prv_selection_changed(menu, false /* animated */);
+}
+
 // ---------------------------------------------------------------------------------------------
 // Navigation
 
@@ -668,7 +694,7 @@ static void prv_enter_level(PillActionMenu *menu, const ActionMenuLevel *level) 
   menu->selected[menu->depth] =
       (uint16_t)PBL_MIN(level->default_selected_item, (unsigned)level->num_items - 1);
   menu->depth++;
-  prv_selection_changed(menu, false);
+  prv_show_level(menu);
 }
 
 static void prv_activate(PillActionMenu *menu, uint16_t index) {
@@ -717,7 +743,7 @@ static void prv_back_click(ClickRecognizerRef recognizer, void *context) {
   if (menu->depth > 1) {
     prv_notify_level(menu, nullptr);
     menu->depth--;
-    prv_selection_changed(menu, false);
+    prv_show_level(menu);
   } else {
     prv_close(menu);
   }
@@ -799,7 +825,7 @@ ActionMenu *pill_action_menu_open(const PillActionMenuConfig *config,
   layer_init(&menu->layer, &GRect(0, 0, root_layer->frame.size.w, root_layer->frame.size.h));
   layer_set_update_proc(&menu->layer, prv_update_proc);
   layer_add_child(root_layer, &menu->layer);
-  prv_selection_changed(menu, false /* animated */);
+  prv_show_level(menu);
   window_set_click_config_provider_with_context(window, prv_click_config_provider, menu);
   prv_touch_register(menu);
   prv_run_motion(menu, 1000);
