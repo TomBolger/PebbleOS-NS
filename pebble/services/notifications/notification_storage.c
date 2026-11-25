@@ -791,8 +791,6 @@ void notification_storage_digest(const Uuid *parent_id, NotificationStorageDiges
   notification_storage_iterate(prv_digest_notification, &context);
 }
 
-//! Reads the string attributes requested in attr_list from the payload following the header,
-//! leaving the file positioned after the payload
 // Size of the numeric attributes the list iterator can read, 0 for strings.
 static size_t prv_numeric_attribute_size(AttributeId id) {
   switch (id) {
@@ -805,6 +803,8 @@ static size_t prv_numeric_attribute_size(AttributeId id) {
   }
 }
 
+//! Reads the string attributes requested in attr_list from the payload following the header,
+//! leaving the file positioned after the payload
 static bool prv_read_string_attributes(const SerializedTimelineItemHeader *header,
                                        AttributeList *attr_list, size_t buffer_size,
                                        struct pbl_fs_file *file) {
