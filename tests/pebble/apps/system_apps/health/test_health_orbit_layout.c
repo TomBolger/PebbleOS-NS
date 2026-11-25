@@ -69,10 +69,24 @@ void test_health_orbit_layout__notch_points_at_the_middle_row(void) {
   const GPoint tip = health_orbit_notch_tip(DISPLAY, 0);
   cl_assert_equal_i(tip.y, MID_Y);
   cl_assert_equal_i(tip.x, PBL_DISPLAY_WIDTH - timeline_list_sidebar_depth(&notched, MID_Y));
-  // Turned to the top, it points up at the middle column
+  // Turned to the top, it points up at the middle column from the banner's edge, closed
   const GPoint top = health_orbit_notch_tip(DISPLAY, -QUARTER);
   cl_assert_equal_i(top.x, PBL_DISPLAY_WIDTH / 2);
-  cl_assert_equal_i(top.y, PBL_DISPLAY_WIDTH - tip.x - 1);
+  cl_assert_equal_i(top.y, LAYOUT_TOP_BANNER_HEIGHT_ROUND - 1);
+}
+
+void test_health_orbit_layout__notch_closes_as_the_sidebar_turns_up(void) {
+  cl_assert_equal_i(health_orbit_notch_width(0), HEALTH_ORBIT_NOTCH_WIDTH);
+  cl_assert_equal_i(health_orbit_notch_width(-QUARTER / 2), HEALTH_ORBIT_NOTCH_WIDTH / 2);
+  cl_assert_equal_i(health_orbit_notch_width(-QUARTER), 0);
+  // Past the top, as the turn overshoots, it stays closed
+  cl_assert_equal_i(health_orbit_notch_width(-QUARTER - QUARTER / 10), 0);
+  int16_t last = HEALTH_ORBIT_NOTCH_WIDTH;
+  for (int32_t turn = 0; turn >= -QUARTER; turn -= QUARTER / 16) {
+    const int16_t width = health_orbit_notch_width(turn);
+    cl_assert(width <= last);
+    last = width;
+  }
 }
 
 void test_health_orbit_layout__bubbles_orbit_the_sidebar(void) {
