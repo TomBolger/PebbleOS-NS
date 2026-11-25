@@ -6,6 +6,7 @@
 #include "orbit_card.h"
 #include "orbit_draw.h"
 #include "orbit_layout.h"
+#include "orbit_week.h"
 
 #include <pbl/i18n/i18n.h>
 #include <pbl/services/timeline/health_layout.h>
@@ -33,6 +34,9 @@
 #define SELECTED_ICON_SIZE      21
 #define NEIGHBOUR_ICON_SIZE     13
 
+//! The crown by the best day of the week
+#define CROWN_SIZE GSize(13, 11)
+
 //! A quarter turn of the sidebar, back from the right to the top
 #define QUARTER_TURN (TRIG_MAX_ANGLE / 4)
 
@@ -46,6 +50,7 @@ struct HealthOrbitView {
   Layer layer;
   HealthData *health_data;
   HealthOrbitIcon icons[HealthOrbitSectionCount];
+  GDrawCommandImage *crown;
   //! Section of the card shown
   HealthOrbitSection section;
   HealthOrbitCard card;
@@ -58,6 +63,13 @@ struct HealthOrbitView {
   int16_t turn;
   //! Radius of the bubbles of the sections away from the notch
   int16_t neighbour_radius;
+
+  //! Whether the week of the section shows, in place of its card
+  bool week;
+  //! The pill each row of the week is in
+  MenuRoundShape week_rows[HEALTH_ORBIT_WEEK_NUM_ROWS];
+  //! How far the line above the rows is below where it rests
+  int16_t week_header_offset_y;
 };
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -165,8 +177,8 @@ static void prv_draw_bubble(GContext *ctx, HealthOrbitView *view, HealthOrbitSec
     return;
   }
   // A shrinking bubble shrinks its icon's view with it
-  const GDrawState state = health_orbit_clip(
-      ctx, GRect(center.x - radius, center.y - radius, 2 * radius, 2 * radius));
+  const GDrawState state =
+      health_orbit_clip(ctx, GRect(center.x - radius, center.y - radius, 2 * radius, 2 * radius));
   const GSize size = gdraw_command_image_get_bounds_size(icon);
   gdraw_command_image_draw(ctx, icon, GPoint(center.x - size.w / 2, center.y - size.h / 2));
   graphics_context_set_drawing_state(ctx, state);
@@ -194,8 +206,13 @@ static void prv_layer_update_proc(Layer *layer, GContext *ctx) {
   graphics_context_set_fill_color(ctx, bg);
   graphics_fill_rect(ctx, &layer->bounds);
 
-  health_orbit_card_draw_content(ctx, &view->card, view->health_data, view);
-  health_orbit_card_draw_rings(ctx, &view->card, view->health_data, true /* tracks */);
+  if (view->week) {
+    health_orbit_week_draw(ctx, view->section, view->health_data, view->week_rows,
+                           view->week_header_offset_y, view->crown, view);
+  } else {
+    health_orbit_card_draw_content(ctx, &view->card, view->health_data, view);
+    health_orbit_card_draw_rings(ctx, &view->card, view->health_data, true /* tracks */);
+  }
   prv_fill_sidebar(ctx, display, view->turn, health_orbit_section_color(view->section), bg);
   prv_draw_orbit(ctx, view, display);
 }
@@ -212,6 +229,9 @@ static void prv_show_section(HealthOrbitView *view, HealthOrbitSection section) 
 
 static void prv_up_down_click_handler(ClickRecognizerRef recognizer, void *context) {
   HealthOrbitView *view = context;
+  if (view->week) {
+    return;
+  }
   const bool down = (click_recognizer_get_button_id(recognizer) == BUTTON_ID_DOWN);
   int next = view->section + (down ? 1 : -1);
   if (next < 0 || next >= HealthOrbitSectionCount) {
@@ -226,9 +246,37 @@ static void prv_up_down_click_handler(ClickRecognizerRef recognizer, void *conte
   prv_show_section(view, next);
 }
 
+//! Shows the week of the section, the sidebar turned back to the top as the banner, or its card
+static void prv_show_week(HealthOrbitView *view, bool week) {
+  view->week = week;
+  view->turn = week ? -QUARTER_TURN : 0;
+  view->neighbour_radius = week ? 0 : NEIGHBOUR_BUBBLE_RADIUS;
+  health_orbit_week_get_rest_rows(view->week_rows);
+  view->week_header_offset_y = 0;
+  layer_mark_dirty(&view->layer);
+}
+
+static void prv_select_click_handler(ClickRecognizerRef recognizer, void *context) {
+  HealthOrbitView *view = context;
+  if (!view->week && health_orbit_week_has_section(view->section)) {
+    prv_show_week(view, true);
+  }
+}
+
+static void prv_back_click_handler(ClickRecognizerRef recognizer, void *context) {
+  HealthOrbitView *view = context;
+  if (view->week) {
+    prv_show_week(view, false);
+  } else {
+    app_window_stack_pop(true);
+  }
+}
+
 static void prv_click_config_provider(void *context) {
   window_single_click_subscribe(BUTTON_ID_UP, prv_up_down_click_handler);
   window_single_click_subscribe(BUTTON_ID_DOWN, prv_up_down_click_handler);
+  window_single_click_subscribe(BUTTON_ID_SELECT, prv_select_click_handler);
+  window_single_click_subscribe(BUTTON_ID_BACK, prv_back_click_handler);
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -258,6 +306,11 @@ HealthOrbitView *health_orbit_view_create(HealthData *health_data) {
     };
   }
 
+  view->crown = gdraw_command_image_create_with_resource(RESOURCE_ID_HEALTH_APP_CROWN);
+  if (view->crown) {
+    gdraw_command_image_scale(view->crown, CROWN_SIZE);
+  }
+
   window_init(&view->window, WINDOW_NAME("Health Orbit"));
   window_set_user_data(&view->window, view);
   window_set_click_config_provider_with_context(&view->window, prv_click_config_provider, view);
@@ -277,6 +330,7 @@ void health_orbit_view_destroy(HealthOrbitView *view) {
     gdraw_command_image_destroy(view->icons[i].selected);
     gdraw_command_image_destroy(view->icons[i].neighbour);
   }
+  gdraw_command_image_destroy(view->crown);
   layer_deinit(&view->layer);
   window_deinit(&view->window);
   pbl_i18n_free_all(view);
