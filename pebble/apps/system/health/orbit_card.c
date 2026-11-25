@@ -5,6 +5,7 @@
 
 #include "orbit_layout.h"
 
+#include <ctype.h>
 #include <inttypes.h>
 #include <stdio.h>
 #include <string.h>
@@ -12,6 +13,7 @@
 #include <pbl/i18n/i18n.h>
 #include <pbl/services/activity/health_util.h>
 #include <pbl/services/clock.h>
+#include <pbl/services/time.h>
 #include <pbl/util/math.h>
 #include <pbl/util/size.h>
 #include <pbl/util/trig.h>
@@ -39,6 +41,21 @@
 #define CARD_PILL_Y  15
 #define CARD_PILL_W  128
 #define CARD_PILL_H  22
+
+//! The two rings of the Today card, steps outside and sleep inside, and the space inside them
+#define TODAY_STEPS_RING_OUTER 127
+#define TODAY_SLEEP_RING_OUTER 112
+#define TODAY_RING_THICKNESS   12
+#define TODAY_INNER_RADIUS     (TODAY_SLEEP_RING_OUTER - TODAY_RING_THICKNESS)
+
+//! Rows of the Today card, from the middle of the display
+#define TODAY_DATE_Y   (-74)
+#define TODAY_STEPS_Y  (-46)
+#define TODAY_SLEEP_Y  (-8)
+#define TODAY_DETAIL_Y 22
+#define TODAY_PILL_Y   54
+#define TODAY_PILL_W   124
+#define TODAY_PILL_H   24
 
 //! Space between the text and the ends of a pill
 #define PILL_PADDING 6
@@ -79,6 +96,7 @@ static const OrbitFont s_gothic_14_bold = {FONT_KEY_GOTHIC_14_BOLD, 5, 14};
 static const OrbitFont s_gothic_18_bold = {FONT_KEY_GOTHIC_18_BOLD, 7, 18};
 static const OrbitFont s_gothic_24_bold = {FONT_KEY_GOTHIC_24_BOLD, 10, 24};
 static const OrbitFont s_leco_38_bold = {FONT_KEY_LECO_38_BOLD_NUMBERS, 11, 38};
+static const OrbitFont s_leco_28_light = {FONT_KEY_LECO_28_LIGHT_NUMBERS, 8, 28};
 
 //! A run of text in one font and color
 typedef struct OrbitRun {
@@ -313,6 +331,10 @@ static int prv_get_rings(HealthOrbitSection section, HealthData *health_data,
                                     true /* typical_tick */);
       return 1;
     case HealthOrbitSectionToday:
+      rings_out[0] = prv_steps_ring(health_data, TODAY_STEPS_RING_OUTER, TODAY_RING_THICKNESS);
+      rings_out[1] = prv_sleep_ring(health_data, TODAY_SLEEP_RING_OUTER, TODAY_RING_THICKNESS,
+                                    false /* typical_tick */);
+      return 2;
     case HealthOrbitSectionCount:
       break;
   }
@@ -443,6 +465,113 @@ static void prv_draw_steps(GContext *ctx, GSize display, const HealthOrbitCard *
     {GColorDarkGray, calories, pbl_i18n_get("kcal", i18n_owner), GColorLightGray},
   };
   prv_draw_bubbles(ctx, display, card, bubbles, PBL_ARRAY_SIZE(bubbles));
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+// Today
+
+//! The date, as "WED 25 NOV"
+static void prv_format_date(char *buffer, size_t size) {
+  const time_t now = pbl_realtime();
+  struct pbl_tm local_tm;
+  pbl_localtime_r(&now, &local_tm);
+  char weekday[8];
+  char month[8];
+  pbl_strftime_r(weekday, sizeof(weekday), "%a", &local_tm);
+  pbl_strftime_r(month, sizeof(month), "%b", &local_tm);
+  snprintf(buffer, size, "%s %d %s", weekday, local_tm.tm_mday, month);
+  for (char *c = buffer; *c; c++) {
+    *c = toupper((unsigned char)*c);
+  }
+}
+
+static void prv_draw_today(GContext *ctx, GSize display, const HealthOrbitCard *card,
+                           HealthData *health_data, void *i18n_owner) {
+  const int16_t middle = display.h / 2;
+  const int16_t dy = card->offset_y;
+  const int16_t inner = TODAY_INNER_RADIUS;
+
+  char date[24];
+  prv_format_date(date, sizeof(date));
+  prv_draw_text(ctx, date, &s_gothic_14_bold, GColorLightGray,
+                prv_line_center_x(display, inner, middle + TODAY_DATE_Y, 12),
+                middle + TODAY_DATE_Y + dy);
+
+  char steps[16];
+  prv_format_count(steps, sizeof(steps), health_data_current_steps_get(health_data));
+  const OrbitRun steps_runs[] = {
+    {steps, &s_leco_28_light, GColorScreaminGreen},
+    /// After the step count on the Today card of the round Health app
+    {pbl_i18n_get("steps", i18n_owner), &s_gothic_18_bold, GColorWhite},
+  };
+  prv_draw_runs(ctx, steps_runs, PBL_ARRAY_SIZE(steps_runs), 5,
+                prv_line_center_x(display, inner, middle + TODAY_STEPS_Y, 22),
+                middle + TODAY_STEPS_Y + dy);
+
+  const int32_t sleep = health_data_current_sleep_get(health_data);
+  const int32_t minutes = sleep / PBL_SEC_PER_MIN;
+  char hours_text[12];
+  char minutes_text[12];
+  snprintf(hours_text, sizeof(hours_text), "%d", (int)(minutes / PBL_MIN_PER_HOUR));
+  snprintf(minutes_text, sizeof(minutes_text), "%02d", (int)(minutes % PBL_MIN_PER_HOUR));
+  const GColor sleep_color = GColorVividCerulean;
+  const OrbitRun sleep_runs[] = {
+    {hours_text, &s_leco_28_light, sleep_color},
+    {pbl_i18n_get("h", i18n_owner), &s_gothic_18_bold, sleep_color},
+    {minutes_text, &s_leco_28_light, sleep_color},
+    {pbl_i18n_get("m", i18n_owner), &s_gothic_18_bold, sleep_color},
+    /// After the hours and minutes slept on the Today card of the round Health app
+    {pbl_i18n_get("sleep", i18n_owner), &s_gothic_18_bold, GColorWhite},
+  };
+  prv_draw_runs(ctx, sleep_runs, PBL_ARRAY_SIZE(sleep_runs), 2,
+                prv_line_center_x(display, inner, middle + TODAY_SLEEP_Y, 22),
+                middle + TODAY_SLEEP_Y + dy);
+
+  // The sleep against the typical sleep and the deep sleep, the deep sleep alone if both do not fit
+  const int32_t typical = health_data_sleep_get_cur_wday_average(health_data);
+  char deep[16];
+  prv_format_duration(deep, sizeof(deep), health_data_current_deep_sleep_get(health_data),
+                      i18n_owner);
+  char detail[64];
+  if (typical > 0) {
+    /// Last night's sleep as a share of the typical sleep, and the deep sleep, as
+    /// "93% of typical · deep 1h 40m"
+    snprintf(detail, sizeof(detail), pbl_i18n_get("%d%% of typical · deep %s", i18n_owner),
+             (int)(sleep * 100 / typical), deep);
+  } else {
+    detail[0] = '\0';
+  }
+  const GRangeHorizontal range = health_orbit_text_range(
+      display, inner, middle + TODAY_DETAIL_Y - 7, middle + TODAY_DETAIL_Y + 7);
+  const OrbitRun detail_run = {detail, &s_gothic_14, GColorLightGray};
+  if (detail[0] == '\0' || prv_run_width(ctx, &detail_run) > range.size_w) {
+    /// The deep sleep, as "deep 1h 40m"
+    snprintf(detail, sizeof(detail), pbl_i18n_get("deep %s", i18n_owner), deep);
+  }
+  prv_draw_text(ctx, detail, &s_gothic_14, GColorLightGray, range.origin_x + range.size_w / 2,
+                middle + TODAY_DETAIL_Y + dy);
+
+  char distance[HEALTH_WHOLE_AND_DECIMAL_LENGTH];
+  health_util_format_whole_and_decimal(distance, sizeof(distance),
+                                       health_data_current_distance_meters_get(health_data),
+                                       health_util_get_distance_factor());
+  char active[12];
+  snprintf(active, sizeof(active), "%d",
+           (int)(health_data_current_active_seconds_get(health_data) / PBL_SEC_PER_MIN));
+  const OrbitRun pill_runs[] = {
+    {distance, &s_gothic_18_bold, GColorWhite},
+    {pbl_i18n_get(health_util_get_distance_string(pbl_i18n_noop("mi"), pbl_i18n_noop("km")),
+                  i18n_owner),
+     &s_gothic_14, GColorLightGray},
+    {"·", &s_gothic_14, GColorLightGray},
+    {active, &s_gothic_18_bold, GColorWhite},
+    {pbl_i18n_get("min", i18n_owner), &s_gothic_14, GColorLightGray},
+  };
+  const GPoint pill_center =
+      GPoint(prv_line_center_x(display, inner, middle + TODAY_PILL_Y, TODAY_PILL_H),
+             middle + TODAY_PILL_Y + dy);
+  prv_draw_pill(ctx, pill_center, TODAY_PILL_W, TODAY_PILL_H, GColorDarkGray, pill_runs,
+                PBL_ARRAY_SIZE(pill_runs), 3);
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -613,6 +742,8 @@ void health_orbit_card_draw_content(GContext *ctx, const HealthOrbitCard *card,
       prv_draw_sleep(ctx, display, card, health_data, i18n_owner);
       break;
     case HealthOrbitSectionToday:
+      prv_draw_today(ctx, display, card, health_data, i18n_owner);
+      break;
     case HealthOrbitSectionCount:
       break;
   }
