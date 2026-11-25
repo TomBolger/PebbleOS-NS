@@ -4,7 +4,7 @@
 pbl_clar_test(test_notifications_shade
   SOURCES
     pebble/apps/system/notifications_shade.c
-  OVERRIDES dummy_board
+  OVERRIDES dummy_board applib_malloc
 )
 
 pbl_clar_test(test_notifications_round_path
