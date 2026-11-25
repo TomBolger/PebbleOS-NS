@@ -193,7 +193,7 @@ static LoadedNotificationNode *prv_load_row_item(NotificationsData *data,
 
 // Return true if successful
 static bool prv_push_notification_window(NotificationsData *data, const Uuid *focus_id) {
-  notification_window_init_history(false /* allow_dismiss_all */);
+  notification_window_init_history();
 
   // Bail if a notification came in ahead of us and created a modal window
   // before we had a chance to react to the select button event.
@@ -347,12 +347,30 @@ static int16_t prv_full_row_height(const NotificationShadeRow *row) {
   return prv_row_is_header(row) ? prv_header_height() : prv_cell_height();
 }
 
+//! The last row, past every notification, dismisses them all after asking.
+static bool prv_is_dismiss_all_row(const NotificationsData *data, int16_t index) {
+  const uint16_t count = notification_shade_row_count(&data->shade);
+  return (count > 0) && (index == count);
+}
+
+static int16_t prv_dismiss_all_row_height(void) {
+  return notification_style_scaled_points(24) + 16;
+}
+
+static uint16_t prv_row_count(const NotificationsData *data) {
+  const uint16_t count = notification_shade_row_count(&data->shade);
+  return (count > 0) ? (count + 1) : 0;
+}
+
 static bool prv_row_is_folding(const NotificationsData *data, int16_t index) {
   return (data->fold_first >= 0) && (index >= data->fold_first) &&
          (index < data->fold_first + data->fold_count);
 }
 
 static int16_t prv_row_height_at(const NotificationsData *data, int16_t index) {
+  if (prv_is_dismiss_all_row(data, index)) {
+    return prv_dismiss_all_row_height();
+  }
   const int16_t full = prv_full_row_height(notification_shade_row(&data->shade, index));
   if (prv_row_is_folding(data, index)) {
     if (index >= data->fold_first + data->fold_moving) {
@@ -452,7 +470,7 @@ static int16_t prv_round_space_above(const NotificationsData *data) {
 }
 
 static int16_t prv_round_space_below(const NotificationsData *data) {
-  const uint16_t count = notification_shade_row_count(&data->shade);
+  const uint16_t count = prv_row_count(data);
   return count ? prv_round_end_space(prv_row_height_at(data, count - 1)) : 0;
 }
 #endif
@@ -672,9 +690,25 @@ static void prv_draw_item_row(GContext *ctx, const Layer *cell_layer, GRect boun
   }
 }
 
+static void prv_draw_dismiss_all_row(GContext *ctx, const Layer *cell_layer) {
+  const GRect bounds = cell_layer->bounds;
+  const int16_t height = notification_style_scaled_points(24);
+  graphics_context_set_text_color(ctx, menu_cell_layer_is_highlighted(cell_layer)
+                                           ? prv_highlight_text_color()
+                                           : notification_style_fg());
+  graphics_draw_text(ctx, pbl_i18n_get("Dismiss All", s_data),
+                     notification_style_scaled_font(24, true),
+                     GRect(0, (bounds.size.h - height) / 2 - 4, bounds.size.w, height + 4),
+                     GTextOverflowModeTrailingEllipsis, GTextAlignmentCenter, nullptr);
+}
+
 static void prv_draw_row_callback(GContext *ctx, const Layer *cell_layer, MenuIndex *cell_index,
                                   void *context) {
   NotificationsData *data = context;
+  if (prv_is_dismiss_all_row(data, cell_index->row)) {
+    prv_draw_dismiss_all_row(ctx, cell_layer);
+    return;
+  }
   const NotificationShadeRow *row = notification_shade_row(&data->shade, cell_index->row);
   if (!row) {
     return;
@@ -905,6 +939,10 @@ static void prv_toggle_row(NotificationsData *data, uint16_t index) {
 
 static void prv_select_callback(MenuLayer *menu_layer, MenuIndex *cell_index, void *context) {
   NotificationsData *data = context;
+  if (prv_is_dismiss_all_row(data, cell_index->row)) {
+    prv_settings_clear_history_window_push(data);
+    return;
+  }
   const NotificationShadeRow *row = notification_shade_row(&data->shade, cell_index->row);
   if (!row) {
     return;
@@ -922,8 +960,7 @@ static void prv_select_callback(MenuLayer *menu_layer, MenuIndex *cell_index, vo
 
 static uint16_t prv_get_num_rows_callback(MenuLayer *menu_layer, uint16_t section_index,
                                           void *context) {
-  NotificationsData *data = context;
-  return notification_shade_row_count(&data->shade);
+  return prv_row_count(context);
 }
 
 static int16_t prv_get_cell_height(MenuLayer *menu_layer, MenuIndex *cell_index, void *context) {
