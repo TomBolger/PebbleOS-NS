@@ -510,10 +510,6 @@ static const MoookConfig s_turn_back = {
   .num_frames_mid = 1,
 };
 
-//! The card drops away and comes back on the Moook soft curve with one middle frame, as the rect
-//! cards slide
-#define CARD_DROP_FRAMES_MID 1
-
 static int64_t prv_sweep_back_curve(int32_t normalized, int64_t from, int64_t to) {
   return interpolate_moook_custom(normalized, from, to, &s_sweep_back);
 }
@@ -524,10 +520,6 @@ static int64_t prv_turn_curve(int32_t normalized, int64_t from, int64_t to) {
 
 static int64_t prv_turn_back_curve(int32_t normalized, int64_t from, int64_t to) {
   return interpolate_moook_custom(normalized, from, to, &s_turn_back);
-}
-
-static int64_t prv_drop_curve(int32_t normalized, int64_t from, int64_t to) {
-  return interpolate_moook_soft(normalized, from, to, CARD_DROP_FRAMES_MID);
 }
 
 static int64_t prv_in_only_curve(int32_t normalized, int64_t from, int64_t to) {
@@ -776,8 +768,9 @@ static void prv_animate_week_in(HealthOrbitView *view) {
     prv_add_int16(&transition, &view->card.bubble_radius[i], 0, 0, interpolate_moook_in_duration(),
                   prv_in_only_curve);
   }
-  prv_add_int16(&transition, &view->card.offset_y, display.h, 0,
-                interpolate_moook_soft_duration(CARD_DROP_FRAMES_MID), prv_drop_curve);
+  // The card drops away as cards slide, through the middle frames, rather than leaving at once
+  prv_add_int16(&transition, &view->card.offset_y, display.h, 0, SLIDE_MS,
+                timeline_animation_interpolate_moook_soft);
   prv_add_int16(&transition, &view->neighbour_radius, 0, 0, interpolate_moook_in_duration(),
                 prv_in_only_curve);
 
@@ -832,8 +825,9 @@ static void prv_animate_week_out(HealthOrbitView *view, bool to_day) {
 
   health_orbit_card_init(&view->card, view->section, view->day ? &view->day_data : nullptr);
   view->card.offset_y = display.h;
-  prv_add_int16(&transition, &view->card.offset_y, 0, turn_delay,
-                interpolate_moook_soft_duration(CARD_DROP_FRAMES_MID), prv_drop_curve);
+  // It rises as cards slide, its text coming up through the middle frames rather than at once
+  prv_add_int16(&transition, &view->card.offset_y, 0, turn_delay, SLIDE_MS,
+                timeline_animation_interpolate_moook_soft);
   uint32_t sweeps[HEALTH_ORBIT_CARD_MAX_RINGS];
   uint32_t spans[HEALTH_ORBIT_CARD_MAX_RINGS];
   const int num_rings = health_orbit_card_get_sweeps(&view->card, view->health_data, sweeps, spans);
