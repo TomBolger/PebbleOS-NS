@@ -1033,7 +1033,6 @@ static void prv_list_layout(TimelineLayer *layer) {
   for (int i = 0; i < num_pins; i++) {
     const int screen_index = prv_list_screen_index(layer, num_pins, i);
     TimelineListPinView *pin = list->pins[i];
-    pin->shown = shown[screen_index];
     pin->frame = prv_list_full_frame(layer, tops[screen_index], prv_list_pin_height(pin));
   }
 #if PBL_ROUND
@@ -1286,8 +1285,6 @@ static void prv_list_icons_in_and_out(TimelineLayer *layer, TimelineListPinView 
 static void prv_list_move(TimelineLayer *layer) {
   TimelineList *list = &layer->list;
   prv_list_start_from_current(layer);
-  // A pin taller than the screen shows from the end the list comes from
-  list->selection_changed = true;
   TimelineIterState *current = timeline_model_get_current_state();
   if (current && current->current_day != layer->current_day) {
     // The pins scroll out ahead of the day separator, which comes in where the dot was
@@ -1361,7 +1358,6 @@ static void prv_list_reset(TimelineLayer *layer) {
     pin->icon_from_angle = prv_list_hidden_angle(list, side);
 #endif
   }
-  list->selection_changed = true;
   list->day_end = nullptr;
   list->timeline_end = nullptr;
   prv_list_follow_with_indicators(layer);
@@ -1470,20 +1466,15 @@ static Animation *prv_list_create_up_down_animation(TimelineLayer *layer, uint32
   }
   prv_list_place_indicators(layer);
 #if PBL_RECT
-  // Scrolling through the selected pin keeps the bars to the next one
-  if (list->selection_changed) {
-    prv_list_add_animation(animations, &num_animations,
-                           timeline_relbar_layer_create_animation(layer, duration, interpolate));
-  }
+  prv_list_add_animation(animations, &num_animations,
+                         timeline_relbar_layer_create_animation(layer, duration, interpolate));
 #endif
   return animation_spawn_create_from_array(animations, num_animations);
 }
 
 static void prv_list_up_down_stopped(TimelineLayer *layer) {
-  TimelineList *list = &layer->list;
   prv_list_each_pin(layer, prv_list_finish_pin_move);
   prv_list_destroy_leaving(layer);
-  list->selection_changed = false;
   prv_list_follow_with_indicators(layer);
   prv_list_place_indicators(layer);
   layer_mark_dirty((Layer *)layer);

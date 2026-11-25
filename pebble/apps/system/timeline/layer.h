@@ -73,8 +73,6 @@ typedef struct {
   GRect frame;
   //! Frame the next up/down animation starts from
   GRect from;
-  //! The pin rests on screen, rather than pushed off it
-  bool shown;
   //! The pin's text is laid out, once, as it shows when selected, wherever it is
   bool laid_out;
   TimelineListPinPerimeter perimeter;
@@ -106,8 +104,6 @@ typedef struct {
   TimelineListPinView *timeline_end;
   //! The move goes to another day, behind the day separator
   bool crosses_day;
-  //! The move selects another pin
-  bool selection_changed;
   //! Interpolation of the running up/down animation
   InterpolateInt64Function interpolate;
 } TimelineList;
