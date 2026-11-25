@@ -809,6 +809,7 @@ void app_manager_close_current_app(bool gracefully) {
   // app_manager_launch_new_app_with_args and asked the current app to exit.
   const AppInstallId current_app_id = s_app_task_context.install_id;
   AppInstallId destination_app_id = INSTALL_ID_INVALID;
+  const void *destination_args = nullptr;
 
 #if !defined(CONFIG_RECOVERY_FW)
   destination_app_id = prv_get_app_exit_reason_destination_install_id_override();
@@ -818,6 +819,7 @@ void app_manager_close_current_app(bool gracefully) {
     // If we get here, the app exit reason didn't override the destination app ID
     if (!s_next_app.md) {
       destination_app_id = system_app_state_machine_get_last_registered_app();
+      destination_args = system_app_state_machine_get_last_registered_app_args();
     } else {
       // If we get here, s_next_app is already setup and so we can call prv_app_switch() directly
       // and return
@@ -829,6 +831,7 @@ void app_manager_close_current_app(bool gracefully) {
   app_manager_set_minimum_run_level(ProcessAppRunLevelNormal);
   process_manager_launch_process(&(ProcessLaunchConfig){
     .id = destination_app_id,
+    .common.args = destination_args,
     .common.transition = shell_get_close_compositor_animation(current_app_id, destination_app_id),
     .forcefully = !gracefully,
   });

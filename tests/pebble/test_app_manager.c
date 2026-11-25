@@ -273,6 +273,9 @@ const PebbleProcessMd *system_app_state_machine_system_start(void) {
 const PebbleProcessMd *system_app_state_machine_get_last_registered_app(void) {
   return (PebbleProcessMd *)&s_root_app;
 }
+const void *system_app_state_machine_get_last_registered_app_args(void) {
+  return nullptr;
+}
 void system_app_state_machine_register_app_launch(const PebbleProcessMd *app) {
 }
 

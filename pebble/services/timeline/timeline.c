@@ -29,11 +29,13 @@
 #include <applib/ui/status_bar_layer.h>
 #include <apps/system/timeline/pin_window.h>
 #include <apps/system/timeline/timeline.h>
+#include <apps/system_app_ids.h>
 #include <comm/ble/kernel_le_client/ancs/ancs.h>
 #include <kernel/event_loop.h>
 #include <kernel/ui/modals/modal_manager.h>
 #include <process_management/app_install_manager.h>
 #include <process_management/app_manager.h>
+#include <shell/system_app_state_machine.h>
 
 PBL_LOG_MODULE_DEFINE(service_timeline, CONFIG_SERVICE_TIMELINE_LOG_LEVEL);
 
@@ -809,6 +811,33 @@ static void prv_app_render_ready(PebbleEvent *e, void *context) {
   event_service_client_unsubscribe(&ctx->event_info);
   pbl_free(ctx);
 }
+//! Where a timeline returns to after an app it opened from a pin closes
+static TimelineArgs s_return_args;
+
+static void prv_return_to_timeline(void *data) {
+  system_app_state_machine_return_next_app_to((AppInstallId)(uintptr_t)data, &s_return_args);
+}
+
+//! An app opened from a pin in a timeline closes back to that timeline, on the pin
+static void prv_return_here_after_app(const TimelineItem *item) {
+  const AppInstallId timeline_id = app_manager_get_current_app_id();
+  if ((timeline_id != APP_ID_TIMELINE) && (timeline_id != APP_ID_TIMELINE_PAST) &&
+      (timeline_id != APP_ID_TIMELINE_FULL)) {
+    return;
+  }
+  const time_t end = item->header.timestamp + item->header.duration * PBL_SEC_PER_MIN;
+  s_return_args = (TimelineArgs){
+    .direction = ((timeline_id == APP_ID_TIMELINE_PAST) ||
+                  ((timeline_id == APP_ID_TIMELINE_FULL) && (end <= pbl_realtime())))
+                     ? TimelineIterDirectionPast
+                     : TimelineIterDirectionFuture,
+    .launch_into_pin = true,
+    .stay_in_list_view = true,
+    .pin_id = item->header.id,
+  };
+  // Ahead of the launch on KernelMain, which takes the state machine's apps in order
+  launcher_task_add_callback(prv_return_to_timeline, (void *)(uintptr_t)timeline_id);
+}
 
 void timeline_invoke_action(const TimelineItem *item, const TimelineItemAction *action,
                             const AttributeList *attributes) {
@@ -827,6 +856,7 @@ void timeline_invoke_action(const TimelineItem *item, const TimelineItemAction *
       // fetch the relevant attribute
       const uint32_t launch_code =
           attribute_get_uint32(&action->attr_list, AttributeIdLaunchCode, 0);
+      prv_return_here_after_app(item);
       app_manager_put_launch_app_event(&(AppLaunchEventConfig){
         .id = install_id,
         .common.args = (void *)(uintptr_t)launch_code,
