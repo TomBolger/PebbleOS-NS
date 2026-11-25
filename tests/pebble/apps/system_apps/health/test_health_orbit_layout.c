@@ -148,10 +148,38 @@ void test_health_orbit_layout__text_runs_inside_the_ring_and_clear_of_the_sideba
   const GRangeHorizontal high = health_orbit_text_range(DISPLAY, inner, 46, 58);
   cl_assert(high.origin_x > middle.origin_x);
   cl_assert(high.size_w < middle.size_w);
-  cl_assert_equal_i(health_orbit_text_center_x(DISPLAY, inner, 46, 58),
-                    high.origin_x + high.size_w / 2);
   // Rows outside the ring have no room
   cl_assert_equal_i(health_orbit_text_range(DISPLAY, inner, 0, 10).size_w, 0);
+}
+
+//! Column of the sidebar's edge on \a row, or of the display's on its other side
+static int32_t prv_sidebar_edge_x(int16_t row) {
+  const TimelineListSidebar plain = health_orbit_sidebar(DISPLAY, 0);
+  return PBL_DISPLAY_WIDTH - timeline_list_sidebar_depth(&plain, row);
+}
+
+void test_health_orbit_layout__middle_arc_is_midway_between_ring_and_sidebar(void) {
+  const int16_t inners[] = {100, 113};
+  for (size_t i = 0; i < PBL_ARRAY_SIZE(inners); i++) {
+    const int16_t inner = inners[i];
+    // On the middle row, halfway from the ring's inside to the sidebar's edge
+    const int32_t ring_x = PBL_DISPLAY_WIDTH / 2 - inner;
+    cl_assert(PBL_ABS(2 * health_orbit_middle_x(DISPLAY, inner, MID_Y) -
+                      (ring_x + prv_sidebar_edge_x(MID_Y))) <= 2);
+    // And close to halfway on the rows the text is on above and below, where both curve away
+    for (int16_t dy = -75; dy <= 75; dy += 15) {
+      const int16_t row = MID_Y + dy;
+      const int32_t ring_left =
+          PBL_DISPLAY_WIDTH / 2 - integer_sqrt((int32_t)inner * inner - (int32_t)dy * dy);
+      const int32_t halfway = (ring_left + prv_sidebar_edge_x(row)) / 2;
+      cl_assert(PBL_ABS(health_orbit_middle_x(DISPLAY, inner, row) - halfway) <= 2);
+    }
+    // Mirrored about the sidebar's middle row
+    cl_assert_equal_i(health_orbit_middle_x(DISPLAY, inner, MID_Y - 40),
+                      health_orbit_middle_x(DISPLAY, inner, MID_Y + 40));
+  }
+  // Higher up, where the sidebar curves away, it is right of the display's middle
+  cl_assert(health_orbit_middle_x(DISPLAY, 113, MID_Y - 78) > PBL_DISPLAY_WIDTH / 2);
 }
 
 //! A ring's round end at \a angle keeps the gap from the sidebar, and not much more
