@@ -44,6 +44,14 @@ bool notification_round_actions_open(Window *window, ActionMenu *action_menu,
                                      const NotificationRoundActionsBanner *banner,
                                      NotificationRoundActionsClosedCb closed, void *context);
 
+//! Open the timeline action menu of @p config over @p window, as a hosted menu whose result
+//! windows go on @p window_stack (see timeline_actions_open_hosted_action_menu). The menu closes
+//! through notification_round_actions_close, and config's did_close runs once it has.
+//! @return the menu, or NULL if it could not open; config's hierarchy is then destroyed.
+ActionMenu *notification_round_actions_open_timeline_menu(
+    Window *window, ActionMenuConfig *config, WindowStack *window_stack,
+    const NotificationRoundActionsBanner *banner);
+
 //! Close the menu, playing the opening backwards if @p animated. The closed callback runs once
 //! the layer is gone, which is immediately if not animated.
 void notification_round_actions_close(bool animated);
