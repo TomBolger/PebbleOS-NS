@@ -22,18 +22,27 @@ bool clock_is_24h_style(void) {
   return false;
 }
 
-//! A week of what the health data does not keep, from today back
+//! What the health data does not keep, from today back: a week, then the same again each week
 static const int32_t s_distance_history[] = {5600, 5100, 5750, 3540, 8200, 4430, 7020};
 static const int32_t s_active_minutes_history[] = {47, 38, 52, 21, 74, 33, 61};
 
+static int32_t prv_distance_on(int day) {
+  return s_distance_history[day % PBL_DAY_PER_WEEK];
+}
+
+static int32_t prv_active_seconds_on(int day) {
+  return s_active_minutes_history[day % PBL_DAY_PER_WEEK] * PBL_SEC_PER_MIN;
+}
+
 bool activity_get_metric(ActivityMetric metric, uint32_t history_len, int32_t *history) {
+  cl_assert(history_len <= ACTIVITY_HISTORY_DAYS);
   for (uint32_t i = 0; i < history_len; i++) {
     switch (metric) {
       case ActivityMetricDistanceMeters:
-        history[i] = s_distance_history[i];
+        history[i] = prv_distance_on(i);
         break;
       case ActivityMetricActiveSeconds:
-        history[i] = s_active_minutes_history[i] * PBL_SEC_PER_MIN;
+        history[i] = prv_active_seconds_on(i);
         break;
       default:
         history[i] = 0;
@@ -336,8 +345,8 @@ void test_health_orbit_view__day_opens_from_the_week_and_back(void) {
   cl_assert(s_view->card.day == &s_view->day_data);
   cl_assert_equal_i(s_view->day_data.days_ago, 4);
   cl_assert_equal_i(s_view->day_data.steps, s_data.step_data[4]);
-  cl_assert_equal_i(s_view->day_data.distance_meters, s_distance_history[4]);
-  cl_assert_equal_i(s_view->day_data.active_seconds, s_active_minutes_history[4] * PBL_SEC_PER_MIN);
+  cl_assert_equal_i(s_view->day_data.distance_meters, prv_distance_on(4));
+  cl_assert_equal_i(s_view->day_data.active_seconds, prv_active_seconds_on(4));
   cl_assert_equal_i(s_view->day_data.typical_steps, 9120);
   // Up and Down and Select do nothing on a day
   prv_select_click_handler(nullptr, s_view);
@@ -355,6 +364,26 @@ void test_health_orbit_view__day_opens_from_the_week_and_back(void) {
   cl_assert(s_view->card.day == nullptr);
   prv_select_click_handler(nullptr, s_view);
   cl_assert_equal_i(s_view->week_selection, 0);
+}
+
+void test_health_orbit_view__day_reads_all_the_history_kept(void) {
+  // The oldest day the watch keeps has all its overview, and none before it is read
+  s_data = prv_sample_data();
+  s_data.step_data[HEALTH_DATA_NUM_DAYS - 1] = 4321;
+  s_data.sleep_data[HEALTH_DATA_NUM_DAYS - 1] = HOURS(6, 30);
+  s_data.deep_sleep_data[HEALTH_DATA_NUM_DAYS - 1] = HOURS(1, 5);
+  cl_assert_equal_i(HEALTH_DATA_NUM_DAYS, ACTIVITY_HISTORY_DAYS);
+  for (int days_ago = HEALTH_DATA_NUM_DAYS - 1; days_ago <= HEALTH_DATA_NUM_DAYS; days_ago++) {
+    HealthDayData day;
+    health_data_day_get(&s_data, days_ago, &day);
+    cl_assert_equal_i(day.days_ago, HEALTH_DATA_NUM_DAYS - 1);
+    cl_assert_equal_i(day.steps, 4321);
+    cl_assert_equal_i(day.sleep, HOURS(6, 30));
+    cl_assert_equal_i(day.deep_sleep, HOURS(1, 5));
+    cl_assert_equal_i(day.distance_meters, prv_distance_on(HEALTH_DATA_NUM_DAYS - 1));
+    cl_assert_equal_i(day.active_seconds, prv_active_seconds_on(HEALTH_DATA_NUM_DAYS - 1));
+    cl_assert_equal_i(day.typical_steps, 9120);
+  }
 }
 
 void test_health_orbit_view__wrap_keeps_turning_the_same_way(void) {

@@ -79,8 +79,8 @@ void health_data_update(HealthData *health_data) {
   pbl_localtime_r(&now, &local_tm);
 
   //! Step / activity related data
-  // Get the step totals for today and the past 6 days
-  health_service_private_get_metric_history(HealthMetricStepCount, PBL_DAY_PER_WEEK,
+  // Get the step totals for today and the days before it
+  health_service_private_get_metric_history(HealthMetricStepCount, HEALTH_DATA_NUM_DAYS,
                                             health_data->step_data);
   // Update distance / calories now that we have our steps
   health_data_update_step_derived_metrics(health_data);
@@ -92,7 +92,7 @@ void health_data_update(HealthData *health_data) {
   activity_get_metric_monthly_avg(ActivityMetricStepCount, &health_data->monthly_step_average);
 
   //! Sleep related data
-  health_service_private_get_metric_history(HealthMetricSleepSeconds, PBL_DAY_PER_WEEK,
+  health_service_private_get_metric_history(HealthMetricSleepSeconds, HEALTH_DATA_NUM_DAYS,
                                             health_data->sleep_data);
   // Check if we have sleep data for today. If not, we want to show the last sleep session
   // (yesterday's data)
@@ -102,7 +102,7 @@ void health_data_update(HealthData *health_data) {
 
   activity_get_metric_typical(ActivityMetricSleepTotalSeconds, wday, &health_data->typical_sleep);
 
-  activity_get_metric(ActivityMetricSleepRestfulSeconds, PBL_DAY_PER_WEEK,
+  activity_get_metric(ActivityMetricSleepRestfulSeconds, HEALTH_DATA_NUM_DAYS,
                       health_data->deep_sleep_data);
   health_data->deep_sleep = health_data->deep_sleep_data[day_offset];
 
@@ -293,16 +293,16 @@ int32_t *health_data_deep_sleep_get(HealthData *health_data) {
 }
 
 //! A metric's value on the day \a days_ago days before today, 0 if it has none
-static int32_t prv_metric_on_day(ActivityMetric metric, int days_ago) {
-  int32_t history[PBL_DAY_PER_WEEK] = {};
+static PBL_NOINLINE int32_t prv_metric_on_day(ActivityMetric metric, int days_ago) {
+  int32_t history[HEALTH_DATA_NUM_DAYS] = {};
   if (!activity_get_metric(metric, days_ago + 1, history)) {
     return 0;
   }
   return PBL_MAX(history[days_ago], 0);
 }
 
-//! Reads what a day before today has beyond the week the health data keeps, apart from the drawing
-//! that shows today's, which has it all
+//! Reads what a day before today has beyond the history the health data keeps, apart from the
+//! drawing that shows today's, which has it all
 static PBL_NOINLINE void prv_load_past_day(HealthDayData *day) {
   day->distance_meters = prv_metric_on_day(ActivityMetricDistanceMeters, day->days_ago);
   day->active_seconds = prv_metric_on_day(ActivityMetricActiveSeconds, day->days_ago);
@@ -325,7 +325,7 @@ static PBL_NOINLINE void prv_load_past_day(HealthDayData *day) {
 }
 
 void health_data_day_get(HealthData *health_data, int days_ago, HealthDayData *day_out) {
-  days_ago = PBL_CLAMP(days_ago, 0, PBL_DAY_PER_WEEK - 1);
+  days_ago = PBL_CLAMP(days_ago, 0, HEALTH_DATA_NUM_DAYS - 1);
   if (days_ago == 0) {
     *day_out = (HealthDayData){
       .steps = health_data_current_steps_get(health_data),
