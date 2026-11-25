@@ -17,6 +17,7 @@
 #include <applib/app_launch_button.h>
 #include <applib/app_launch_reason.h>
 #include <applib/app_malloc.h>
+#include <applib/app_timer.h>
 #include <applib/graphics/gdraw_command_image.h>
 #include <applib/graphics/gdraw_command_transforms.h>
 #include <applib/graphics/gpath.h>
@@ -35,6 +36,9 @@
 #define NEIGHBOUR_BUBBLE_RADIUS 12
 #define SELECTED_ICON_SIZE      21
 #define NEIGHBOUR_ICON_SIZE     13
+
+//! The kinds of workout's icons, on the Workout card's bubbles
+#define KIND_ICON_SIZE 28
 
 //! The crown by the best day of the week
 #define CROWN_SIZE GSize(13, 11)
@@ -102,6 +106,10 @@ struct HealthOrbitView {
 
   //! Whether the week of the section shows, in place of its card, or is coming in
   bool week;
+  //! Icons of the kinds of workout
+  GDrawCommandImage *kind_icons[HEALTH_WORKOUT_NUM_KINDS];
+  //! Ticks every second the Workout section shows, to read the workout going on
+  AppTimer *workout_timer;
   //! Row of the week selected, the one it was on as the selection moves, and how far it has
   //! moved, down the rows from it
   int16_t week_selection;
@@ -119,6 +127,15 @@ struct HealthOrbitView {
 
 //! A week row where it rests
 #define ROW_AT_REST INT16_MAX
+
+_Static_assert(HealthOrbitSectionCount == HEALTH_ORBIT_NUM_SECTIONS, "orbit sections");
+
+//! A section's card at rest
+static void prv_init_section_card(HealthOrbitView *view, HealthOrbitCard *card,
+                                  HealthOrbitSection section) {
+  health_orbit_card_init(card, section, nullptr);
+  card->kind_icons = view->kind_icons;
+}
 
 //! Section whose colors show: the days have Today's, as their card is laid out as it
 static HealthOrbitSection prv_color_section(const HealthOrbitView *view) {
@@ -145,6 +162,7 @@ static uint32_t prv_icon_resource(HealthOrbitSection section) {
       return RESOURCE_ID_ACTIVITY_TINY;
     case HealthOrbitSectionSleep:
       return RESOURCE_ID_MOON_TINY;
+    case HealthOrbitSectionWorkout:
     case HealthOrbitSectionToday:
     case HealthOrbitSectionCount:
       break;
@@ -166,6 +184,17 @@ static GDrawCommandImage *prv_create_editable_image(uint32_t resource) {
   return image;
 }
 
+//! Scales \a icon to fit a square \a size big, keeping its shape
+static void prv_scale_to_fit(GDrawCommandImage *icon, int16_t size) {
+  const GSize bounds = gdraw_command_image_get_bounds_size(icon);
+  if (bounds.w <= 0 || bounds.h <= 0) {
+    return;
+  }
+  const int16_t longest = PBL_MAX(bounds.w, bounds.h);
+  gdraw_command_image_scale(icon, GSize((bounds.w * size + longest / 2) / longest,
+                                        (bounds.h * size + longest / 2) / longest));
+}
+
 static GDrawCommandImage *prv_create_icon(HealthOrbitSection section, int16_t size, bool selected) {
   const uint32_t resource = prv_icon_resource(section);
   if (resource == RESOURCE_ID_INVALID) {
@@ -182,6 +211,23 @@ static GDrawCommandImage *prv_create_icon(HealthOrbitSection section, int16_t si
     gdraw_command_list_replace_color(list, GColorWhite, color);
   }
   gdraw_command_image_scale(icon, GSize(size, size));
+  return icon;
+}
+
+//! A kind of workout's icon \a width wide, its lines in the kind's color, the rest clear, as the
+//! Workout app draws it on its dark screens
+static GDrawCommandImage *prv_create_kind_icon(ActivitySessionType type, int16_t width) {
+  const uint32_t resource = (type == ActivitySessionType_Run)    ? RESOURCE_ID_WORKOUT_APP_RUN
+                            : (type == ActivitySessionType_Walk) ? RESOURCE_ID_WORKOUT_APP_WALK
+                                                                 : RESOURCE_ID_WORKOUT_APP_WORKOUT;
+  GDrawCommandImage *icon = prv_create_editable_image(resource);
+  if (!icon) {
+    return nullptr;
+  }
+  GDrawCommandList *list = gdraw_command_image_get_command_list(icon);
+  gdraw_command_list_replace_color(list, GColorWhite, GColorClear);
+  gdraw_command_list_replace_color(list, GColorBlack, health_orbit_workout_color(type));
+  prv_scale_to_fit(icon, width);
   return icon;
 }
 
@@ -364,6 +410,28 @@ static void prv_draw_small_moon_icon(GContext *ctx, GPoint center, int16_t radiu
   graphics_fill_circle(ctx, GPoint(center.x + 2 * shift, center.y - 2 * shift), moon - shift);
 }
 
+//! The Workout icon on a bubble \a radius big: a stopwatch, a ring with its button on top and its
+//! hand. The Workout app's own icon is the Steps shoe, and its run shoe is a blur this small.
+static void prv_draw_stopwatch_icon(GContext *ctx, GPoint center, int16_t radius, GColor color) {
+  const int16_t thickness = PBL_MAX(radius / 6, 2);
+  const int16_t outer = (radius * 7) / 12;
+  // A little below the middle, to make room for the button
+  const GPoint watch = GPoint(center.x, center.y + thickness / 2);
+  graphics_context_set_fill_color(ctx, color);
+  graphics_fill_radial_internal(ctx, watch, outer - thickness, outer, 0, TRIG_MAX_ANGLE);
+  const int16_t button_w = thickness + 2;
+  graphics_fill_rect(
+      ctx, &GRect(watch.x - button_w / 2, watch.y - outer - thickness - 1, button_w, thickness));
+  const int16_t hand = outer - thickness - 1;
+  const int32_t angle = TRIG_MAX_ANGLE / 8;
+  graphics_context_set_stroke_color(ctx, color);
+  graphics_context_set_stroke_width(ctx, thickness);
+  graphics_draw_line(ctx, watch,
+                     GPoint(watch.x + (hand * sin_lookup(angle)) / TRIG_MAX_RATIO,
+                            watch.y - (hand * cos_lookup(angle)) / TRIG_MAX_RATIO));
+  graphics_context_set_stroke_width(ctx, 1);
+}
+
 static void prv_draw_bubble(GContext *ctx, HealthOrbitView *view, HealthOrbitSection section,
                             GPoint center, int16_t radius, bool selected) {
   if (radius <= 0) {
@@ -382,6 +450,10 @@ static void prv_draw_bubble(GContext *ctx, HealthOrbitView *view, HealthOrbitSec
   }
   if (section == HealthOrbitSectionSleep && !selected) {
     prv_draw_small_moon_icon(ctx, center, radius, color, GColorBlack);
+    return;
+  }
+  if (section == HealthOrbitSectionWorkout) {
+    prv_draw_stopwatch_icon(ctx, center, radius, color);
     return;
   }
   GDrawCommandImage *icon =
@@ -718,6 +790,8 @@ static void prv_add_uint32(Transition *transition, uint32_t *field, uint32_t to,
   prv_add(transition, property_animation_get_animation(animation), delay, duration, curve);
 }
 
+static void prv_schedule_workout_tick(HealthOrbitView *view);
+
 //! Sets everything where it rests for the section, and the week or its card, or the day
 static void prv_rest(HealthOrbitView *view) {
   view->animation = nullptr;
@@ -729,7 +803,7 @@ static void prv_rest(HealthOrbitView *view) {
   if (view->days) {
     prv_init_day_card(view, &view->card);
   } else {
-    health_orbit_card_init(&view->card, view->section, nullptr);
+    prv_init_section_card(view, &view->card, view->section);
   }
   view->orbit_offset = view->section * HEALTH_ORBIT_STEP;
   view->day_offset = view->day * HEALTH_ORBIT_STEP;
@@ -748,6 +822,7 @@ static void prv_rest(HealthOrbitView *view) {
   view->week_header_offset_y = 0;
   view->selection_from = view->week_selection;
   view->selection_travel = 0;
+  prv_schedule_workout_tick(view);
   layer_mark_dirty(&view->layer);
 }
 
@@ -854,8 +929,12 @@ static void prv_animate_section(HealthOrbitView *view, HealthOrbitSection sectio
   Transition transition = {};
   const HealthOrbitSection from_color = view->section;
   view->section = section;
+  if (section == HealthOrbitSectionWorkout) {
+    // Its card shows the workout going on from its first frame
+    health_data_update_workout(view->health_data);
+  }
   HealthOrbitCard card;
-  health_orbit_card_init(&card, section, nullptr);
+  prv_init_section_card(view, &card, section);
   prv_add_card_slide(view, &transition, &card, down);
 
   // The orbit keeps turning the way the button turns it, on round past the ends to wrap
@@ -916,10 +995,10 @@ static void prv_animate_days_out_to_today(HealthOrbitView *view) {
   view->days = false;
   if (view->day > 0) {
     HealthOrbitCard card;
-    health_orbit_card_init(&card, view->section, nullptr);
+    prv_init_section_card(view, &card, view->section);
     prv_add_card_slide(view, &transition, &card, false /* down */);
   } else {
-    health_orbit_card_init(&view->card, view->section, nullptr);
+    prv_init_section_card(view, &view->card, view->section);
   }
   prv_add_orbit_turn(view, &transition, &view->swap, 0, 0, HealthOrbitSectionToday);
   prv_play(view, &transition);
@@ -1042,7 +1121,7 @@ static void prv_animate_week_out(HealthOrbitView *view, bool to_day) {
     prv_add_orbit_turn(view, &transition, &view->swap, HEALTH_ORBIT_SWAP, DAYS_FROM_WEEK_DELAY,
                        from_color);
   } else {
-    health_orbit_card_init(&view->card, view->section, nullptr);
+    prv_init_section_card(view, &view->card, view->section);
   }
   view->card.offset_y = display.h;
   // It rises as cards slide, its text coming up through the middle frames rather than at once
@@ -1075,6 +1154,9 @@ static void prv_animate_week_out(HealthOrbitView *view, bool to_day) {
 static void prv_show_section(HealthOrbitView *view, HealthOrbitSection section) {
   prv_finish(view);
   view->section = section;
+  if (section == HealthOrbitSectionWorkout) {
+    health_data_update_workout(view->health_data);
+  }
   prv_rest(view);
 }
 
@@ -1104,6 +1186,39 @@ static void prv_move_day(HealthOrbitView *view, bool down) {
     return;
   }
   prv_animate_day(view, next, down);
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+// Workout
+
+//! Reads the workout going on every second while the Workout section shows
+#define WORKOUT_TICK_MS 1000
+
+static void prv_workout_tick(void *context);
+
+static void prv_schedule_workout_tick(HealthOrbitView *view) {
+  if (!view->workout_timer && view->section == HealthOrbitSectionWorkout && !view->days) {
+    view->workout_timer = app_timer_register(WORKOUT_TICK_MS, prv_workout_tick, view);
+  }
+}
+
+static void prv_cancel_workout_tick(HealthOrbitView *view) {
+  if (view->workout_timer) {
+    app_timer_cancel(view->workout_timer);
+    view->workout_timer = nullptr;
+  }
+}
+
+//! Every second: the workout going on as it is now
+static void prv_workout_tick(void *context) {
+  HealthOrbitView *view = context;
+  view->workout_timer = nullptr;
+  if (view->section != HealthOrbitSectionWorkout || view->days) {
+    return;
+  }
+  health_data_update_workout(view->health_data);
+  layer_mark_dirty(&view->layer);
+  prv_schedule_workout_tick(view);
 }
 
 static void prv_up_down_click_handler(ClickRecognizerRef recognizer, void *context) {
@@ -1191,6 +1306,10 @@ HealthOrbitView *health_orbit_view_create(HealthData *health_data) {
     };
   }
 
+  for (int i = 0; i < HEALTH_WORKOUT_NUM_KINDS; i++) {
+    view->kind_icons[i] = prv_create_kind_icon(health_orbit_workout_kinds[i], KIND_ICON_SIZE);
+  }
+
   view->crown = prv_create_editable_image(RESOURCE_ID_HEALTH_APP_CROWN);
   if (view->crown) {
     gdraw_command_image_scale(view->crown, CROWN_SIZE);
@@ -1212,6 +1331,10 @@ HealthOrbitView *health_orbit_view_create(HealthData *health_data) {
 
 void health_orbit_view_destroy(HealthOrbitView *view) {
   prv_finish(view);
+  prv_cancel_workout_tick(view);
+  for (int i = 0; i < HEALTH_WORKOUT_NUM_KINDS; i++) {
+    gdraw_command_image_destroy(view->kind_icons[i]);
+  }
   for (int i = 0; i < HealthOrbitSectionCount; i++) {
     gdraw_command_image_destroy(view->icons[i].selected);
     gdraw_command_image_destroy(view->icons[i].neighbour);

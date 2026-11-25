@@ -9,6 +9,7 @@
 
 #include "data.h"
 
+#include <applib/graphics/gdraw_command_image.h>
 #include <applib/graphics/graphics.h>
 
 //! The sections on the orbit, from the top
@@ -16,6 +17,7 @@ typedef enum HealthOrbitSection {
   HealthOrbitSectionToday,
   HealthOrbitSectionSteps,
   HealthOrbitSectionSleep,
+  HealthOrbitSectionWorkout,
   HealthOrbitSectionCount,
 } HealthOrbitSection;
 
@@ -42,7 +44,31 @@ typedef struct HealthOrbitCard {
   uint32_t track[HEALTH_ORBIT_CARD_MAX_RINGS];
   //! Radius of each bubble
   int16_t bubble_radius[HEALTH_ORBIT_CARD_MAX_BUBBLES];
+  //! The Workout card's icons of the kinds of workout, Run, Walk and Open Workout
+  GDrawCommandImage *const *kind_icons;
 } HealthOrbitCard;
+
+//! The kinds of workout, in the order the Workout app offers them
+extern const ActivitySessionType health_orbit_workout_kinds[3];
+
+//! Color of a kind of workout, as the Workout app has it
+GColor health_orbit_workout_color(ActivitySessionType type);
+
+//! Name of a kind of workout, to be translated, as "Run"
+const char *health_orbit_workout_name(ActivitySessionType type);
+
+//! A workout's time as a stopwatch shows it, as "12:34" or "1:02:03"
+void health_orbit_format_workout_time(char *buffer, size_t size, int32_t seconds);
+
+//! A workout's distance in the user's unit, as "3.5"
+void health_orbit_format_workout_distance(char *buffer, size_t size, int32_t meters);
+
+//! A workout's average pace in the user's unit, as "8:42", or a dash before it has one
+void health_orbit_format_workout_pace(char *buffer, size_t size, int32_t duration_s,
+                                      int32_t distance_m);
+
+//! A workout's steps a minute
+int32_t health_orbit_workout_cadence(int32_t steps, int32_t duration_s);
 
 //! Color of the sidebar on a section's card
 GColor health_orbit_section_color(HealthOrbitSection section);

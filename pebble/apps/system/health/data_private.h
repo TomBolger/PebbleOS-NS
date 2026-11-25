@@ -40,6 +40,8 @@ typedef struct HealthData {
   int32_t resting_hr_bpm; //!< Resting BPM
   time_t hr_last_updated; //!< Time at which HR data was last updated
 
+  HealthWorkoutData workout; //!< The workout going on
+
   int32_t hr_zone1_minutes;
   int32_t hr_zone2_minutes;
   int32_t hr_zone3_minutes;

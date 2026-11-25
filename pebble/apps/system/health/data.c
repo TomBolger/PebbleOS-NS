@@ -11,6 +11,7 @@
 #include <pbl/kernel/compiler.h>
 #include <pbl/kernel/time.h>
 #include <pbl/logging/logging.h>
+#include <pbl/services/activity/workout_service.h>
 #include <pbl/services/time.h>
 #include <pbl/util/math.h>
 #include <pbl/util/testing.h>
@@ -346,6 +347,66 @@ void health_data_day_get(HealthData *health_data, int days_ago, HealthDayData *d
     .deep_sleep = PBL_MAX(health_data->deep_sleep_data[days_ago], 0),
   };
   prv_load_past_day(day_out);
+}
+
+//! The latest walk, run or open workout the watch detected that is still going on
+static PBL_NOINLINE bool prv_find_detected_session(ActivitySession *session_out) {
+  uint32_t num_sessions = ACTIVITY_MAX_ACTIVITY_SESSIONS_COUNT;
+  ActivitySession *sessions = app_zalloc_check(sizeof(ActivitySession) * num_sessions);
+  bool found = false;
+  if (activity_get_sessions(&num_sessions, sessions)) {
+    for (int i = (int)num_sessions - 1; i >= 0; i--) {
+      if (sessions[i].ongoing && workout_service_is_workout_type_supported(sessions[i].type)) {
+        *session_out = sessions[i];
+        found = true;
+        break;
+      }
+    }
+  }
+  app_free(sessions);
+  return found;
+}
+
+void health_data_update_workout(HealthData *health_data) {
+  HealthWorkoutData *workout = &health_data->workout;
+  ActivitySessionType type;
+  WorkoutServiceMetrics metrics;
+  if (workout_service_get_current_workout_type(&type) &&
+      workout_service_get_current_workout_metrics(&metrics)) {
+    // A detected session turned into a workout of its kind was detected
+    const bool auto_detected =
+        (workout->state != HealthWorkoutStateNone) && (workout->type == type) &&
+        ((workout->state == HealthWorkoutStateDetected) || workout->auto_detected);
+    *workout = (HealthWorkoutData){
+      .state = workout_service_is_paused() ? HealthWorkoutStatePaused : HealthWorkoutStateRunning,
+      .type = type,
+      .auto_detected = auto_detected,
+      .duration_s = metrics.duration_s,
+      .distance_m = metrics.distance_m,
+      .steps = metrics.steps,
+      .active_kcal = metrics.active_kcal,
+    };
+    return;
+  }
+  ActivitySession session;
+  if (prv_find_detected_session(&session)) {
+    *workout = (HealthWorkoutData){
+      .state = HealthWorkoutStateDetected,
+      .type = session.type,
+      .auto_detected = true,
+      .duration_s = PBL_MAX(pbl_realtime() - session.start_utc, 0),
+      .distance_m = session.step_data.distance_meters,
+      .steps = session.step_data.steps,
+      .active_kcal = session.step_data.active_kcalories,
+      .session = session,
+    };
+    return;
+  }
+  *workout = (HealthWorkoutData){};
+}
+
+const HealthWorkoutData *health_data_workout_get(HealthData *health_data) {
+  return &health_data->workout;
 }
 
 int32_t health_data_sleep_get_monthly_average(HealthData *health_data) {

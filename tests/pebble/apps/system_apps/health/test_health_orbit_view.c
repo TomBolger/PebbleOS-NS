@@ -5,6 +5,7 @@
 #include "test_health_app_includes.h"
 
 #include <apps/system/health/data_private.h>
+#include <pbl/services/activity/workout_service.h>
 
 // The view's sections are chosen by its buttons, so the test drives it from the inside
 #include <apps/system/health/orbit_view.c>
@@ -66,6 +67,97 @@ bool activity_get_metric_typical(ActivityMetric metric, enum pbl_weekday day, in
   return true;
 }
 
+//! The workout service, and the sessions the watch detected
+static struct {
+  bool ongoing;
+  bool paused;
+  ActivitySessionType type;
+  WorkoutServiceMetrics metrics;
+  int starts;
+  int stops;
+  int takeovers;
+} s_workout;
+static ActivitySession s_sessions[1];
+static uint32_t s_num_sessions;
+
+bool workout_service_is_workout_ongoing(void) {
+  return s_workout.ongoing;
+}
+
+bool workout_service_is_workout_type_supported(ActivitySessionType type) {
+  return (type == ActivitySessionType_Walk) || (type == ActivitySessionType_Run) ||
+         (type == ActivitySessionType_Open);
+}
+
+bool workout_service_start_workout(ActivitySessionType type) {
+  if (s_workout.ongoing) {
+    return false;
+  }
+  s_workout.ongoing = true;
+  s_workout.paused = false;
+  s_workout.type = type;
+  s_workout.metrics = (WorkoutServiceMetrics){};
+  s_workout.starts++;
+  return true;
+}
+
+bool workout_service_pause_workout(bool should_be_paused) {
+  if (!s_workout.ongoing) {
+    return false;
+  }
+  s_workout.paused = should_be_paused;
+  return true;
+}
+
+bool workout_service_stop_workout(void) {
+  if (!s_workout.ongoing) {
+    return false;
+  }
+  s_workout.ongoing = false;
+  s_workout.paused = false;
+  s_workout.stops++;
+  return true;
+}
+
+bool workout_service_takeover_activity_session(ActivitySession *session) {
+  s_workout.takeovers++;
+  s_num_sessions = 0;
+  if (!workout_service_start_workout(session->type)) {
+    return false;
+  }
+  s_workout.metrics = (WorkoutServiceMetrics){
+    .duration_s = session->length_min * PBL_SEC_PER_MIN,
+    .steps = session->step_data.steps,
+    .distance_m = session->step_data.distance_meters,
+    .active_kcal = session->step_data.active_kcalories,
+  };
+  return true;
+}
+
+bool workout_service_is_paused(void) {
+  return s_workout.ongoing && s_workout.paused;
+}
+
+bool workout_service_get_current_workout_type(ActivitySessionType *type_out) {
+  if (s_workout.ongoing) {
+    *type_out = s_workout.type;
+  }
+  return s_workout.ongoing;
+}
+
+bool workout_service_get_current_workout_metrics(WorkoutServiceMetrics *metrics_out) {
+  if (s_workout.ongoing) {
+    *metrics_out = s_workout.metrics;
+  }
+  return s_workout.ongoing;
+}
+
+bool activity_get_sessions(uint32_t *session_entries, ActivitySession *sessions) {
+  *session_entries = PBL_MIN(*session_entries, s_num_sessions);
+  memcpy(sessions, s_sessions, *session_entries * sizeof(ActivitySession));
+  return true;
+}
+
 // Setup and Teardown
 ////////////////////////////////////
 
@@ -82,6 +174,8 @@ GContext *graphics_context_get_current_context(void) {
 void test_health_orbit_view__initialize(void) {
   pbl_realtime_set(NOW_UTC);
   s_launch_args = 0;
+  s_workout = (typeof(s_workout)){};
+  s_num_sessions = 0;
 
   framebuffer_init(&s_fb, &(GSize){PBL_DISPLAY_WIDTH, PBL_DISPLAY_HEIGHT});
   framebuffer_clear(&s_fb);
@@ -578,4 +672,105 @@ void test_health_orbit_view__launch_on_sleep(void) {
   cl_assert_equal_i(view->section, HealthOrbitSectionSleep);
   cl_assert_equal_i(view->orbit_offset, HealthOrbitSectionSleep * HEALTH_ORBIT_STEP);
   health_orbit_view_destroy(view);
+}
+
+// Workout
+//////////////////////
+
+//! A run 23 minutes 45 seconds in
+static void prv_set_run(void) {
+  workout_service_start_workout(ActivitySessionType_Run);
+  s_workout.metrics = (WorkoutServiceMetrics){
+    .duration_s = 23 * PBL_SEC_PER_MIN + 45,
+    .steps = 3912,
+    .distance_m = 4180,
+    .active_kcal = 287,
+  };
+  s_workout.starts = 0;
+}
+
+//! A walk the watch detected, started 18 minutes ago
+static void prv_set_detected_walk(void) {
+  s_sessions[0] = (ActivitySession){
+    .start_utc = NOW_UTC - 18 * PBL_SEC_PER_MIN,
+    .length_min = 17,
+    .type = ActivitySessionType_Walk,
+    .ongoing = true,
+    .step_data = {.steps = 1874, .active_kcalories = 64, .distance_meters = 1350},
+  };
+  s_num_sessions = 1;
+}
+
+static void prv_render_workout(void) {
+  s_data = prv_sample_data();
+  s_launch_args = 0;
+  prv_render(&s_data, HealthOrbitSectionWorkout);
+}
+
+void test_health_orbit_view__render_workout(void) {
+  // No workout: the minutes active today and the three kinds of workout to start
+  prv_render_workout();
+  cl_check(gbitmap_pbi_eq(&s_ctx.dest_bitmap, TEST_PBI_FILE));
+}
+
+void test_health_orbit_view__render_workout_run(void) {
+  prv_set_run();
+  prv_render_workout();
+  cl_check(gbitmap_pbi_eq(&s_ctx.dest_bitmap, TEST_PBI_FILE));
+}
+
+void test_health_orbit_view__render_workout_detected(void) {
+  prv_set_detected_walk();
+  prv_render_workout();
+  cl_check(gbitmap_pbi_eq(&s_ctx.dest_bitmap, TEST_PBI_FILE));
+}
+
+void test_health_orbit_view__render_workout_open_paused(void) {
+  workout_service_start_workout(ActivitySessionType_Open);
+  workout_service_pause_workout(true);
+  s_workout.metrics = (WorkoutServiceMetrics){
+    .duration_s = PBL_SEC_PER_HOUR + 4 * PBL_SEC_PER_MIN + 9,
+    .steps = 5210,
+    .active_kcal = 402
+  };
+  prv_render_workout();
+  cl_check(gbitmap_pbi_eq(&s_ctx.dest_bitmap, TEST_PBI_FILE));
+}
+
+void test_health_orbit_view__workout_is_after_sleep_and_wraps(void) {
+  s_data = prv_sample_data();
+  prv_render(&s_data, HealthOrbitSectionToday);
+  cl_assert_equal_i(HealthOrbitSectionCount, 4);
+  // Up on Today turns on round counterclockwise to Workout
+  prv_animate_section(s_view, HealthOrbitSectionWorkout, false /* down */);
+  cl_assert(!s_view->orbit_down);
+  cl_assert_equal_i(s_view->orbit_target + HEALTH_ORBIT_LENGTH,
+                    HealthOrbitSectionWorkout * HEALTH_ORBIT_STEP);
+  prv_rest(s_view);
+  // Its card has the kinds' icons
+  cl_assert(s_view->card.kind_icons == s_view->kind_icons);
+  cl_assert(s_view->kind_icons[0] && s_view->kind_icons[1] && s_view->kind_icons[2]);
+}
+
+void test_health_orbit_view__detected_workout_shows(void) {
+  prv_set_detected_walk();
+  prv_render_workout();
+  const HealthWorkoutData *workout = health_data_workout_get(&s_data);
+  cl_assert_equal_i(workout->state, HealthWorkoutStateDetected);
+  cl_assert_equal_i(workout->type, ActivitySessionType_Walk);
+  cl_assert_equal_i(workout->duration_s, 18 * PBL_SEC_PER_MIN);
+  cl_assert(workout->auto_detected);
+}
+
+void test_health_orbit_view__workout_card_follows_the_workout_every_second(void) {
+  prv_render_workout();
+  cl_assert_equal_i(health_data_workout_get(&s_data)->state, HealthWorkoutStateNone);
+  // Started elsewhere: the next tick shows it, then its time as it goes on
+  prv_set_run();
+  prv_workout_tick(s_view);
+  cl_assert_equal_i(health_data_workout_get(&s_data)->state, HealthWorkoutStateRunning);
+  s_workout.metrics.duration_s++;
+  prv_workout_tick(s_view);
+  cl_assert_equal_i(health_data_workout_get(&s_data)->duration_s, 23 * PBL_SEC_PER_MIN + 46);
+  cl_assert(!health_data_workout_get(&s_data)->auto_detected);
 }
