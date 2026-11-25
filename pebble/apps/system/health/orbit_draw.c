@@ -35,7 +35,7 @@ int16_t health_orbit_runs_width(GContext *ctx, const HealthOrbitRun *runs, int n
                                 int16_t gap) {
   int16_t width = 0;
   for (int i = 0; i < num_runs; i++) {
-    width += health_orbit_run_width(ctx, &runs[i]) + ((i > 0) ? gap : 0);
+    width += health_orbit_run_width(ctx, &runs[i]) + ((i > 0) ? (gap + runs[i].extra_gap) : 0);
   }
   return width;
 }
@@ -49,6 +49,9 @@ void health_orbit_draw_runs(GContext *ctx, const HealthOrbitRun *runs, int num_r
   const int16_t baseline = mid_y + (cap + 1) / 2;
   int16_t x = center_x - health_orbit_runs_width(ctx, runs, num_runs, gap) / 2;
   for (int i = 0; i < num_runs; i++) {
+    if (i > 0) {
+      x += runs[i].extra_gap;
+    }
     const HealthOrbitFont *font = runs[i].font;
     const int16_t width = health_orbit_run_width(ctx, &runs[i]);
     graphics_context_set_text_color(ctx, runs[i].color);
