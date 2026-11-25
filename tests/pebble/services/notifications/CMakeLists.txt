@@ -16,6 +16,13 @@ pbl_clar_test(test_notification_storage
   OVERRIDES dummy_board
 )
 
+pbl_clar_test(test_notification_sync
+  MODULES time
+  SOURCES
+    pebble/services/notifications/notification_sync.c
+    tests/fakes/fake_rtc.c
+)
+
 pbl_clar_test(test_ancs_notifications
   MODULES timeline_item time
   SOURCES

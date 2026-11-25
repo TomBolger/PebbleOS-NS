@@ -150,6 +150,14 @@ bool alerts_preferences_get_notification_dismissal_sync(void);
 void alerts_preferences_set_notification_dismissal_sync(bool enable);
 
 /**
+ * @brief Write a notification sync request, which the settings sync sends to the phone.
+ *
+ * @param request Request, see notification_sync.h.
+ * @param length Length of @p request in bytes.
+ */
+void alerts_preferences_set_notification_sync_request(const void *request, size_t length);
+
+/**
  * @brief Get whether the notification history is split into the phone's sections
  * (Conversations, Notifications, Silent and its categories).
  *

@@ -15,6 +15,7 @@ set(sources
   do_not_disturb_toggle.c
   notification_image.c
   notification_storage.c
+  notification_sync.c
   notification_style.c
   notifications.c
 )
