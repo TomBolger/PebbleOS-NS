@@ -313,6 +313,33 @@ void test_pill_action_menu__hides_menu_pill_without_touching_colors(void) {
   cl_assert(menu_layer_get_round_highlight(&s_menu_layer, &pill));
 }
 
+void test_pill_action_menu__held_buttons_repeat(void) {
+  cl_assert(prv_open());
+  prv_load_click_config();
+  cl_assert(s_clicks[BUTTON_ID_UP].repeat_interval_ms > 0);
+  cl_assert(s_clicks[BUTTON_ID_DOWN].repeat_interval_ms > 0);
+}
+
+void test_pill_action_menu__leaving_a_level_tells_it(void) {
+  cl_assert(prv_open());
+  // Into the submenu: it is told what it has selected
+  for (int i = 0; i < 3; i++) {
+    prv_click(BUTTON_ID_DOWN);
+  }
+  prv_click(BUTTON_ID_SELECT);
+  cl_assert_equal_i(s_num_selections, 1);
+  cl_assert(s_selections[0] == &s_sub->items[0]);
+  prv_click(BUTTON_ID_DOWN);
+  cl_assert_equal_i(s_num_selections, 2);
+  cl_assert(s_selections[1] == &s_sub->items[1]);
+
+  // Back out of it: it is told nothing is selected any more, e.g. to stop a preview
+  prv_click(BUTTON_ID_BACK);
+  cl_assert_equal_i(s_num_selections, 3);
+  cl_assert(s_selections[2] == nullptr);
+  cl_assert_equal_i(s_num_did_close, 0);
+}
+
 void test_pill_action_menu__back_restores_the_window_clicks(void) {
   const ClickConfigProvider provider = s_window.click_config_provider;
   const bool overrides_back = s_window.overrides_back_button;

@@ -72,6 +72,8 @@ static int32_t prv_ease(int32_t t) {
 #define OPEN_MS  320
 #define GLIDE_MS 150
 
+#define CLICK_REPEAT_MS 100
+
 #define MAX_DEPTH 4
 
 typedef struct PillActionMenu {
@@ -575,6 +577,7 @@ static void prv_run_motion(PillActionMenu *menu, int32_t to) {
       return;
     }
     menu->motion = nullptr;
+    animation_destroy(motion);
   }
   // No animation: jump to the end
   menu->progress = to;
@@ -599,13 +602,18 @@ static void prv_glide_stopped(Animation *animation, bool finished, void *context
   }
 }
 
-//! Glides the rows to show the selection, and lets the level know it changed
-static void prv_selection_changed(PillActionMenu *menu, bool animated) {
+//! Tells the level shown which of its items is selected, nullptr as it is left, as an ActionMenu
+//! does
+static void prv_notify_level(PillActionMenu *menu, const ActionMenuItem *item) {
   const ActionMenuLevel *level = prv_level(menu);
   if (level->selection_changed) {
-    const ActionMenuData *data = window_get_user_data(&menu->action_menu->window);
-    level->selection_changed(&level->items[prv_selected(menu)], data->config.context);
+    level->selection_changed(item, action_menu_get_context(menu->action_menu));
   }
+}
+
+//! Glides the rows to show the selection, and lets the level know it changed
+static void prv_selection_changed(PillActionMenu *menu, bool animated) {
+  prv_notify_level(menu, &prv_level(menu)->items[prv_selected(menu)]);
   const int32_t target =
       menu_round_list_scroll(prv_selected(menu), prv_count(menu), ROW_HEIGHT, EDGE_ROWS);
   prv_unschedule(&menu->glide);
@@ -627,6 +635,7 @@ static void prv_selection_changed(PillActionMenu *menu, bool animated) {
         return;
       }
       menu->glide = nullptr;
+      animation_destroy(glide);
     }
   }
   menu->list_pos = target;
@@ -653,6 +662,7 @@ static void prv_enter_level(PillActionMenu *menu, const ActionMenuLevel *level) 
   if ((menu->depth >= MAX_DEPTH) || (level->num_items == 0)) {
     return;
   }
+  prv_notify_level(menu, nullptr);
   menu->levels[menu->depth] = level;
   menu->selected[menu->depth] =
       (uint16_t)PBL_MIN(level->default_selected_item, (unsigned)level->num_items - 1);
@@ -704,6 +714,7 @@ static void prv_back_click(ClickRecognizerRef recognizer, void *context) {
     return;
   }
   if (menu->depth > 1) {
+    prv_notify_level(menu, nullptr);
     menu->depth--;
     prv_selection_changed(menu, false);
   } else {
@@ -712,8 +723,9 @@ static void prv_back_click(ClickRecognizerRef recognizer, void *context) {
 }
 
 static void prv_click_config_provider(void *context) {
-  window_single_click_subscribe(BUTTON_ID_UP, prv_up_click);
-  window_single_click_subscribe(BUTTON_ID_DOWN, prv_down_click);
+  // Held, they keep moving, as in an ActionMenu
+  window_single_repeating_click_subscribe(BUTTON_ID_UP, CLICK_REPEAT_MS, prv_up_click);
+  window_single_repeating_click_subscribe(BUTTON_ID_DOWN, CLICK_REPEAT_MS, prv_down_click);
   window_single_click_subscribe(BUTTON_ID_SELECT, prv_select_click);
   window_single_click_subscribe(BUTTON_ID_BACK, prv_back_click);
 }
@@ -777,8 +789,6 @@ ActionMenu *pill_action_menu_open(const PillActionMenuConfig *config,
   menu->levels[0] = root;
   menu->selected[0] = (uint16_t)PBL_MIN(root->default_selected_item, (unsigned)root->num_items - 1);
   menu->depth = 1;
-  menu->list_pos =
-      menu_round_list_scroll(prv_selected(menu), prv_count(menu), ROW_HEIGHT, EDGE_ROWS);
 
   prv_capture_row(menu);
   // The menu's own pill would show under the one that morphs
@@ -788,6 +798,7 @@ ActionMenu *pill_action_menu_open(const PillActionMenuConfig *config,
   layer_init(&menu->layer, &GRect(0, 0, root_layer->frame.size.w, root_layer->frame.size.h));
   layer_set_update_proc(&menu->layer, prv_update_proc);
   layer_add_child(root_layer, &menu->layer);
+  prv_selection_changed(menu, false /* animated */);
   window_set_click_config_provider_with_context(window, prv_click_config_provider, menu);
   prv_touch_register(menu);
   prv_run_motion(menu, 1000);
