@@ -41,35 +41,30 @@ static void prv_move_region_of_bitmap_horizontally(GBitmap *bitmap, const GRect 
   graphics_private_move_pixels_horizontally(&region_sub_bitmap, delta_x, true /* patch_garbage */);
 }
 
+//! Fills the columns from start_col up to end_col with column dupe_col
 static void prv_duplicate_framebuffer_cols(GBitmap *bitmap, int16_t start_col, int16_t end_col,
                                            int16_t dupe_col) {
-  const int16_t delta = start_col > end_col ? -1 : 1;
-  for (int16_t dest_col = start_col; dest_col != end_col; dest_col += delta) {
-    bitmap->bounds = (GRect){
-      .origin.x = (dupe_col >= 0 ? dupe_col : dest_col),
-      .size = {1, PBL_DISPLAY_HEIGHT},
-    };
-    bitblt_bitmap_into_bitmap(bitmap, bitmap, GPoint(dest_col, 0), GCompOpAssign, GColorWhite);
+  // A separate source: the destination's bounds must stay the whole framebuffer
+  GBitmap column = *bitmap;
+  column.bounds = GRect(dupe_col, 0, 1, PBL_DISPLAY_HEIGHT);
+  for (int16_t dest_col = start_col; dest_col < end_col; dest_col++) {
+    bitblt_bitmap_into_bitmap(bitmap, &column, GPoint(dest_col, 0), GCompOpAssign, GColorWhite);
   }
 }
 
 static void prv_copy_app_fb_patching_garbage(int16_t dest_origin_x) {
   GBitmap dest_bitmap = compositor_get_framebuffer_as_bitmap();
 
-  compositor_scaled_app_fb_copy(
-      GRect(dest_origin_x, 0, PBL_DISPLAY_WIDTH - dest_origin_x, PBL_DISPLAY_HEIGHT),
-      false /* copy_relative_to_origin */);
+  compositor_scaled_app_fb_copy(GRect(dest_origin_x, 0, PBL_DISPLAY_WIDTH, PBL_DISPLAY_HEIGHT),
+                                false /* copy_relative_to_origin */);
 
-  // Patch garbage pixels using the first/last column, if necessary
-  if (dest_origin_x != 0) {
-    const bool offscreen_left = (dest_origin_x < 0);
-    const int16_t first_column_x = 0;
-    const int16_t last_column_x = PBL_DISPLAY_WIDTH - 1;
-    const int16_t column_to_replicate = (offscreen_left ? last_column_x : first_column_x);
-    const int16_t from =
-        (int16_t)(offscreen_left ? (dest_origin_x + PBL_DISPLAY_WIDTH) : first_column_x);
-    const int16_t to = (int16_t)(offscreen_left ? last_column_x : dest_origin_x - 1);
-    prv_duplicate_framebuffer_cols(&dest_bitmap, from, to, column_to_replicate);
+  // Patch garbage pixels beside the app with its first or last column
+  if (dest_origin_x > 0) {
+    prv_duplicate_framebuffer_cols(&dest_bitmap, 0, dest_origin_x, dest_origin_x);
+  } else if (dest_origin_x < 0) {
+    const int16_t last_column_x = PBL_DISPLAY_WIDTH - 1 + dest_origin_x;
+    prv_duplicate_framebuffer_cols(&dest_bitmap, last_column_x + 1, PBL_DISPLAY_WIDTH,
+                                   last_column_x);
   }
 }
 
