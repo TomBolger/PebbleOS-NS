@@ -173,54 +173,70 @@ typedef struct OrbitRing {
 } OrbitRing;
 
 //! The Steps ring: toward the typical steps of a whole day, with a tick at the typical steps by now
-static OrbitRing prv_steps_ring(HealthData *health_data, int16_t outer_radius, int16_t thickness) {
-  const int32_t steps = health_data_current_steps_get(health_data);
+static OrbitRing prv_steps_ring(const HealthDayData *day, int16_t outer_radius, int16_t thickness) {
   return (OrbitRing){
     .outer_radius = outer_radius,
     .thickness = thickness,
     .color = GColorScreaminGreen,
     .track_color = GColorDarkGreen,
-    .value = steps,
-    .full = PBL_MAX(health_data_steps_get_cur_wday_average(health_data), steps),
-    .typical = health_data_steps_get_current_average(health_data),
+    .value = day->steps,
+    .full = PBL_MAX(day->typical_steps, day->steps),
+    .typical = day->typical_steps_by_now,
   };
 }
 
-//! The Sleep ring: last night's sleep toward the typical sleep, which it has a tick at, with the
+//! The Sleep ring: the night's sleep toward the typical sleep, which it has a tick at, with the
 //! deep sleep from its start
-static OrbitRing prv_sleep_ring(HealthData *health_data, int16_t outer_radius, int16_t thickness,
+static OrbitRing prv_sleep_ring(const HealthDayData *day, int16_t outer_radius, int16_t thickness,
                                 bool typical_tick) {
-  const int32_t sleep = health_data_current_sleep_get(health_data);
-  const int32_t typical = health_data_sleep_get_cur_wday_average(health_data);
-  const int32_t target = (typical > 0) ? typical : SLEEP_RING_FALLBACK_TARGET;
+  const int32_t target = (day->typical_sleep > 0) ? day->typical_sleep : SLEEP_RING_FALLBACK_TARGET;
   return (OrbitRing){
     .outer_radius = outer_radius,
     .thickness = thickness,
     .color = GColorVividCerulean,
     .track_color = GColorDukeBlue,
-    .value = sleep,
-    .full = PBL_MAX(target, sleep),
-    .typical = typical_tick ? typical : 0,
-    .inner_value = health_data_current_deep_sleep_get(health_data),
+    .value = day->sleep,
+    .full = PBL_MAX(target, day->sleep),
+    .typical = typical_tick ? day->typical_sleep : 0,
+    .inner_value = day->deep_sleep,
     .inner_color = GColorVeryLightBlue,
   };
 }
 
-static int prv_get_rings(HealthOrbitSection section, HealthData *health_data,
+//! Whether a card is laid out as the Today card: today's, or a day's overview
+static bool prv_is_day_card(const HealthOrbitCard *card) {
+  return (card->section == HealthOrbitSectionToday) || card->day;
+}
+
+//! The day a card shows: its own, or today
+static const HealthDayData *prv_get_day(const HealthOrbitCard *card, HealthData *health_data,
+                                        HealthDayData *today) {
+  if (card->day) {
+    return card->day;
+  }
+  health_data_day_get(health_data, 0, today);
+  return today;
+}
+
+static int prv_get_rings(const HealthOrbitCard *card, HealthData *health_data,
                          OrbitRing rings_out[HEALTH_ORBIT_CARD_MAX_RINGS]) {
-  switch (section) {
+  HealthDayData today;
+  const HealthDayData *day = prv_get_day(card, health_data, &today);
+  if (prv_is_day_card(card)) {
+    rings_out[0] = prv_steps_ring(day, TODAY_STEPS_RING_OUTER, TODAY_RING_THICKNESS);
+    rings_out[1] =
+        prv_sleep_ring(day, TODAY_SLEEP_RING_OUTER, TODAY_RING_THICKNESS, false /* typical_tick */);
+    return 2;
+  }
+  switch (card->section) {
     case HealthOrbitSectionSteps:
-      rings_out[0] = prv_steps_ring(health_data, CARD_RING_OUTER, CARD_RING_THICKNESS);
+      rings_out[0] = prv_steps_ring(day, CARD_RING_OUTER, CARD_RING_THICKNESS);
       return 1;
     case HealthOrbitSectionSleep:
-      rings_out[0] = prv_sleep_ring(health_data, CARD_RING_OUTER, CARD_RING_THICKNESS,
-                                    true /* typical_tick */);
+      rings_out[0] =
+          prv_sleep_ring(day, CARD_RING_OUTER, CARD_RING_THICKNESS, true /* typical_tick */);
       return 1;
     case HealthOrbitSectionToday:
-      rings_out[0] = prv_steps_ring(health_data, TODAY_STEPS_RING_OUTER, TODAY_RING_THICKNESS);
-      rings_out[1] = prv_sleep_ring(health_data, TODAY_SLEEP_RING_OUTER, TODAY_RING_THICKNESS,
-                                    false /* typical_tick */);
-      return 2;
     case HealthOrbitSectionCount:
       break;
   }
@@ -365,11 +381,11 @@ static void prv_draw_steps(GContext *ctx, GSize display, const HealthOrbitCard *
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 // Today
 
-//! The date, as "WED 25 NOV"
-static void prv_format_date(char *buffer, size_t size) {
-  const time_t now = pbl_realtime();
+//! The date \a days_ago days before today, as "WED 25 NOV"
+static void prv_format_date(char *buffer, size_t size, int days_ago) {
+  const time_t time = pbl_realtime() - days_ago * PBL_SEC_PER_DAY;
   struct pbl_tm local_tm;
-  pbl_localtime_r(&now, &local_tm);
+  pbl_localtime_r(&time, &local_tm);
   char weekday[8];
   char month[8];
   pbl_strftime_r(weekday, sizeof(weekday), "%a", &local_tm);
@@ -380,20 +396,23 @@ static void prv_format_date(char *buffer, size_t size) {
   }
 }
 
+//! The Today card, or the overview of a day before today laid out as it, titled with its date
 static void prv_draw_today(GContext *ctx, GSize display, const HealthOrbitCard *card,
                            HealthData *health_data, void *i18n_owner) {
   const int16_t middle = display.h / 2;
   const int16_t dy = card->offset_y;
   const int16_t inner = TODAY_INNER_RADIUS;
+  HealthDayData today;
+  const HealthDayData *day = prv_get_day(card, health_data, &today);
 
   char date[24];
-  prv_format_date(date, sizeof(date));
+  prv_format_date(date, sizeof(date), day->days_ago);
   health_orbit_draw_text(ctx, date, &health_orbit_font_gothic_14_bold, GColorLightGray,
                          health_orbit_middle_x(display, inner, middle + TODAY_DATE_Y),
                          middle + TODAY_DATE_Y + dy);
 
   char steps[16];
-  health_orbit_format_count(steps, sizeof(steps), health_data_current_steps_get(health_data));
+  health_orbit_format_count(steps, sizeof(steps), day->steps);
   const HealthOrbitRun steps_runs[] = {
     {steps, &health_orbit_font_leco_28_light, GColorScreaminGreen},
     /// After the step count on the Today card of the round Health app
@@ -403,7 +422,7 @@ static void prv_draw_today(GContext *ctx, GSize display, const HealthOrbitCard *
                          health_orbit_middle_x(display, inner, middle + TODAY_STEPS_Y),
                          middle + TODAY_STEPS_Y + dy);
 
-  const int32_t sleep = health_data_current_sleep_get(health_data);
+  const int32_t sleep = day->sleep;
   const int32_t minutes = sleep / PBL_SEC_PER_MIN;
   char hours_text[12];
   char minutes_text[12];
@@ -424,10 +443,9 @@ static void prv_draw_today(GContext *ctx, GSize display, const HealthOrbitCard *
                          middle + TODAY_SLEEP_Y + dy);
 
   // The sleep against the typical sleep and the deep sleep, the deep sleep alone if both do not fit
-  const int32_t typical = health_data_sleep_get_cur_wday_average(health_data);
+  const int32_t typical = day->typical_sleep;
   char deep[16];
-  health_orbit_format_duration(deep, sizeof(deep), health_data_current_deep_sleep_get(health_data),
-                               i18n_owner);
+  health_orbit_format_duration(deep, sizeof(deep), day->deep_sleep, i18n_owner);
   char detail[64];
   if (typical > 0) {
     /// Last night's sleep as a share of the typical sleep, and the deep sleep, as
@@ -451,12 +469,10 @@ static void prv_draw_today(GContext *ctx, GSize display, const HealthOrbitCard *
                          middle + TODAY_DETAIL_Y + dy);
 
   char distance[HEALTH_WHOLE_AND_DECIMAL_LENGTH];
-  health_util_format_whole_and_decimal(distance, sizeof(distance),
-                                       health_data_current_distance_meters_get(health_data),
+  health_util_format_whole_and_decimal(distance, sizeof(distance), day->distance_meters,
                                        health_util_get_distance_factor());
   char active[12];
-  snprintf(active, sizeof(active), "%d",
-           (int)(health_data_current_active_seconds_get(health_data) / PBL_SEC_PER_MIN));
+  snprintf(active, sizeof(active), "%d", (int)(day->active_seconds / PBL_SEC_PER_MIN));
   const HealthOrbitRun pill_runs[] = {
     {distance, &health_orbit_font_gothic_18_bold, GColorWhite},
     {pbl_i18n_get(health_util_get_distance_string(pbl_i18n_noop("mi"), pbl_i18n_noop("km")),
@@ -602,12 +618,13 @@ GColor health_orbit_section_bg_color(HealthOrbitSection section) {
   return (section == HealthOrbitSectionSleep) ? GColorOxfordBlue : GColorBlack;
 }
 
-int health_orbit_card_get_num_bubbles(HealthOrbitSection section) {
-  return (section == HealthOrbitSectionToday) ? 0 : HEALTH_ORBIT_CARD_MAX_BUBBLES;
+int health_orbit_card_get_num_bubbles(const HealthOrbitCard *card) {
+  return prv_is_day_card(card) ? 0 : HEALTH_ORBIT_CARD_MAX_BUBBLES;
 }
 
-void health_orbit_card_init(HealthOrbitCard *card, HealthOrbitSection section) {
-  *card = (HealthOrbitCard){.section = section};
+void health_orbit_card_init(HealthOrbitCard *card, HealthOrbitSection section,
+                            const HealthDayData *day) {
+  *card = (HealthOrbitCard){.section = section, .day = day};
   for (int i = 0; i < HEALTH_ORBIT_CARD_MAX_RINGS; i++) {
     card->sweep[i] = HEALTH_ORBIT_CARD_SWEEP_REST;
     card->track[i] = HEALTH_ORBIT_CARD_SWEEP_REST;
@@ -617,11 +634,11 @@ void health_orbit_card_init(HealthOrbitCard *card, HealthOrbitSection section) {
   }
 }
 
-int health_orbit_card_get_sweeps(HealthOrbitSection section, HealthData *health_data,
+int health_orbit_card_get_sweeps(const HealthOrbitCard *card, HealthData *health_data,
                                  uint32_t sweeps_out[HEALTH_ORBIT_CARD_MAX_RINGS],
                                  uint32_t spans_out[HEALTH_ORBIT_CARD_MAX_RINGS]) {
   OrbitRing rings[HEALTH_ORBIT_CARD_MAX_RINGS];
-  const int num_rings = prv_get_rings(section, health_data, rings);
+  const int num_rings = prv_get_rings(card, health_data, rings);
   const GSize display = GSize(PBL_DISPLAY_WIDTH, PBL_DISPLAY_HEIGHT);
   for (int i = 0; i < num_rings; i++) {
     int32_t start;
@@ -639,6 +656,11 @@ void health_orbit_card_draw_content(GContext *ctx, const HealthOrbitCard *card,
                                     HealthData *health_data, void *i18n_owner) {
   const GSize display = GSize(PBL_DISPLAY_WIDTH, PBL_DISPLAY_HEIGHT);
   graphics_context_set_antialiased(ctx, true);
+  if (card->day) {
+    prv_draw_today(ctx, display, card, health_data, i18n_owner);
+    graphics_context_set_antialiased(ctx, false);
+    return;
+  }
   switch (card->section) {
     case HealthOrbitSectionSteps:
       prv_draw_steps(ctx, display, card, health_data, i18n_owner);
@@ -659,7 +681,7 @@ void health_orbit_card_draw_rings(GContext *ctx, const HealthOrbitCard *card,
                                   HealthData *health_data, bool tracks) {
   const GSize display = GSize(PBL_DISPLAY_WIDTH, PBL_DISPLAY_HEIGHT);
   OrbitRing rings[HEALTH_ORBIT_CARD_MAX_RINGS];
-  const int num_rings = prv_get_rings(card->section, health_data, rings);
+  const int num_rings = prv_get_rings(card, health_data, rings);
   graphics_context_set_antialiased(ctx, true);
   for (int i = 0; i < num_rings; i++) {
     prv_draw_ring(ctx, display, &rings[i], card->sweep[i], card->track[i], tracks);
