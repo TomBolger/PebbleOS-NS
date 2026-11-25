@@ -35,6 +35,8 @@ typedef struct HealthOrbitCard {
   int16_t offset_y;
   //! Angle each ring sweeps from its start, or HEALTH_ORBIT_CARD_SWEEP_REST
   uint32_t sweep[HEALTH_ORBIT_CARD_MAX_RINGS];
+  //! Angle each ring's track sweeps from its start, or HEALTH_ORBIT_CARD_SWEEP_REST for all of it
+  uint32_t track[HEALTH_ORBIT_CARD_MAX_RINGS];
   //! Radius of each bubble
   int16_t bubble_radius[HEALTH_ORBIT_CARD_MAX_BUBBLES];
 } HealthOrbitCard;
@@ -50,9 +52,11 @@ void health_orbit_card_init(HealthOrbitCard *card, HealthOrbitSection section);
 
 //! How far each of a section's rings sweeps for the data
 //! @param[out] sweeps_out Angle swept by each ring
+//! @param[out] spans_out Angle each ring spans, its whole track, or nullptr
 //! @return Number of rings
 int health_orbit_card_get_sweeps(HealthOrbitSection section, HealthData *health_data,
-                                 uint32_t sweeps_out[HEALTH_ORBIT_CARD_MAX_RINGS]);
+                                 uint32_t sweeps_out[HEALTH_ORBIT_CARD_MAX_RINGS],
+                                 uint32_t spans_out[HEALTH_ORBIT_CARD_MAX_RINGS]);
 
 //! Number of bubbles a section's card has
 int health_orbit_card_get_num_bubbles(HealthOrbitSection section);

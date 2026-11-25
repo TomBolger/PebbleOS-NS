@@ -234,19 +234,25 @@ static void prv_fill_band(GContext *ctx, GPoint center, const OrbitRing *ring, i
                                        ring->outer_radius, from, to);
 }
 
+//! The angle swept by a fill or track, as far as \a rest at rest
+static int32_t prv_sweep(uint32_t state, int32_t rest) {
+  return (state == HEALTH_ORBIT_CARD_SWEEP_REST) ? rest : (int32_t)state;
+}
+
 static void prv_draw_ring(GContext *ctx, GSize display, const OrbitRing *ring, uint32_t sweep_state,
-                          bool track) {
+                          uint32_t track_state, bool tracks) {
   int32_t start;
   int32_t end;
   health_orbit_ring_angles(display, ring->outer_radius, ring->thickness, &start, &end);
   const GPoint center = prv_display_center(display);
-  if (track) {
+  // The track never runs past the end of the ring
+  const int32_t track = tracks ? PBL_MIN(prv_sweep(track_state, end - start), end - start) : 0;
+  if (track > 0) {
     graphics_context_set_fill_color(ctx, ring->track_color);
-    prv_fill_band(ctx, center, ring, start, end);
+    prv_fill_band(ctx, center, ring, start, start + track);
   }
-  const int32_t sweep = (sweep_state == HEALTH_ORBIT_CARD_SWEEP_REST)
-                            ? health_orbit_ring_sweep(start, end, ring->value, ring->full)
-                            : (int32_t)sweep_state;
+  const int32_t sweep =
+      prv_sweep(sweep_state, health_orbit_ring_sweep(start, end, ring->value, ring->full));
   if (sweep > 0) {
     graphics_context_set_fill_color(ctx, ring->color);
     prv_fill_band(ctx, center, ring, start, start + sweep);
@@ -256,8 +262,9 @@ static void prv_draw_ring(GContext *ctx, GSize display, const OrbitRing *ring, u
       prv_fill_band(ctx, center, ring, start, start + PBL_MIN(inner, sweep));
     }
   }
-  if (track && ring->typical > 0) {
-    const int32_t angle = start + health_orbit_ring_sweep(start, end, ring->typical, ring->full);
+  const int32_t typical = health_orbit_ring_sweep(start, end, ring->typical, ring->full);
+  if (ring->typical > 0 && track > 0 && typical <= track) {
+    const int32_t angle = start + typical;
     const int32_t outer = ring->outer_radius + 1;
     const int32_t inner = ring->outer_radius - ring->thickness - 1;
     const int32_t sin = sin_lookup(angle);
@@ -601,6 +608,7 @@ void health_orbit_card_init(HealthOrbitCard *card, HealthOrbitSection section) {
   *card = (HealthOrbitCard){.section = section};
   for (int i = 0; i < HEALTH_ORBIT_CARD_MAX_RINGS; i++) {
     card->sweep[i] = HEALTH_ORBIT_CARD_SWEEP_REST;
+    card->track[i] = HEALTH_ORBIT_CARD_SWEEP_REST;
   }
   for (int i = 0; i < HEALTH_ORBIT_CARD_MAX_BUBBLES; i++) {
     card->bubble_radius[i] = HEALTH_ORBIT_CARD_BUBBLE_RADIUS;
@@ -608,7 +616,8 @@ void health_orbit_card_init(HealthOrbitCard *card, HealthOrbitSection section) {
 }
 
 int health_orbit_card_get_sweeps(HealthOrbitSection section, HealthData *health_data,
-                                 uint32_t sweeps_out[HEALTH_ORBIT_CARD_MAX_RINGS]) {
+                                 uint32_t sweeps_out[HEALTH_ORBIT_CARD_MAX_RINGS],
+                                 uint32_t spans_out[HEALTH_ORBIT_CARD_MAX_RINGS]) {
   OrbitRing rings[HEALTH_ORBIT_CARD_MAX_RINGS];
   const int num_rings = prv_get_rings(section, health_data, rings);
   const GSize display = GSize(PBL_DISPLAY_WIDTH, PBL_DISPLAY_HEIGHT);
@@ -617,6 +626,9 @@ int health_orbit_card_get_sweeps(HealthOrbitSection section, HealthData *health_
     int32_t end;
     health_orbit_ring_angles(display, rings[i].outer_radius, rings[i].thickness, &start, &end);
     sweeps_out[i] = health_orbit_ring_sweep(start, end, rings[i].value, rings[i].full);
+    if (spans_out) {
+      spans_out[i] = end - start;
+    }
   }
   return num_rings;
 }
@@ -648,7 +660,7 @@ void health_orbit_card_draw_rings(GContext *ctx, const HealthOrbitCard *card,
   const int num_rings = prv_get_rings(card->section, health_data, rings);
   graphics_context_set_antialiased(ctx, true);
   for (int i = 0; i < num_rings; i++) {
-    prv_draw_ring(ctx, display, &rings[i], card->sweep[i], tracks);
+    prv_draw_ring(ctx, display, &rings[i], card->sweep[i], card->track[i], tracks);
   }
   graphics_context_set_antialiased(ctx, false);
 }
