@@ -9,7 +9,7 @@
 
 typedef struct HealthData {
   //!< Current step / activity info
-  int32_t step_data[PBL_DAY_PER_WEEK]; //!< Step history for today and the previous 6 days
+  int32_t step_data[HEALTH_DATA_NUM_DAYS]; //!< Step history for today and the days before it
   int32_t current_distance_meters;
   int32_t current_calories;
   int32_t current_active_seconds;
@@ -21,10 +21,10 @@ typedef struct HealthData {
 
   int32_t monthly_step_average;
 
-  int32_t sleep_data[PBL_DAY_PER_WEEK];      //!< Sleep history for the past week
-  int32_t typical_sleep;                     //! Typical sleep for the current week day
-  int32_t deep_sleep;                        //!< Amount of deep sleep last night
-  int32_t deep_sleep_data[PBL_DAY_PER_WEEK]; //!< Deep sleep history for the past week
+  int32_t sleep_data[HEALTH_DATA_NUM_DAYS];      //!< Sleep history of the nights ending each day
+  int32_t typical_sleep;                         //! Typical sleep for the current week day
+  int32_t deep_sleep;                            //!< Amount of deep sleep last night
+  int32_t deep_sleep_data[HEALTH_DATA_NUM_DAYS]; //!< Deep sleep history of those nights
 
   int32_t sleep_start;         //!< When the user went to sleep (seconds after midnight)
   int32_t sleep_end;           //!< When the user woke up (seconds after midnight)
