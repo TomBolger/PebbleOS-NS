@@ -178,5 +178,6 @@ void gdraw_command_image_scale_stroke_width(GDrawCommandImage *image, Fixed_S16_
                                             Fixed_S16_3 to, GStrokeWidthOp from_op,
                                             GStrokeWidthOp to_op, AnimationProgress progress);
 
+void gdraw_command_list_replace_color(GDrawCommandList *list, GColor from, GColor to);
 void gdraw_command_frame_replace_color(GDrawCommandFrame *frame, GColor from, GColor to);
 void gdraw_command_replace_color(GDrawCommand *command, GColor from, GColor to);
