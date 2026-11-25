@@ -10,6 +10,7 @@
 #include <pbl/services/activity/activity_algorithm.h>
 #include <pbl/services/activity/activity_insights.h>
 #include <pbl/services/data_logging/data_logging_service.h>
+#include <pbl/services/time.h>
 #include <pbl/util/size.h>
 #include <pbl/util/string.h>
 #include <pbl/util/time.h>
@@ -349,7 +350,8 @@ static void prv_debug_cmd_sleep_sessions(int index, void *context) {
     // Write start time
     struct pbl_tm local_tm;
     char temp[32];
-    pbl_localtime_r(&session->start_utc, &local_tm);
+    const time_t start_utc = session->start_utc;
+    pbl_localtime_r(&start_utc, &local_tm);
     pbl_strftime_r(temp, sizeof(temp), "%H:%M", &local_tm);
     safe_strcat(data->debug_card.dialog_text, temp, sizeof(data->debug_card.dialog_text));
 
@@ -418,7 +420,8 @@ static void prv_debug_cmd_step_sessions(int index, void *context) {
     // Write start time
     struct pbl_tm local_tm;
     char temp[64];
-    pbl_localtime_r(&session->start_utc, &local_tm);
+    const time_t start_utc = session->start_utc;
+    pbl_localtime_r(&start_utc, &local_tm);
     pbl_strftime_r(temp, sizeof(temp), "%H:%M", &local_tm);
     safe_strcat(data->debug_card.dialog_text, temp, sizeof(data->debug_card.dialog_text));
 
