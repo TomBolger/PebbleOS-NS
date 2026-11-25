@@ -542,6 +542,9 @@ static int prv_current_temp(void) {
                                   : s_cf->hourly_temps[prv_cur_hour()];
 }
 
+// Behind the moon, and around it
+#define NIGHT_SKY_COLOR PBL_IF_COLOR_ELSE(GColorOxfordBlue, GColorBlack)
+
 // True if the hour at this position starts after sunset or before sunrise.
 static bool prv_is_night_for_pos(int pos_1_to_12) {
   if (!s_cf || !s_cf->sun_known) {
@@ -573,7 +576,7 @@ static bool prv_type_has_sun(WeatherType wt) {
 //! Draws the night version of a sunny icon: the moon in its phase at that hour, and for a partly
 //! cloudy hour a smaller moon peeking out behind the cloud.
 static void prv_draw_night_icon(GContext *ctx, GPoint c, WeatherType wt, int pos_1_to_12) {
-  const GColor outline = PBL_IF_COLOR_ELSE(GColorOxfordBlue, GColorBlack);
+  const GColor outline = NIGHT_SKY_COLOR;
   const float elongation = prv_moon_elongation_for_pos(pos_1_to_12);
   if (wt != WeatherType_PartlyCloudy) {
     weather_moon_draw(ctx, c, CLOCK_ICON_SIZE / 2 - 1, elongation, outline);
@@ -1807,9 +1810,9 @@ static void prv_canvas_draw(Layer *layer, GContext *ctx) {
         graphics_context_set_stroke_color(ctx, pal.bubble_stroke);
         graphics_context_set_stroke_width(ctx, 1);
         graphics_draw_circle(ctx, GPoint(ix, iy), rr);
-      } else if (prv_type_has_sun(wt) && prv_is_night_for_pos(pos)) {
+      } else if (night_moon[pos - 1]) {
         // A clear night: a night sky for the sun's disc
-        graphics_context_set_fill_color(ctx, PBL_IF_COLOR_ELSE(GColorOxfordBlue, GColorBlack));
+        graphics_context_set_fill_color(ctx, NIGHT_SKY_COLOR);
         graphics_fill_circle(ctx, GPoint(ix, iy), rr);
       } else {
         const GColor disc = weather_type_disc_color(wt);
@@ -1819,7 +1822,7 @@ static void prv_canvas_draw(Layer *layer, GContext *ctx) {
         }
       }
 
-      if (show_icon && prv_type_has_sun(wt) && prv_is_night_for_pos(pos)) {
+      if (show_icon && night_moon[pos - 1]) {
         // The moon as it is at that hour, in place of the sun
         prv_draw_night_icon(ctx, GPoint(ix, iy), wt, pos);
       } else if (show_icon) {
@@ -1853,8 +1856,7 @@ static void prv_canvas_draw(Layer *layer, GContext *ctx) {
     if (circle_r < 1)
       continue; // fully shrunk — skip background circle
 
-    const GColor disc = night_moon[pos - 1] ? PBL_IF_COLOR_ELSE(GColorOxfordBlue, GColorBlack)
-                                            : weather_type_disc_color(wt);
+    const GColor disc = night_moon[pos - 1] ? NIGHT_SKY_COLOR : weather_type_disc_color(wt);
     if (gcolor_equal(disc, GColorClear))
       continue;
     graphics_context_set_compositing_mode(ctx, GCompOpAssign);
