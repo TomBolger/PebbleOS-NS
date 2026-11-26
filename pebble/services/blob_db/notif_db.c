@@ -2,16 +2,71 @@
 /* SPDX-License-Identifier: Apache-2.0 */
 
 #include <errno.h>
+#include <string.h>
 
 #include <pbl/kernel/malloc.h>
 #include <pbl/logging/logging.h>
 #include <pbl/services/blob_db/notif_db.h>
 #include <pbl/services/notifications/alerts_preferences_private.h>
 #include <pbl/services/notifications/notification_storage.h>
+#include <pbl/services/timeline/attribute.h>
+#include <pbl/services/timeline/timeline.h>
+#include <pbl/util/string.h>
 
 PBL_LOG_MODULE_DECLARE(service_blob_db, CONFIG_SERVICE_BLOB_DB_LOG_LEVEL);
 
 void notif_db_init(void) {
+}
+
+// The Core app names an Android notification's app only in the first of its actions, "Mute <app>"
+#define CORE_MUTE_APP_PREFIX "Mute "
+
+static const char *prv_app_name_from_mute_action(const TimelineItem *notification) {
+  static const Uuid s_android_notifications = UUID_NOTIFICATIONS_DATA_SOURCE;
+  if (!uuid_equal(&notification->header.parent_id, &s_android_notifications) ||
+      !PBL_IS_EMPTY_STRING(
+          attribute_get_string(&notification->attr_list, AttributeIdAppName, ""))) {
+    return nullptr;
+  }
+  const size_t prefix_len = strlen(CORE_MUTE_APP_PREFIX);
+  for (uint8_t i = 0; i < notification->action_group.num_actions; i++) {
+    const TimelineItemAction *action = &notification->action_group.actions[i];
+    if (action->type != TimelineItemActionTypeGeneric) {
+      continue;
+    }
+    const char *title = attribute_get_string(&action->attr_list, AttributeIdTitle, "");
+    if (strncmp(title, CORE_MUTE_APP_PREFIX, prefix_len) == 0) {
+      const char *app_name = title + prefix_len;
+      return PBL_IS_EMPTY_STRING(app_name) ? nullptr : app_name;
+    }
+  }
+  return nullptr;
+}
+
+//! Stores a new notification, naming its app when the phone only names it in an action, so the
+//! history can list and stack it by app.
+static void prv_store(TimelineItem *notification) {
+  const char *app_name = prv_app_name_from_mute_action(notification);
+  if (!app_name) {
+    notification_storage_store(notification);
+    return;
+  }
+  AttributeList attr_list = {};
+  for (uint8_t i = 0; i < notification->attr_list.num_attributes; i++) {
+    attribute_list_add_attribute(&attr_list, &notification->attr_list.attributes[i]);
+  }
+  attribute_list_add_cstring(&attr_list, AttributeIdAppName, app_name);
+  TimelineItem *named = timeline_item_create_with_attributes(
+      notification->header.timestamp, notification->header.duration, notification->header.type,
+      notification->header.layout, &attr_list, &notification->action_group);
+  attribute_list_destroy_list(&attr_list);
+  if (!named) {
+    notification_storage_store(notification);
+    return;
+  }
+  named->header = notification->header;
+  notification_storage_store(named);
+  timeline_item_destroy(named);
 }
 
 int notif_db_insert(const uint8_t *key, int key_len, const uint8_t *val, int val_len) {
@@ -60,7 +115,7 @@ int notif_db_insert(const uint8_t *key, int key_len, const uint8_t *val, int val
     PBL_LOG_DBG("Notification already dismissed: %s", uuid_string);
     pbl_free(id);
   } else if (!has_status_bits) {
-    notification_storage_store(&notification);
+    prv_store(&notification);
     PBL_LOG_INFO("Notification added: %s", uuid_string);
     notifications_handle_notification_added(id);
   } else {
