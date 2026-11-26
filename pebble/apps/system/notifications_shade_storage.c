@@ -102,10 +102,15 @@ void notification_shade_init_with_prefs(NotificationShade *shade) {
   }
   const time_t now = pbl_realtime();
 
+#ifdef CONFIG_NOTIFICATION_MIRROR
+  const bool sections = alerts_preferences_get_notification_sections();
+#else
+  // Only a phone mirroring its shade files notifications in sections
+  const bool sections = false;
+#endif
   // Stacks are on whenever notifications are grouped by app or sender; the phone's own stacks
   // (AttributeIdStackId) take precedence.
-  notification_shade_init(shade, alerts_preferences_get_notification_sections(),
-                          group_by_app || group_by_sender,
+  notification_shade_init(shade, sections, group_by_app || group_by_sender,
                           alerts_preferences_get_notification_collapsed_sections());
   shade->group_by_app = group_by_app;
   shade->group_by_sender = group_by_sender;
