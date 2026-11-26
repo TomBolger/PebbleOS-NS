@@ -351,20 +351,27 @@ void test_health_orbit_layout__workout_rows_fit_below_the_banner(void) {
   // The kinds of workout are three tall rows, room for their icons
   cl_assert_equal_i(health_orbit_list_num_rows(HealthOrbitListWorkoutKinds), 3);
   prv_check_list_rows(HealthOrbitListWorkoutKinds, HEALTH_WORKOUT_KIND_ROW_HEIGHT, true);
-  // The workout's measures are the week's rows below the two its time takes, ending clear of the
-  // buttons' bubbles, so centered on what the bezel and the bubbles leave
+  // The workout's measures are the week's rows below the two its time takes, narrowed to one
+  // column
   prv_check_list_rows(HealthOrbitListWorkout, HEALTH_WEEK_ROW_HEIGHT, false);
+  const GRangeHorizontal span = health_orbit_workout_rows_span(DISPLAY);
+  int16_t widest_left = 0;
   for (int i = 0; i < health_orbit_list_num_rows(HealthOrbitListWorkout); i++) {
     MenuRoundShape measure;
     MenuRoundShape week;
     health_orbit_list_row(DISPLAY, HealthOrbitListWorkout, i, &measure);
     health_orbit_week_row(DISPLAY, i + HEALTH_WORKOUT_FIRST_ROW, &week);
-    cl_assert_equal_gpoint(measure.box.origin, week.box.origin);
+    cl_assert_equal_i(measure.box.origin.y, week.box.origin.y);
     cl_assert_equal_i(measure.box.size.h, week.box.size.h);
-    cl_assert_equal_i(
-        grect_get_max_x(&measure.box),
-        PBL_MIN(grect_get_max_x(&week.box), health_orbit_workout_rows_right(DISPLAY)));
+    cl_assert_equal_i(measure.box.origin.x, span.origin_x);
+    cl_assert_equal_i(measure.box.size.w, span.size_w);
+    // Inside the week's row, which keeps the bezel margin at both ends
+    cl_assert(measure.box.origin.x >= week.box.origin.x);
+    cl_assert(grect_get_max_x(&measure.box) <= grect_get_max_x(&week.box));
+    widest_left = PBL_MAX(widest_left, week.box.origin.x);
   }
+  // As wide as the narrowest of them lets it be on the left
+  cl_assert_equal_i(span.origin_x, widest_left);
   // The week is as it was
   prv_check_list_rows(HealthOrbitListWeek, HEALTH_WEEK_ROW_HEIGHT, true);
   cl_assert_equal_i(health_orbit_list_num_rows(HealthOrbitListWeek), 7);
@@ -386,14 +393,22 @@ void test_health_orbit_layout__workout_buttons_are_by_their_buttons(void) {
     cl_assert(reach >= PBL_DISPLAY_WIDTH / 2 - HEALTH_WORKOUT_BUTTON_BEZEL_GAP - 1);
   }
   cl_assert(prv_distance(select, down) > 2 * HEALTH_WORKOUT_BUTTON_RADIUS);
-  // The rows end the gap left of both
-  const int16_t right = health_orbit_workout_rows_right(DISPLAY);
-  cl_assert_equal_i(right, PBL_MIN(select.x, down.x) - HEALTH_WORKOUT_BUTTON_RADIUS -
-                               HEALTH_WORKOUT_BUTTON_ROWS_GAP);
+  // The rows, one centered column, keep the gap from both
+  const GRangeHorizontal span = health_orbit_workout_rows_span(DISPLAY);
+  cl_assert(PBL_ABS(2 * span.origin_x + span.size_w - PBL_DISPLAY_WIDTH) <= 1);
+  MenuRoundShape widest;
+  health_orbit_week_row(DISPLAY, HEALTH_WORKOUT_FIRST_ROW, &widest);
+  cl_assert(span.size_w < widest.box.size.w);
   for (int i = 0; i < health_orbit_list_num_rows(HealthOrbitListWorkout); i++) {
     MenuRoundShape pill;
     cl_assert(health_orbit_list_row(DISPLAY, HealthOrbitListWorkout, i, &pill));
-    cl_assert(grect_get_max_x(&pill.box) <= right);
+    const GPoint end_center = GPoint(grect_get_max_x(&pill.box) - pill.radius,
+                                     pill.box.origin.y + pill.box.size.h / 2);
+    for (int b = 0; b < 2; b++) {
+      const GPoint button = b ? down : select;
+      cl_assert(prv_distance(end_center, button) >=
+                HEALTH_WORKOUT_BUTTON_RADIUS + HEALTH_WORKOUT_BUTTON_ROWS_GAP + pill.radius);
+    }
     // Still wide enough for a measure
     cl_assert(pill.box.size.w >= 140);
   }
