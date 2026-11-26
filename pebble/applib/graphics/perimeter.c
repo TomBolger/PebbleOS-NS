@@ -54,6 +54,15 @@ PBL_T_STATIC GRangeHorizontal perimeter_for_display_round(const GPerimeter *peri
   const int32_t radius = grect_shortest_side(frame) / 2 - inset;
   return perimeter_for_circle(vertical_range, center, radius);
 }
+
+GTextBlock perimeter_text_block(const GSize *ctx_size, GRangeVertical anchor, uint16_t inset) {
+  // The display is as wide again as far below its middle as the anchor is above it
+  const int16_t bottom = PBL_MAX(ctx_size->h - anchor.origin_y, anchor.origin_y + anchor.size_h);
+  return (GTextBlock){
+    .range = perimeter_for_display_round(nullptr, ctx_size, anchor, inset),
+    .rows = {.origin_y = anchor.origin_y, .size_h = bottom - anchor.origin_y},
+  };
+}
 #endif
 
 #if PBL_RECT
