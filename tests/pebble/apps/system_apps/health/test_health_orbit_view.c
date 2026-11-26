@@ -4,8 +4,9 @@
 #include "fake_pfs.h"
 #include "test_health_app_includes.h"
 
-#include <apps/system/health/data_private.h>
 #include <pbl/services/activity/workout_service.h>
+
+#include <apps/system/health/data_private.h>
 
 // The view's sections are chosen by its buttons, so the test drives it from the inside
 #include <apps/system/health/orbit_view.c>
@@ -811,8 +812,11 @@ void test_health_orbit_view__workout_is_after_sleep_and_wraps(void) {
   cl_assert_equal_i(s_view->orbit_target + HEALTH_ORBIT_LENGTH,
                     HealthOrbitSectionWorkout * HEALTH_ORBIT_STEP);
   prv_rest(s_view);
-  // Its card has the kinds' icons
-  cl_assert(s_view->card.kind_icons == s_view->kind_icons);
+  // Its card has the large run shoe, and the kinds to start their icons
+  cl_assert(s_view->card.run_icon == s_view->run_icon);
+  cl_assert(s_view->run_icon);
+  cl_assert_equal_i(gdraw_command_image_get_bounds_size(s_view->run_icon).w,
+                    HEALTH_ORBIT_WORKOUT_SHOE_WIDTH);
   cl_assert(s_view->kind_icons[0] && s_view->kind_icons[1] && s_view->kind_icons[2]);
 }
 
