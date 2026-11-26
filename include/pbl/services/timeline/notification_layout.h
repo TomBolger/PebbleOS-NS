@@ -117,6 +117,16 @@ typedef struct {
   bool show_notification_timestamp;
 } NotificationLayoutInfo;
 
+/**
+ * @brief Whether a round notification's message is read in a block of lines of one width; see
+ * @ref services_timeline_notification_text_block.
+ */
+#if PBL_ROUND && defined(CONFIG_NOTIFICATION_TEXT_BLOCK)
+#define NOTIFICATION_TEXT_BLOCK 1
+#else
+#define NOTIFICATION_TEXT_BLOCK 0
+#endif
+
 /** @brief Notification and reminder layout; can be cast to a LayoutLayer. */
 typedef struct {
   /** Base layout. */
@@ -137,6 +147,14 @@ typedef struct {
   GTextNode *view_node;
   /** Size of the card view. */
   GSize view_size;
+#if NOTIFICATION_TEXT_BLOCK
+  /** The message, drawn as a block by the custom node standing in for it, or nullptr. */
+  GTextNodeText *block_text;
+  /** The message laid out as a block, once measured. */
+  struct NotificationTextBlock *text_block;
+  /** Where the message is in the card, from measuring it. */
+  GRect block_box;
+#endif
 } NotificationLayout;
 
 /** @brief Default notification background color. */
