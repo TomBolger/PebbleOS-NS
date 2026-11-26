@@ -39,7 +39,7 @@
 #define SELECTED_ICON_SIZE      21
 #define NEIGHBOUR_ICON_SIZE     13
 
-//! The kinds of workout's icons, on the Workout card's bubbles and the rows to start one
+//! The kinds of workout's icons, on the rows to start one
 #define KIND_ICON_SIZE 28
 
 //! The crown by the best day of the week
@@ -113,6 +113,8 @@ struct HealthOrbitView {
   //! What the workout screens show, and the icons of the kinds of workout
   HealthOrbitWorkoutScreen workout;
   GDrawCommandImage *kind_icons[HEALTH_WORKOUT_NUM_KINDS];
+  //! The Workout card's large run shoe
+  GDrawCommandImage *run_icon;
   //! Ticks every second the Workout section shows, to read the workout going on, and to count down
   //! to one
   AppTimer *workout_timer;
@@ -141,7 +143,7 @@ _Static_assert(HEALTH_ORBIT_WEEK_NUM_ROWS <= HEALTH_ORBIT_LIST_MAX_ROWS, "week r
 static void prv_init_section_card(HealthOrbitView *view, HealthOrbitCard *card,
                                   HealthOrbitSection section) {
   health_orbit_card_init(card, section, nullptr);
-  card->kind_icons = view->kind_icons;
+  card->run_icon = view->run_icon;
 }
 
 //! Section whose colors show: the days have Today's, as their card is laid out as it
@@ -221,9 +223,9 @@ static GDrawCommandImage *prv_create_icon(HealthOrbitSection section, int16_t si
   return icon;
 }
 
-//! A kind of workout's icon \a width wide, its lines in the kind's color, the rest clear, as the
-//! Workout app draws it on its dark screens
-static GDrawCommandImage *prv_create_kind_icon(ActivitySessionType type, int16_t width) {
+//! A kind of workout's icon \a width wide, its lines in \a color, the rest clear
+static GDrawCommandImage *prv_create_kind_icon(ActivitySessionType type, int16_t width,
+                                               GColor color) {
   const uint32_t resource = (type == ActivitySessionType_Run)    ? RESOURCE_ID_WORKOUT_APP_RUN
                             : (type == ActivitySessionType_Walk) ? RESOURCE_ID_WORKOUT_APP_WALK
                                                                  : RESOURCE_ID_WORKOUT_APP_WORKOUT;
@@ -233,7 +235,7 @@ static GDrawCommandImage *prv_create_kind_icon(ActivitySessionType type, int16_t
   }
   GDrawCommandList *list = gdraw_command_image_get_command_list(icon);
   gdraw_command_list_replace_color(list, GColorWhite, GColorClear);
-  gdraw_command_list_replace_color(list, GColorBlack, health_orbit_workout_color(type));
+  gdraw_command_list_replace_color(list, GColorBlack, color);
   prv_scale_to_fit(icon, width);
   return icon;
 }
@@ -1601,8 +1603,12 @@ HealthOrbitView *health_orbit_view_create(HealthData *health_data) {
   }
 
   for (int i = 0; i < HEALTH_WORKOUT_NUM_KINDS; i++) {
-    view->kind_icons[i] = prv_create_kind_icon(health_orbit_workout_kinds[i], KIND_ICON_SIZE);
+    const ActivitySessionType type = health_orbit_workout_kinds[i];
+    view->kind_icons[i] =
+        prv_create_kind_icon(type, KIND_ICON_SIZE, health_orbit_workout_ink(type));
   }
+  view->run_icon = prv_create_kind_icon(ActivitySessionType_Run, HEALTH_ORBIT_WORKOUT_SHOE_WIDTH,
+                                        health_orbit_workout_color(ActivitySessionType_Run));
 
   view->crown = prv_create_editable_image(RESOURCE_ID_HEALTH_APP_CROWN);
   if (view->crown) {
@@ -1638,6 +1644,7 @@ void health_orbit_view_destroy(HealthOrbitView *view) {
   for (int i = 0; i < HEALTH_WORKOUT_NUM_KINDS; i++) {
     gdraw_command_image_destroy(view->kind_icons[i]);
   }
+  gdraw_command_image_destroy(view->run_icon);
   for (int i = 0; i < HealthOrbitSectionCount; i++) {
     gdraw_command_image_destroy(view->icons[i].selected);
     gdraw_command_image_destroy(view->icons[i].neighbour);

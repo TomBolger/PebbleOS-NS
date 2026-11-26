@@ -44,15 +44,21 @@ typedef struct HealthOrbitCard {
   uint32_t track[HEALTH_ORBIT_CARD_MAX_RINGS];
   //! Radius of each bubble
   int16_t bubble_radius[HEALTH_ORBIT_CARD_MAX_BUBBLES];
-  //! The Workout card's icons of the kinds of workout, Run, Walk and Open Workout
-  GDrawCommandImage *const *kind_icons;
+  //! The Workout card's run shoe, shown large with no workout going on
+  GDrawCommandImage *run_icon;
 } HealthOrbitCard;
+
+//! Width the Workout card's run shoe is drawn at
+#define HEALTH_ORBIT_WORKOUT_SHOE_WIDTH 96
 
 //! The kinds of workout, in the order the Workout app offers them
 extern const ActivitySessionType health_orbit_workout_kinds[3];
 
 //! Color of a kind of workout, as the Workout app has it
 GColor health_orbit_workout_color(ActivitySessionType type);
+
+//! Deeper color of a kind of workout, to read on white, as the Workout app's action bars have it
+GColor health_orbit_workout_ink(ActivitySessionType type);
 
 //! Name of a kind of workout, to be translated, as "Run"
 const char *health_orbit_workout_name(ActivitySessionType type);

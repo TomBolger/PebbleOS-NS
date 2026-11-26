@@ -26,8 +26,10 @@
 #define ROW_TEXT_INSET 2
 #define KIND_ICON_GAP  6
 
-//! The outline round the selected row
-#define OUTLINE_WIDTH 2
+//! The ring round the selected kind of workout, in the Workout section's color
+#define KIND_RING_WIDTH 3
+#define KIND_RING_COLOR GColorChromeYellow
+#define KIND_ROW_COLOR  GColorWhite
 
 //! Colors of the measures, as the Workout app labels them
 #define DISTANCE_COLOR GColorCyan
@@ -273,20 +275,21 @@ void health_orbit_workout_draw_kinds(GContext *ctx, const HealthOrbitWorkoutScre
   graphics_context_set_antialiased(ctx, true);
   for (int i = HEALTH_WORKOUT_NUM_KINDS - 1; i >= 0; i--) {
     if (i == highlight_row && highlight && highlight->box.size.w > 0) {
-      prv_fill_round_rect(ctx, grect_inset(highlight->box, GEdgeInsets(-OUTLINE_WIDTH)),
-                          highlight->radius + OUTLINE_WIDTH, GColorWhite);
+      prv_fill_round_rect(ctx, grect_inset(highlight->box, GEdgeInsets(-KIND_RING_WIDTH)),
+                          highlight->radius + KIND_RING_WIDTH, KIND_RING_COLOR);
     }
     const MenuRoundShape *pill = &rows[i];
     if (pill->box.size.w <= 0) {
       continue;
     }
     const GRect box = pill->box;
-    prv_fill_round_rect(ctx, box, pill->radius, ROW_COLOR);
-    // The icon and the name, together in the middle of the pill, as far as it has grown
+    // White, to read, the icon and the name in the kind's deeper color together in the middle of
+    // the pill, as far as it has grown
+    prv_fill_round_rect(ctx, box, pill->radius, KIND_ROW_COLOR);
     const ActivitySessionType type = health_orbit_workout_kinds[i];
     const HealthOrbitRun name = {
       pbl_i18n_get(health_orbit_workout_name(type), i18n_owner), &health_orbit_font_gothic_24_bold,
-      health_orbit_workout_color(type)
+      health_orbit_workout_ink(type)
     };
     const GSize icon_size =
         icons && icons[i] ? gdraw_command_image_get_bounds_size(icons[i]) : GSizeZero;

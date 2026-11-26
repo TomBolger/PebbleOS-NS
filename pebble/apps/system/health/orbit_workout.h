@@ -62,7 +62,7 @@ int health_orbit_workout_num_rows(ActivitySessionType type);
 //! Draws the kinds of workout to start, each row in the pill \a rows has for it, the line above
 //! them
 //! \a header_offset_y below where it rests
-//! @param icons Icons of the kinds of workout, in their colors
+//! @param icons Icons of the kinds of workout, in their deeper colors to read on white
 //! @param highlight The pill the selection's outline goes round, or nullptr
 //! @param highlight_row The row the outline is drawn with
 void health_orbit_workout_draw_kinds(GContext *ctx, const HealthOrbitWorkoutScreen *screen,

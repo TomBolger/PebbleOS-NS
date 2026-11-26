@@ -85,6 +85,11 @@ static const GPoint s_bubble_offsets[HEALTH_ORBIT_CARD_MAX_BUBBLES] = {
 #define WORKOUT_RING_FULL_S      PBL_SEC_PER_HOUR
 #define WORKOUT_IDLE_TRACK_COLOR GColorWindsorTan
 
+//! With no workout going on: the middle of the run shoe and of the line below it, from the middle
+//! of the display
+#define WORKOUT_SHOE_Y (-14)
+#define WORKOUT_LINE_Y 46
+
 //! Colors of the workout's measures, as the Workout app labels them
 #define WORKOUT_DISTANCE_COLOR GColorCyan
 #define WORKOUT_PACE_COLOR     GColorGreen
@@ -659,6 +664,18 @@ GColor health_orbit_workout_color(ActivitySessionType type) {
   return GColorScreaminGreen;
 }
 
+GColor health_orbit_workout_ink(ActivitySessionType type) {
+  switch (type) {
+    case ActivitySessionType_Run:
+      return GColorOrange;
+    case ActivitySessionType_Walk:
+      return GColorCobaltBlue;
+    default:
+      break;
+  }
+  return GColorIslamicGreen;
+}
+
 const char *health_orbit_workout_name(ActivitySessionType type) {
   switch (type) {
     case ActivitySessionType_Run:
@@ -674,31 +691,10 @@ const char *health_orbit_workout_name(ActivitySessionType type) {
   return pbl_i18n_noop("Workout");
 }
 
-//! A bubble with a kind of workout's icon over its name
-static void prv_draw_kind_bubble(GContext *ctx, GPoint center, int16_t radius,
-                                 GDrawCommandImage *icon, ActivitySessionType type,
-                                 void *i18n_owner) {
-  if (radius <= 0) {
-    return;
-  }
-  graphics_context_set_fill_color(ctx, GColorDarkGray);
-  graphics_fill_circle(ctx, center, radius);
-  const GDrawState state =
-      health_orbit_clip(ctx, GRect(center.x - radius, center.y - radius, 2 * radius, 2 * radius));
-  if (icon) {
-    const GSize size = gdraw_command_image_get_bounds_size(icon);
-    gdraw_command_image_draw(
-        ctx, icon, GPoint(center.x - size.w / 2, center.y + BUBBLE_VALUE_Y - 1 - size.h / 2));
-  }
-  health_orbit_draw_text(ctx, pbl_i18n_get(health_orbit_workout_name(type), i18n_owner),
-                         &health_orbit_font_gothic_14, health_orbit_workout_color(type), center.x,
-                         center.y + BUBBLE_UNIT_Y);
-  graphics_context_set_drawing_state(ctx, state);
-}
-
-//! No workout going on: the minutes active today, and the three kinds of workout to start
-static void prv_draw_workout_kinds(GContext *ctx, GSize display, const HealthOrbitCard *card,
-                                   HealthData *health_data, void *i18n_owner) {
+//! No workout going on: the Workout app's run shoe, large in the middle, over a line saying to
+//! start one
+static void prv_draw_workout_idle(GContext *ctx, GSize display, const HealthOrbitCard *card,
+                                  void *i18n_owner) {
   const int16_t middle = display.h / 2;
   const int16_t dy = card->offset_y;
 
@@ -708,36 +704,20 @@ static void prv_draw_workout_kinds(GContext *ctx, GSize display, const HealthOrb
                          health_orbit_middle_x(display, CARD_INNER_RADIUS, middle + CARD_TITLE_Y),
                          middle + CARD_TITLE_Y + dy);
 
-  char minutes[12];
-  snprintf(minutes, sizeof(minutes), "%d",
-           (int)(health_data_current_active_seconds_get(health_data) / PBL_SEC_PER_MIN));
-  health_orbit_draw_text(ctx, minutes, &health_orbit_font_leco_38_bold, GColorChromeYellow,
-                         health_orbit_middle_x(display, CARD_INNER_RADIUS, middle + CARD_VALUE_Y),
-                         middle + CARD_VALUE_Y + dy);
-  /// Below the minutes active today on the Workout card of the round Health app
-  health_orbit_draw_text(ctx, pbl_i18n_get("active min today", i18n_owner),
-                         &health_orbit_font_gothic_18_bold, GColorLightGray,
-                         health_orbit_middle_x(display, CARD_INNER_RADIUS, middle + CARD_SUB_Y),
-                         middle + CARD_SUB_Y + dy);
-
-  const HealthOrbitRun pill_run = {
-    /// On the Workout card of the round Health app with no workout going on
-    pbl_i18n_get("START A WORKOUT", i18n_owner), &health_orbit_font_gothic_14_bold, GColorWhite
-  };
-  const GPoint pill_center =
-      GPoint(health_orbit_middle_x(display, CARD_INNER_RADIUS, middle + CARD_PILL_Y),
-             middle + CARD_PILL_Y + dy);
-  prv_draw_pill(ctx, pill_center, CARD_PILL_W, CARD_PILL_H, GColorWindsorTan, &pill_run, 1, 0);
-
-  const int16_t row = middle + BUBBLES_Y;
-  const int16_t middle_x = health_orbit_middle_x(display, CARD_INNER_RADIUS, row);
-  for (int i = 0; i < HEALTH_ORBIT_CARD_MAX_BUBBLES; i++) {
-    const GPoint center =
-        GPoint(middle_x + s_bubble_offsets[i].x, row + s_bubble_offsets[i].y + dy);
-    prv_draw_kind_bubble(ctx, center, card->bubble_radius[i],
-                         card->kind_icons ? card->kind_icons[i] : nullptr,
-                         health_orbit_workout_kinds[i], i18n_owner);
+  if (card->run_icon) {
+    const GSize size = gdraw_command_image_get_bounds_size(card->run_icon);
+    const int16_t y = middle + WORKOUT_SHOE_Y;
+    gdraw_command_image_draw(
+        ctx, card->run_icon,
+        GPoint(health_orbit_middle_x(display, CARD_INNER_RADIUS, y) - size.w / 2,
+               y - size.h / 2 + dy));
   }
+
+  /// Below the run shoe on the Workout card of the round Health app, with no workout going on
+  health_orbit_draw_text(ctx, pbl_i18n_get("Start a workout", i18n_owner),
+                         &health_orbit_font_gothic_18_bold, GColorLightGray,
+                         health_orbit_middle_x(display, CARD_INNER_RADIUS, middle + WORKOUT_LINE_Y),
+                         middle + WORKOUT_LINE_Y + dy);
 }
 
 void health_orbit_format_workout_time(char *buffer, size_t size, int32_t seconds) {
@@ -879,7 +859,7 @@ static void prv_draw_workout(GContext *ctx, GSize display, const HealthOrbitCard
                              HealthData *health_data, void *i18n_owner) {
   const HealthWorkoutData *workout = health_data_workout_get(health_data);
   if (workout->state == HealthWorkoutStateNone) {
-    prv_draw_workout_kinds(ctx, display, card, health_data, i18n_owner);
+    prv_draw_workout_idle(ctx, display, card, i18n_owner);
   } else {
     prv_draw_workout_going_on(ctx, display, card, workout, i18n_owner);
   }
