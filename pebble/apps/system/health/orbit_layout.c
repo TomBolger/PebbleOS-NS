@@ -166,12 +166,15 @@ bool health_orbit_week_row(GSize display, int index, MenuRoundShape *pill) {
 }
 
 GPoint health_orbit_workout_button_center(GSize display, bool down) {
+  const int16_t y =
+      down ? display.h - HEALTH_WORKOUT_BUTTON_ICON_MARGIN - HEALTH_WORKOUT_BUTTON_ICON_HEIGHT / 2
+           : display.h / 2;
   // In half pixels from the middle of the display, on a circle keeping the gap from the bezel
   const int32_t distance =
       2 * (display.w / 2 - HEALTH_WORKOUT_BUTTON_BEZEL_GAP - HEALTH_WORKOUT_BUTTON_RADIUS);
-  const int32_t dy = down ? 2 * HEALTH_WORKOUT_BUTTON_PITCH : 0;
+  const int32_t dy = 2 * y - (display.h - 1);
   const int32_t dx = integer_sqrt(distance * distance - dy * dy);
-  return GPoint(prv_round_div(display.w - 1 + dx, 2), display.h / 2 + dy / 2);
+  return GPoint(prv_round_div(display.w - 1 + dx, 2), y);
 }
 
 //! Rightmost end of \a pill that keeps the rows' gap between its round end and the bubble of the
