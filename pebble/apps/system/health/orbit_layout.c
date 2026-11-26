@@ -174,10 +174,39 @@ GPoint health_orbit_workout_button_center(GSize display, bool down) {
   return GPoint(prv_round_div(display.w - 1 + dx, 2), display.h / 2 + dy / 2);
 }
 
-int16_t health_orbit_workout_rows_right(GSize display) {
-  const int16_t select_x = health_orbit_workout_button_center(display, false).x;
-  const int16_t down_x = health_orbit_workout_button_center(display, true).x;
-  return PBL_MIN(select_x, down_x) - HEALTH_WORKOUT_BUTTON_RADIUS - HEALTH_WORKOUT_BUTTON_ROWS_GAP;
+//! Rightmost end of \a pill that keeps the rows' gap between its round end and the bubble of the
+//! button by Select, or by Down if \a down
+static int16_t prv_clear_of_button(GSize display, const MenuRoundShape *pill, bool down) {
+  const GPoint button = health_orbit_workout_button_center(display, down);
+  const int32_t end_y = pill->box.origin.y + pill->box.size.h / 2;
+  const int32_t clear =
+      HEALTH_WORKOUT_BUTTON_RADIUS + HEALTH_WORKOUT_BUTTON_ROWS_GAP + pill->radius;
+  const int32_t dy = PBL_ABS(button.y - end_y);
+  if (dy >= clear) {
+    return grect_get_max_x(&pill->box);
+  }
+  const int64_t dx2 = (int64_t)clear * clear - (int64_t)dy * dy;
+  int32_t dx = integer_sqrt(dx2);
+  if ((int64_t)dx * dx < dx2) {
+    dx++;
+  }
+  return button.x - dx + pill->radius;
+}
+
+GRangeHorizontal health_orbit_workout_rows_span(GSize display) {
+  int16_t left = 0;
+  int16_t right = display.w;
+  for (int i = 0; i < HEALTH_WORKOUT_MAX_ROWS; i++) {
+    MenuRoundShape pill;
+    if (!health_orbit_week_row(display, i + HEALTH_WORKOUT_FIRST_ROW, &pill)) {
+      continue;
+    }
+    left = PBL_MAX(left, pill.box.origin.x);
+    right = PBL_MIN(right, grect_get_max_x(&pill.box));
+    right = PBL_MIN(right, prv_clear_of_button(display, &pill, false /* down */));
+    right = PBL_MIN(right, prv_clear_of_button(display, &pill, true /* down */));
+  }
+  return (GRangeHorizontal){.origin_x = left, .size_w = PBL_MAX(right - left, 0)};
 }
 
 int health_orbit_list_num_rows(HealthOrbitList list) {
@@ -204,12 +233,11 @@ bool health_orbit_list_row(GSize display, HealthOrbitList list, int index, MenuR
                           HEALTH_WORKOUT_KIND_ROW_HEIGHT / 2,
                       HEALTH_WORKOUT_KIND_ROW_HEIGHT, pill);
     case HealthOrbitListWorkout: {
-      // The week's row, ending clear of the buttons' bubbles, centered on what is left of it
+      // The week's row, narrowed to the column all the rows share
       const bool fits = health_orbit_week_row(display, index + HEALTH_WORKOUT_FIRST_ROW, pill);
-      const int16_t right = health_orbit_workout_rows_right(display);
-      if (grect_get_max_x(&pill->box) > right) {
-        pill->box.size.w = right - pill->box.origin.x;
-      }
+      const GRangeHorizontal span = health_orbit_workout_rows_span(display);
+      pill->box.origin.x = span.origin_x;
+      pill->box.size.w = span.size_w;
       return fits;
     }
     case HealthOrbitListWeek:

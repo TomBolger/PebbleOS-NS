@@ -76,8 +76,8 @@ typedef enum HealthOrbitList {
 #define HEALTH_WORKOUT_KIND_ROW_PITCH  46
 #define HEALTH_WORKOUT_KIND_ROW_HEIGHT 38
 
-//! The workout's measures are on the week's rows below the two its time takes, narrowed to keep
-//! clear of the bubbles of the buttons
+//! The workout's measures are on the week's rows below the two its time takes, narrowed to a
+//! column clear of the bezel and the bubbles of the buttons
 #define HEALTH_WORKOUT_FIRST_ROW 2
 #define HEALTH_WORKOUT_MAX_ROWS  (HEALTH_ORBIT_LIST_MAX_ROWS - HEALTH_WORKOUT_FIRST_ROW)
 
@@ -154,8 +154,9 @@ bool health_orbit_week_row(GSize display, int index, MenuRoundShape *pill);
 //! Center of the bubble of the button by Select, or by Down if \a down, on the workout.
 GPoint health_orbit_workout_button_center(GSize display, bool down);
 
-//! Column the workout's rows end at, the bubbles of the buttons' gap to their left.
-int16_t health_orbit_workout_rows_right(GSize display);
+//! The columns the workout's rows all span, one above the other: the widest that every row's pill
+//! has room for, clear of the bezel and the rows' gap from the bubbles of the buttons.
+GRangeHorizontal health_orbit_workout_rows_span(GSize display);
 
 //! Number of rows of \a list
 int health_orbit_list_num_rows(HealthOrbitList list);
