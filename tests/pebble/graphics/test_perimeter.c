@@ -102,3 +102,47 @@ void test_perimeter__g_perimeter_for_display(void) {
       PBL_IF_RECT_ELSE(perimeter_for_display_rect, perimeter_for_display_round);
   cl_assert_equal_p(expected, g_perimeter_for_display->callback);
 }
+
+void test_perimeter__text_block(void) {
+#if PBL_ROUND
+  const GSize ctx_size = GSize(PBL_DISPLAY_WIDTH, PBL_DISPLAY_HEIGHT);
+  const uint16_t inset = 8;
+  const int16_t line_h = 12;
+  for (int16_t anchor_y = 20; anchor_y <= (PBL_DISPLAY_HEIGHT - line_h) / 2; anchor_y += 7) {
+    const GRangeVertical anchor = {.origin_y = anchor_y, .size_h = line_h};
+    const GTextBlock block = perimeter_text_block(&ctx_size, anchor, inset);
+
+    // As wide as the display is at the anchor, inside the inset
+    cl_assert_equal_rangehorizontal(block.range,
+                                    perimeter_for_display_round(nullptr, &ctx_size, anchor, inset));
+    const int16_t chord =
+        2 * sqrt(pow(PBL_DISPLAY_WIDTH / 2 - inset, 2) - pow(PBL_DISPLAY_HEIGHT / 2 - anchor_y, 2));
+    cl_assert(BETWEEN(block.range.size_w, chord - 2, chord));
+
+    // From the anchor down to where the display is as wide again
+    cl_assert_equal_i(block.rows.origin_y, anchor_y);
+    cl_assert_equal_i(block.rows.origin_y + block.rows.size_h, PBL_DISPLAY_HEIGHT - anchor_y);
+
+    // Each line inside the rows has room for the block's lines, and lines outside them do not
+    for (int16_t y = block.rows.origin_y; y + line_h <= block.rows.origin_y + block.rows.size_h;
+         y++) {
+      const GRangeVertical line = {.origin_y = y, .size_h = line_h};
+      const GRangeHorizontal room = perimeter_for_display_round(nullptr, &ctx_size, line, inset);
+      cl_assert(room.origin_x <= block.range.origin_x);
+      cl_assert(room.origin_x + room.size_w >= block.range.origin_x + block.range.size_w);
+    }
+    const GRangeVertical above = {.origin_y = anchor_y - line_h, .size_h = line_h};
+    const GRangeVertical below = {.origin_y = PBL_DISPLAY_HEIGHT - anchor_y, .size_h = line_h};
+    cl_assert(perimeter_for_display_round(nullptr, &ctx_size, above, inset).size_w <
+              block.range.size_w);
+    cl_assert(perimeter_for_display_round(nullptr, &ctx_size, below, inset).size_w <
+              block.range.size_w);
+  }
+
+  // An anchor below the middle keeps its own line
+  const GRangeVertical low = {.origin_y = PBL_DISPLAY_HEIGHT / 2 + 20, .size_h = line_h};
+  const GTextBlock block = perimeter_text_block(&ctx_size, low, inset);
+  cl_assert_equal_i(block.rows.origin_y, low.origin_y);
+  cl_assert_equal_i(block.rows.size_h, line_h);
+#endif
+}
