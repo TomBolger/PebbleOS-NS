@@ -46,8 +46,9 @@ SECTIONS = {
 TYPE_NOTIFICATION = 1
 LAYOUT_NOTIFICATION = 4
 FLAG_VISIBLE = 1 << 0
-ACTION_DISMISS = 0x04
+ACTION_GENERIC = 0x02
 ACTION_RESPONSE = 0x03
+ACTION_DISMISS = 0x04
 
 # A day of messages, laid out as the phone's shade lists them: repeated
 # senders and "Conversation: Sender" titles exercise the grouped history, and
@@ -148,28 +149,45 @@ def _stack_id(key):
     return h or 1
 
 
-def notification(notification_id, timestamp, message):
+def _action(action_id, action_type, title):
+    return struct.pack("<BBB", action_id, action_type, 1) + _attribute(TITLE, title)
+
+
+def notification(notification_id, timestamp, message, stock=False):
     """A serialized notification (SerializedTimelineItemHeader, attributes,
-    Dismiss and Reply actions), from the Android notifications data source."""
+    Dismiss and Reply actions), from the Android notifications data source.
+
+    With ``stock``, as the stock Core app sends it: no AppName, section or
+    stack id, and Core's own Open on phone, Mute app and Mute Channel
+    actions after Reply."""
     sender = message.get("sender")
     attributes = [
         _attribute(TITLE, message.get("title") or sender),
         _attribute(BODY, message["body"]),
-        _attribute(APP_NAME, message["app"]),
     ]
+    if not stock:
+        attributes.append(_attribute(APP_NAME, message["app"]))
     if sender:
         attributes.insert(0, _attribute(SENDER, sender))
-    if message.get("section"):
+    if message.get("section") and not stock:
         attributes.append(
             struct.pack("<BHB", NOTIFICATION_SECTION, 1, SECTIONS[message["section"]])
         )
-    if message.get("stack"):
+    if message.get("stack") and not stock:
         attributes.append(struct.pack("<BHI", STACK_ID, 4, _stack_id(message["stack"])))
     if message.get("aspect"):
         attributes.append(struct.pack("<BHB", IMAGE_ASPECT_RATIO, 1, message["aspect"]))
-    dismiss = struct.pack("<BBB", 0, ACTION_DISMISS, 1) + _attribute(TITLE, "Dismiss")
-    reply = struct.pack("<BBB", 1, ACTION_RESPONSE, 1) + _attribute(TITLE, "Reply")
-    payload = b"".join(attributes) + dismiss + reply
+    actions = [
+        _action(0, ACTION_DISMISS, "Dismiss"),
+        _action(1, ACTION_RESPONSE, "Reply"),
+    ]
+    if stock:
+        actions += [
+            _action(2, ACTION_GENERIC, "Open on phone"),
+            _action(3, ACTION_GENERIC, f"Mute {message['app']}"),
+            _action(4, ACTION_GENERIC, "Mute Channel Messages"),
+        ]
+    payload = b"".join(attributes) + b"".join(actions)
     header = struct.pack(
         "<16s16sIHBBBBHBB",
         notification_id.bytes,
@@ -182,7 +200,7 @@ def notification(notification_id, timestamp, message):
         LAYOUT_NOTIFICATION,
         len(payload),
         len(attributes),
-        2,
+        len(actions),
     )
     return header + payload
 
@@ -332,6 +350,12 @@ class Notifications(Feed):
             "its photos get it. Keeps serving it to the watch until interrupted",
         )
         parser.add_argument(
+            "--stock",
+            action="store_true",
+            help="Send them as the stock Core app does: no AppName, sections or "
+            "stacks, and Core's Open on phone and Mute actions",
+        )
+        parser.add_argument(
             "--clear", action="store_true", help="Remove every notification instead"
         )
 
@@ -373,7 +397,9 @@ class Notifications(Feed):
             watch.blobdb_insert(
                 BlobDb.NOTIFS,
                 notification_id,
-                notification(notification_id, now - message["age"] * 60, message),
+                notification(
+                    notification_id, now - message["age"] * 60, message, args.stock
+                ),
             )
         count = len(messages)
         inf(f"pushed {count} notification{'s' if count != 1 else ''}")
