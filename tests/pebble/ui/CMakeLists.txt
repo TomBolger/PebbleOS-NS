@@ -366,6 +366,7 @@ pbl_clar_test(test_notification_window
     pebble/services/timeline/layout_layer.c
     pebble/services/timeline/layout_node.c
     pebble/services/timeline/notification_layout.c
+    pebble/services/timeline/notification_text_block.c
     pebble/services/notifications/notification_style.c
     pebble/services/timeline/swap_layer.c
     pebble/services/timeline/timeline_layout.c
@@ -379,6 +380,7 @@ pbl_clar_test(test_notification_window
     pebble/services/clock/time.c
   PLATFORMS emery gabbro flint
   DEFINES USE_DISPLAY_PERIMETER_ON_FONT_LAYOUT=1 CONFIG_NOTIFICATION_IMAGE_RECENTS=0
+    CONFIG_NOTIFICATION_TEXT_BLOCK=1
   OVERRIDES dummy_board
   TEST_IMAGES
 )

@@ -9,6 +9,7 @@
 #include <pbl/services/notifications/notification_style.h>
 #include <pbl/services/timeline/notification_jumboji_table.h>
 #include <pbl/services/timeline/notification_layout.h>
+#include <pbl/services/timeline/notification_text_block.h>
 #include <pbl/services/timeline/timeline_resources.h>
 #include <pbl/util/math.h>
 #include <pbl/util/size.h>
@@ -278,6 +279,97 @@ bool notification_layout_get_image_size(const LayoutLayer *layout_ref, GSize *si
 }
 #endif
 
+#if NOTIFICATION_TEXT_BLOCK
+static int16_t prv_notif_status_bar_height(void);
+
+//! How far inside the display's edge the message runs
+#define BLOCK_TEXT_INSET 8
+
+static int16_t prv_block_draw(NotificationLayout *layout, GContext *ctx, const GRect *box,
+                              int16_t scroll, bool render) {
+  const int16_t status_bar_h = prv_notif_status_bar_height();
+  if (!layout->text_block) {
+    const GTextNodeText *text = layout->block_text;
+    const int16_t rest_top = status_bar_h + box->origin.y;
+    // Anchored at the highest row text starts at on the card at rest, below the banner
+    const int16_t anchor_top = status_bar_h + LAYOUT_TOP_BANNER_HEIGHT + CARD_HEADER_GAP;
+    layout->text_block =
+        notification_text_block_create(ctx, text->text, text->font, text->line_spacing_delta,
+                                       text->alignment, BLOCK_TEXT_INSET, anchor_top, rest_top);
+    if (!layout->text_block) {
+      return 0;
+    }
+  }
+  const GColor prev_text_color = ctx->draw_state.text_color;
+  if (!gcolor_is_invisible(layout->block_text->color)) {
+    ctx->draw_state.text_color = layout->block_text->color;
+  }
+  const int16_t height = notification_text_block_draw(layout->text_block, ctx, box->origin, scroll,
+                                                      status_bar_h, render);
+  ctx->draw_state.text_color = prev_text_color;
+  return height;
+}
+
+static void prv_block_node_callback(GContext *ctx, const GRect *box,
+                                    const GTextNodeDrawConfig *config, bool render, GSize *size_out,
+                                    void *user_data) {
+  NotificationLayout *layout = user_data;
+  int16_t scroll = 0;
+  if (render) {
+    // Laid out as where the card is scrolled to, and moved as it is while it swaps in or out
+    const int16_t max_scroll = PBL_MAX(layout->view_size.h - LAYOUT_HEIGHT, 0);
+    scroll = PBL_CLAMP(-layout->layout.layer.frame.origin.y, 0, max_scroll);
+  } else {
+    layout->block_box = *box;
+  }
+  const int16_t height = prv_block_draw(layout, ctx, box, scroll, render);
+  if (size_out) {
+    *size_out = (GSize){box->size.w, height};
+  }
+}
+
+static GTextNode *prv_create_block_node(const LayoutLayer *layout_ref,
+                                        const LayoutNodeConstructorConfig *config) {
+  NotificationLayout *layout = (NotificationLayout *)layout_ref;
+  GTextNode *text = layout_create_text_node_from_config(layout_ref, config->context);
+  if (!text) {
+    return nullptr;
+  }
+  layout->block_text = (GTextNodeText *)text;
+  return &graphics_text_node_create_custom(prv_block_node_callback, layout)->node;
+}
+
+static bool prv_block_card_fits(NotificationLayout *layout, GContext *ctx, int16_t height,
+                                int16_t after_body) {
+  const GRect *box = &layout->block_box;
+  const int16_t scroll = PBL_MAX(height - LAYOUT_HEIGHT, 0);
+  return box->origin.y + prv_block_draw(layout, ctx, box, scroll, false) + after_body <= height;
+}
+
+//! The card's height. Where its message ends depends on how it is laid out, which depends on how
+//! far it is scrolled: the shortest height whose end of scrolling holds it. It is about as long as
+//! at rest, with the most of it below the block, so the search starts from there.
+static int16_t prv_block_card_height(NotificationLayout *layout, GContext *ctx, GSize view_size) {
+  const GRect *box = &layout->block_box;
+  const int16_t height = LAYOUT_TOP_BANNER_HEIGHT + view_size.h + CARD_BOTTOM_PADDING;
+  const int16_t after_body = height - (box->origin.y + prv_block_draw(layout, ctx, box, 0, false));
+  int16_t fits = PBL_MAX(height, LAYOUT_HEIGHT);
+  for (int i = 0; (i < 4) && !prv_block_card_fits(layout, ctx, fits, after_body); i++) {
+    fits += layout->text_block->line_h;
+  }
+  int16_t too_short = LAYOUT_HEIGHT;
+  while (fits - too_short > 1) {
+    const int16_t mid = (fits + too_short) / 2;
+    if (prv_block_card_fits(layout, ctx, mid, after_body)) {
+      fits = mid;
+    } else {
+      too_short = mid;
+    }
+  }
+  return fits;
+}
+#endif
+
 static PreferredContentSize prv_content_size(void) {
   const PreferredContentSize size = alerts_preferences_get_notification_content_size();
   return (size == NotificationContentSizeSystem) ? system_theme_get_content_size() : size;
@@ -328,6 +420,14 @@ static PBL_NOINLINE GTextNode *prv_create_view(NotificationLayout *layout, bool 
     .text.font_key = s_body_fonts[ns_size],
     .text.extent.margin.h = 3,
   };
+#if NOTIFICATION_TEXT_BLOCK
+  const LayoutNodeConstructorConfig block_config = {
+    .extent.node.type = LayoutNodeType_Constructor,
+    .extent.margin.h = 3,
+    .constructor = prv_create_block_node,
+    .context = (void *)&notification_body_config.text.extent.node,
+  };
+#endif
   const LayoutNodeTextDynamicConfig notification_timestamp_config = {
     .text.extent.node.type = LayoutNodeType_TextDynamic,
     .update = prv_notification_timestamp_update,
@@ -430,7 +530,11 @@ static PBL_NOINLINE GTextNode *prv_create_view(NotificationLayout *layout, bool 
     &location_config.text.extent.node,
     use_body_icon ? &body_icon_config.extent.node
     : is_reminder ? &body_config.text.extent.node
+#if NOTIFICATION_TEXT_BLOCK
+                  : &block_config.extent.node,
+#else
                   : &notification_body_config.text.extent.node,
+#endif
     &headings_paragraphs_node.extent.node,
 #if NOTIFICATION_IMAGE_SUPPORTED
     &image_config.extent.node,
@@ -449,6 +553,14 @@ static PBL_NOINLINE GTextNode *prv_create_view(NotificationLayout *layout, bool 
 static void prv_destroy_view(NotificationLayout *layout) {
   graphics_text_node_destroy(layout->view_node);
   layout->view_node = nullptr;
+#if NOTIFICATION_TEXT_BLOCK
+  if (layout->block_text) {
+    graphics_text_node_destroy(&layout->block_text->node);
+    layout->block_text = nullptr;
+  }
+  notification_text_block_destroy(layout->text_block);
+  layout->text_block = nullptr;
+#endif
   kino_layer_destroy(layout->detail_icon_layer);
   layout->detail_icon_layer = nullptr;
 }
@@ -638,8 +750,9 @@ static PBL_NOINLINE void prv_card_render_internal(NotificationLayout *layout, GC
     .paging = false,
   };
   graphics_context_set_text_color(ctx, system_theme_get_fg_color());
-  (text_visible ? graphics_text_node_draw : graphics_text_node_get_size)(
-      layout->view_node, ctx, &box, &config, &layout->view_size);
+  GSize view_size;
+  (text_visible ? graphics_text_node_draw : graphics_text_node_get_size)(layout->view_node, ctx,
+                                                                         &box, &config, &view_size);
 
 #if PBL_ROUND
   if (render) {
@@ -647,6 +760,17 @@ static PBL_NOINLINE void prv_card_render_internal(NotificationLayout *layout, GC
     ctx->draw_state.clip_box.size.h = orig_clip_height;
   }
 #endif
+
+#if NOTIFICATION_TEXT_BLOCK
+  // Its size depends on how far it is scrolled when drawn, so it keeps the size it is measured at
+  if (layout->block_text) {
+    if (!render) {
+      layout->view_size = (GSize){view_size.w, prv_block_card_height(layout, ctx, view_size)};
+    }
+    return;
+  }
+#endif
+  layout->view_size = view_size;
 
   layout->view_size.h += LAYOUT_TOP_BANNER_HEIGHT;
 

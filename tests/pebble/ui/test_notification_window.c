@@ -5,6 +5,7 @@
 
 #include <pbl/kernel/assert.h>
 #include <pbl/services/timeline/notification_layout.h>
+#include <pbl/services/timeline/notification_text_block.h>
 #include <pbl/util/trig.h>
 
 #include <applib/preferred_content_size.h>
@@ -484,6 +485,77 @@ void test_notification_window__emoji(void) {
   };
   prv_prepare_canvas_and_render_notification_windows(0 /* num_down_scrolls */);
   FAKE_GRAPHICS_CONTEXT_CHECK_DEST_BITMAP_FILE();
+}
+
+static const char *s_long_body =
+    "Hey, here is the plan for the trip. We go at six on Friday to beat the rush, and Sam will "
+    "drive the big car so we can fit the bikes and the cold box. The cabin has a wood stove, two "
+    "beds and a loft, so bring a bag if you want the loft. I will get food on Thursday, so send "
+    "me a list of what you want, like tea or snacks. On Saturday we hike the ridge if it is dry, "
+    "about six miles with a big climb at the start.";
+
+void test_notification_window__long_body(void) {
+  s_test_data = (NotificationWindowTestData){
+    .icon_id = TIMELINE_RESOURCE_NOTIFICATION_FACEBOOK_MESSENGER,
+    .title = "Alex Morgan",
+    .body = s_long_body,
+    .show_notification_timestamp = true,
+    .timestamp = "Just now",
+    .background_color = GColorPictonBlue,
+  };
+  prv_prepare_canvas_and_render_notification_windows(3 /* num_down_scrolls */);
+  FAKE_GRAPHICS_CONTEXT_CHECK_DEST_BITMAP_FILE();
+}
+
+void test_notification_window__text_block(void) {
+#if NOTIFICATION_TEXT_BLOCK
+  GContext *ctx = fake_graphics_context_get_context();
+  GFont font = fonts_get_system_font(FONT_KEY_GOTHIC_24_BOLD);
+  const int16_t anchor_top = 67;
+  const int16_t rest_top = 92;
+  NotificationTextBlock *tb = notification_text_block_create(
+      ctx, s_long_body, font, 0, GTextAlignmentCenter, 8, anchor_top, rest_top);
+  cl_assert(tb);
+  cl_assert(tb->num_lines > 8);
+
+  // Wrapped once at the block's width, as wide as the display is at the anchor
+  const int16_t width = tb->block.range.size_w;
+  cl_assert(width > PBL_DISPLAY_WIDTH - 2 * 30);
+  char line[128];
+  for (uint16_t i = 0; i < tb->num_lines; i++) {
+    const uint16_t start = tb->line_starts[i];
+    const uint16_t end = (i + 1 < tb->num_lines) ? tb->line_starts[i + 1] : tb->length;
+    cl_assert(start < end);
+    cl_assert(end - start < sizeof(line));
+    memcpy(line, s_long_body + start, end - start);
+    line[end - start] = '\0';
+    const GSize size = graphics_text_layout_get_max_used_size(
+        ctx, line, font, GRect(0, 0, width, 1000), GTextOverflowModeWordWrap, GTextAlignmentLeft,
+        nullptr);
+    cl_assert(size.h <= tb->line_h);
+  }
+
+  // Never shorter than its lines at the block's width, and about as long as at rest, where the
+  // most of it is below the block: the card's height starts from there
+  const int16_t rest_h = notification_text_block_draw(tb, ctx, GPointZero, 0, 20, false);
+  cl_assert(rest_h >= tb->num_lines * tb->line_h);
+  for (int16_t scroll = 0; scroll < tb->num_lines * tb->line_h; scroll += 3) {
+    const int16_t h = notification_text_block_draw(tb, ctx, GPointZero, scroll, 20, false);
+    cl_assert(h >= tb->num_lines * tb->line_h);
+    cl_assert(h <= rest_h + 2 * tb->line_h);
+  }
+
+  // The text above the block's first line ends where that line starts, rewrapped from its end
+  notification_text_block_draw(tb, ctx, GPointZero, 150, 20, true);
+  cl_assert(tb->above_for > 0);
+  cl_assert(tb->num_above > 0);
+  uint16_t prev = tb->line_starts[tb->above_for];
+  for (uint8_t row = 0; row < tb->num_above; row++) {
+    cl_assert(tb->above_starts[row] < prev);
+    prev = tb->above_starts[row];
+  }
+  notification_text_block_destroy(tb);
+#endif
 }
 
 void test_notification_window__banner_round_geometry(void) {
