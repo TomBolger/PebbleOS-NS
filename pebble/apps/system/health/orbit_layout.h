@@ -14,6 +14,7 @@
 #include <pbl/services/timeline/notification_layout.h>
 
 #include <applib/graphics/gtypes.h>
+#include <applib/platform.h>
 #include <applib/ui/menu_layer_round.h>
 #include <apps/system/timeline/list_layout.h>
 
@@ -81,11 +82,13 @@ typedef enum HealthOrbitList {
 #define HEALTH_WORKOUT_FIRST_ROW 2
 #define HEALTH_WORKOUT_MAX_ROWS  (HEALTH_ORBIT_LIST_MAX_ROWS - HEALTH_WORKOUT_FIRST_ROW)
 
-//! The bubbles of the buttons on the workout, by the buttons on the right: pause and resume by
-//! Select, at the middle, and end by Down, as far below it as the Workout app's action bar icons
-//! are; the space they keep from the bezel, and the rows from them
-#define HEALTH_WORKOUT_BUTTON_RADIUS    15
-#define HEALTH_WORKOUT_BUTTON_PITCH     42
+//! The bubbles of the buttons on the workout, level with the buttons on the right as the round
+//! action bar's icons are: pause and resume by Select, at the middle, and end by Down, its icon's
+//! height and margin above the bottom; the space they keep from the bezel, and the rows from them
+#define HEALTH_WORKOUT_BUTTON_RADIUS      15
+#define HEALTH_WORKOUT_BUTTON_ICON_HEIGHT 18
+#define HEALTH_WORKOUT_BUTTON_ICON_MARGIN \
+  PBL_PLATFORM_SWITCH(PBL_PLATFORM_TYPE_CURRENT, 24, 24, 53, 24, 45, 24, 80)
 #define HEALTH_WORKOUT_BUTTON_BEZEL_GAP 5
 #define HEALTH_WORKOUT_BUTTON_ROWS_GAP  6
 

@@ -380,9 +380,10 @@ void test_health_orbit_layout__workout_rows_fit_below_the_banner(void) {
 void test_health_orbit_layout__workout_buttons_are_by_their_buttons(void) {
   const GPoint select = health_orbit_workout_button_center(DISPLAY, false /* down */);
   const GPoint down = health_orbit_workout_button_center(DISPLAY, true /* down */);
-  // By Select at the middle, by Down below it as far as the action bar's icons are
-  cl_assert_equal_i(select.y, MID_Y);
-  cl_assert_equal_i(down.y - select.y, HEALTH_WORKOUT_BUTTON_PITCH);
+  // Level with the buttons, as the round action bar's icons are: Select's in the middle, Down's
+  // its height and margin above the bottom on gabbro
+  cl_assert_equal_i(select.y, PBL_DISPLAY_HEIGHT / 2);
+  cl_assert_equal_i(down.y, PBL_DISPLAY_HEIGHT - 80 - 18 / 2);
   cl_assert(down.x < select.x);
   // Inside the bezel, the gap from it, and apart from each other
   const GPoint display_center = GPoint(PBL_DISPLAY_WIDTH / 2, MID_Y);
