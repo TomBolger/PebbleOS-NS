@@ -368,12 +368,112 @@ static void prv_fill_swept_circle(GContext *ctx, GSize display, int32_t turn,
                                 start + TRIG_MAX_ANGLE);
 }
 
+//! Which side of the sweep's line through the sidebar's \a center, turned by \a turn, a point is
+//! on, both in eighths of a pixel: positive on the new color's side
+static int64_t prv_sweep_side(const SidebarSweep *sweep, int32_t turn, GPoint center8, int32_t x8,
+                              int32_t y8) {
+  // As the circle's halves are filled, clockwise from the top, the new color's half clockwise
+  // from the line's start
+  const int32_t half = TRIG_MAX_ANGLE / 2;
+  const int32_t line =
+      positive_modulo(3 * TRIG_MAX_ANGLE / 4 - sweep->angle + turn, TRIG_MAX_ANGLE);
+  const int32_t start = sweep->from_above ? line : (line + half);
+  const int64_t vx = sin_lookup(start);
+  const int64_t vy = -cos_lookup(start);
+  return vx * (y8 - center8.y) - vy * (x8 - center8.x);
+}
+
+//! Fills from \a start to \a end along line \a at of the sidebar, as \a prv_fill_span, in the
+//! sweep's colors either side of its line, the pixel the line crosses in a blend of them
+static void prv_fill_sweep_span(GContext *ctx, bool columns, int16_t at, int32_t start, int32_t end,
+                                const SidebarSweep *sweep, int32_t turn, GPoint center8) {
+  if (gcolor_equal(sweep->from, sweep->to)) {
+    prv_fill_span(ctx, columns, at, start, end, sweep->to);
+    return;
+  }
+  const int32_t at8 = 8 * at + 4;
+  const int64_t side_start = columns ? prv_sweep_side(sweep, turn, center8, at8, start)
+                                     : prv_sweep_side(sweep, turn, center8, start, at8);
+  const int64_t side_end = columns ? prv_sweep_side(sweep, turn, center8, at8, end)
+                                   : prv_sweep_side(sweep, turn, center8, end, at8);
+  const GColor first = (side_start > 0) ? sweep->to : sweep->from;
+  const GColor second = (side_end > 0) ? sweep->to : sweep->from;
+  if (gcolor_equal(first, second)) {
+    prv_fill_span(ctx, columns, at, start, end, first);
+    return;
+  }
+  // Where the line crosses, and the pixel it is in
+  const int32_t cross =
+      start + (int32_t)(((int64_t)(end - start) * side_start) / (side_start - side_end));
+  const int16_t pixel = cross >> 3;
+  if (8 * pixel <= start || 8 * (pixel + 1) >= end) {
+    prv_fill_span(ctx, columns, at, start, cross, first);
+    prv_fill_span(ctx, columns, at, cross, end, second);
+    return;
+  }
+  prv_fill_span(ctx, columns, at, start, 8 * pixel, first);
+  GColor blend = second;
+  blend.a = ((8 * (pixel + 1) - cross) * 3 + 4) / 8;
+  graphics_context_set_fill_color(ctx, gcolor_alpha_blend(blend, first));
+  graphics_fill_rect(ctx, columns ? &GRect(at, pixel, 1, 1) : &GRect(pixel, at, 1, 1));
+  prv_fill_span(ctx, columns, at, 8 * (pixel + 1), end, second);
+}
+
+//! Fills the lines of the sidebar's circle turned by \a turn that the notch, the convex polygon
+//! \a notch, crosses, from \a first to \a last: rows, or columns if \a columns, whichever runs
+//! more across the circle's edge there: each the circle's chord, less where the notch crosses it.
+static void prv_fill_notched_lines(GContext *ctx, GSize display, int32_t turn,
+                                   const SidebarSweep *sweep, const GPoint *notch, int num_points,
+                                   bool columns, int16_t first, int16_t last) {
+  const GPoint center = health_orbit_center(display, turn);
+  // In eighths of a pixel, as a filled circle is: centered in its pixel, half a pixel past its
+  // radius
+  const GPoint center8 = GPoint(8 * center.x + 4, 8 * center.y + 4);
+  const int32_t radius8 = 8 * HEALTH_ORBIT_RADIUS + 4;
+  const int32_t length8 = 8 * (columns ? display.h : display.w);
+  for (int16_t at = first; at <= last; at++) {
+    const int32_t at8 = 8 * at + 4;
+    const int32_t half = prv_half_chord(radius8, at8 - (columns ? center8.x : center8.y));
+    if (half < 0) {
+      continue;
+    }
+    // The pixels whose middles the circle covers, as the rest of it is filled without
+    // antialiasing
+    const int32_t middle = columns ? center8.y : center8.x;
+    const int32_t start = PBL_MAX(8 * ((middle - half + 3) >> 3), 0);
+    const int32_t end = PBL_MIN(8 * (((middle + half - 4) >> 3) + 1), length8);
+    // Where the line crosses the notch's sides
+    int32_t notch_start = INT32_MAX;
+    int32_t notch_end = INT32_MIN;
+    for (int i = 0; i < num_points; i++) {
+      const GPoint a = notch[i];
+      const GPoint b = notch[(i + 1) % num_points];
+      const int32_t a_at = 8 * (columns ? a.x : a.y) + 4;
+      const int32_t b_at = 8 * (columns ? b.x : b.y) + 4;
+      if ((at8 < a_at) == (at8 < b_at)) {
+        continue;
+      }
+      const int32_t a_along = 8 * (columns ? a.y : a.x) + 4;
+      const int32_t b_along = 8 * (columns ? b.y : b.x) + 4;
+      const int32_t along = a_along + ((b_along - a_along) * (at8 - a_at)) / (b_at - a_at);
+      notch_start = PBL_MIN(notch_start, along);
+      notch_end = PBL_MAX(notch_end, along);
+    }
+    if (notch_start >= notch_end) {
+      prv_fill_sweep_span(ctx, columns, at, start, end, sweep, turn, center8);
+      continue;
+    }
+    prv_fill_sweep_span(ctx, columns, at, start, PBL_MIN(end, notch_start), sweep, turn, center8);
+    prv_fill_sweep_span(ctx, columns, at, PBL_MAX(start, notch_end), end, sweep, turn, center8);
+  }
+}
+
 //! Fills the sidebar turned by \a turn. At rest on the right and at the top it is filled as the
 //! timeline fills it, a row or a column at a time, notched on the right, where the section's color
-//! can sweep in; on the way, its circle, the color sweeping in over it as well, with the notch,
-//! closing as it turns up, cut out in the background color.
-static void prv_fill_sidebar(GContext *ctx, GSize display, int32_t turn, const SidebarSweep *sweep,
-                             GColor bg) {
+//! can sweep in; on the way, its circle, the color sweeping in over it as well, with the notch
+//! closing as it turns up left out of the lines it crosses.
+static void prv_fill_sidebar(GContext *ctx, GSize display, int32_t turn,
+                             const SidebarSweep *sweep) {
   graphics_context_set_fill_color(ctx, sweep->to);
   const int16_t notch_width = health_orbit_notch_width(turn);
   const bool swept = !gcolor_equal(sweep->from, sweep->to);
@@ -394,8 +494,8 @@ static void prv_fill_sidebar(GContext *ctx, GSize display, int32_t turn, const S
     }
     return;
   }
-  prv_fill_swept_circle(ctx, display, turn, sweep);
   if (notch_width <= 0) {
+    prv_fill_swept_circle(ctx, display, turn, sweep);
     return;
   }
   // The notch as it is at rest, its sides from where they meet the circle's edge to its tip, and
@@ -405,18 +505,43 @@ static void prv_fill_sidebar(GContext *ctx, GSize display, int32_t turn, const S
   const int16_t middle = display.h / 2;
   const int16_t base_x = display.w - timeline_list_sidebar_depth(&plain, middle + half);
   const int16_t out_x = display.w - timeline_list_sidebar_depth(&plain, middle) - 2;
-  GPoint points[] = {
+  const GPoint notch[] = {
     health_orbit_turn(display, GPoint(out_x, middle - half), turn),
     health_orbit_turn(display, GPoint(base_x, middle - half), turn),
     health_orbit_notch_tip(display, turn),
     health_orbit_turn(display, GPoint(base_x, middle + half), turn),
     health_orbit_turn(display, GPoint(out_x, middle + half), turn),
   };
-  GPath notch = {.num_points = PBL_ARRAY_SIZE(points), .points = points};
-  graphics_context_set_fill_color(ctx, bg);
+  // The lines the notch crosses are filled a line at a time, less the notch, across the circle's
+  // edge there: rows while the sidebar is still more on the right than at the top, columns after
+  const bool columns = (PBL_ABS(turn) > QUARTER_TURN / 2);
+  int16_t first = INT16_MAX;
+  int16_t last = INT16_MIN;
+  for (size_t i = 0; i < PBL_ARRAY_SIZE(notch); i++) {
+    first = PBL_MIN(first, columns ? notch[i].x : notch[i].y);
+    last = PBL_MAX(last, columns ? notch[i].x : notch[i].y);
+  }
+  const int16_t length = columns ? display.w : display.h;
+  first = PBL_MAX(first, 0);
+  last = PBL_MIN(last, length - 1);
   graphics_context_set_antialiased(ctx, true);
-  gpath_draw_filled(ctx, &notch);
+  prv_fill_notched_lines(ctx, display, turn, sweep, notch, PBL_ARRAY_SIZE(notch), columns, first,
+                         last);
   graphics_context_set_antialiased(ctx, false);
+  // The rest of the circle either side of them
+  const GRect parts[] = {
+    columns ? GRect(0, 0, first, display.h) : GRect(0, 0, display.w, first),
+    columns ? GRect(last + 1, 0, length - last - 1, display.h)
+            : GRect(0, last + 1, display.w, length - last - 1),
+  };
+  for (size_t i = 0; i < PBL_ARRAY_SIZE(parts); i++) {
+    if (parts[i].size.w <= 0 || parts[i].size.h <= 0) {
+      continue;
+    }
+    const GDrawState state = health_orbit_clip(ctx, parts[i]);
+    prv_fill_swept_circle(ctx, display, turn, sweep);
+    graphics_context_set_drawing_state(ctx, state);
+  }
 }
 
 //! The Today icon: its two rings, small
@@ -716,7 +841,7 @@ static void prv_layer_update_proc(Layer *layer, GContext *ctx) {
     }
   }
   const SidebarSweep sweep = prv_get_sidebar_sweep(view, display);
-  prv_fill_sidebar(ctx, display, view->turn, &sweep, bg);
+  prv_fill_sidebar(ctx, display, view->turn, &sweep);
   prv_draw_orbit(ctx, view, display);
 }
 

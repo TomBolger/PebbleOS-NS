@@ -289,6 +289,28 @@ void test_health_orbit_view__render_steps(void) {
   cl_check(gbitmap_pbi_eq(&s_ctx.dest_bitmap, TEST_PBI_FILE));
 }
 
+//! The sidebar turning up into the banner, \a eighths of the way, its notch closing as it goes
+static void prv_render_turning(int eighths) {
+  s_data = prv_sample_data();
+  s_view = health_orbit_view_create(&s_data);
+  prv_show_section(s_view, HealthOrbitSectionSteps);
+  s_view->turn = -QUARTER_TURN * eighths / 8;
+  window_set_on_screen(&s_view->window, true, true);
+  window_render(&s_view->window, &s_ctx);
+}
+
+void test_health_orbit_view__render_steps_turning(void) {
+  // Filled a row at a time across the notch
+  prv_render_turning(2);
+  cl_check(gbitmap_pbi_eq(&s_ctx.dest_bitmap, TEST_PBI_FILE));
+}
+
+void test_health_orbit_view__render_steps_turned(void) {
+  // Filled a column at a time across the notch, nearer the top
+  prv_render_turning(6);
+  cl_check(gbitmap_pbi_eq(&s_ctx.dest_bitmap, TEST_PBI_FILE));
+}
+
 void test_health_orbit_view__render_steps_no_data(void) {
   s_data = (HealthData){};
   prv_render(&s_data, HealthOrbitSectionSteps);
@@ -830,6 +852,34 @@ void test_health_orbit_view__small_moon_leaves_its_bite_as_it_was(void) {
   cl_assert(gcolor_equal(prv_pixel(center.x - shift - 6, center.y + shift + 6), GColorBlue));
   cl_assert(gcolor_equal(prv_pixel(center.x + 2 * shift, center.y - 2 * shift), GColorRed));
   cl_assert(gcolor_equal(prv_pixel(center.x - radius, center.y), GColorRed));
+}
+
+void test_health_orbit_view__turning_notch_leaves_what_is_under_it(void) {
+  // The notch is left out of the sidebar as it turns, not painted over it in the background color
+  const GSize display = GSize(PBL_DISPLAY_WIDTH, PBL_DISPLAY_HEIGHT);
+  for (int eighths = 1; eighths < 8; eighths++) {
+    s_data = prv_sample_data();
+    prv_render(&s_data, HealthOrbitSectionSteps);
+    graphics_context_set_default_drawing_state(&s_ctx, GContextInitializationMode_App);
+    graphics_context_set_fill_color(&s_ctx, GColorRed);
+    graphics_fill_rect(&s_ctx, &GRect(0, 0, PBL_DISPLAY_WIDTH, PBL_DISPLAY_HEIGHT));
+    const int32_t turn = -QUARTER_TURN * eighths / 8;
+    const SidebarSweep sweep = {.from = GColorBlue, .to = GColorBlue};
+    prv_fill_sidebar(&s_ctx, display, turn, &sweep);
+    // Along the line from the sidebar's center through the tip of the notch: in the notch short
+    // of the tip, in the sidebar past it
+    const GPoint center = health_orbit_center(display, turn);
+    const GPoint tip = health_orbit_notch_tip(display, turn);
+    const int32_t dx = tip.x - center.x;
+    const int32_t dy = tip.y - center.y;
+    const int32_t length = integer_sqrt(dx * dx + dy * dy);
+    const int16_t notch_width = health_orbit_notch_width(turn);
+    const int16_t in = PBL_MAX(notch_width / 2, 1) + 1;
+    cl_assert(
+        gcolor_equal(prv_pixel(tip.x + dx * in / length, tip.y + dy * in / length), GColorRed));
+    cl_assert(
+        gcolor_equal(prv_pixel(tip.x - dx * 3 / length, tip.y - dy * 3 / length), GColorBlue));
+  }
 }
 
 void test_health_orbit_view__workout_rows_show_beside_the_header(void) {
