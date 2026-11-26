@@ -38,7 +38,9 @@ enum NotificationsItem {
 #endif
   NotificationsItemVibeDelay,
   NotificationsItemBacklight,
+#ifdef CONFIG_NOTIFICATION_MIRROR
   NotificationsItemSections,
+#endif
   NotificationsItemGroupBy,
   NotificationsItemStatusBarStyle,
   NotificationsItem_Count,
@@ -376,6 +378,7 @@ static void prv_draw_row_cb(SettingsCallbacks *context, GContext *ctx, const Lay
                                                                  : pbl_i18n_noop("Off");
       break;
     }
+#ifdef CONFIG_NOTIFICATION_MIRROR
     case NotificationsItemSections: {
       /// Notification settings item for listing notifications in the phone's sections
       /// (Conversations, Notifications, Silent)
@@ -384,6 +387,7 @@ static void prv_draw_row_cb(SettingsCallbacks *context, GContext *ctx, const Lay
                                                                 : pbl_i18n_noop("Off");
       break;
     }
+#endif
     case NotificationsItemGroupBy: {
       /// Notification settings item for what notifications are stacked by
       title = pbl_i18n_noop("Group by");
@@ -436,9 +440,11 @@ static void prv_select_click_cb(SettingsCallbacks *context, uint16_t row) {
       alerts_preferences_set_notification_backlight(
           !alerts_preferences_get_notification_backlight());
       break;
+#ifdef CONFIG_NOTIFICATION_MIRROR
     case NotificationsItemSections:
       alerts_preferences_set_notification_sections(!alerts_preferences_get_notification_sections());
       break;
+#endif
     case NotificationsItemGroupBy:
       prv_group_by_menu_push(data);
       break;

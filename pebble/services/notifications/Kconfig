@@ -26,11 +26,15 @@ config NOTIFICATION_MIRROR
     default y
     help
       Work with a phone app that mirrors its whole notification shade on
-      the watch: ask the phone to check what the watch holds when the
-      launcher or Notifications opens (the notifSyncRequest preference).
+      the watch, filing each notification in the shade's sections: list
+      notifications in those sections, with a Sections setting, and ask
+      the phone to check what the watch holds when the launcher or
+      Notifications opens (the notifSyncRequest preference).
 
-      Say n for a phone app that sends notifications one at a time, such
-      as the stock Core app: the watch then sends no sync checks.
+      Say n for a phone app that sends notifications one at a time
+      without sections, such as the stock Core app: they are then listed
+      newest first, stacked as Group by says, and the watch sends no
+      sync checks.
 
 config SERVICE_ALERTS_LOG_LEVEL_RUNTIME
     default y if !RECOVERY_FW
