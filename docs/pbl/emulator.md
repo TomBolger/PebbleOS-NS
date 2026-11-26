@@ -78,6 +78,7 @@ pbl emulator feed calendar --clear                # remove every pin
 pbl emulator feed notifications                   # a few messages from two senders
 pbl emulator feed notifications --sender Anna --body "Lunch?" --app WhatsApp
 pbl emulator feed notifications --sender Anna --body "Look" --image   # with a picture; keeps serving it
+pbl emulator feed notifications --stock           # as the stock Core app sends them
 pbl emulator feed notifications --clear           # remove every notification
 ```
 
