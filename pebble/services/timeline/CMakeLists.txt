@@ -31,3 +31,4 @@ set(sources
 )
 pbl_library()
 pbl_library_sources(${sources})
+pbl_library_sources_ifdef(CONFIG_NOTIFICATION_TEXT_BLOCK notification_text_block.c)
