@@ -807,6 +807,36 @@ void test_health_orbit_view__render_workout_active(void) {
   cl_check(gbitmap_pbi_eq(&s_ctx.dest_bitmap, TEST_PBI_FILE));
 }
 
+//! The color of the pixel at \a x, \a y of the display
+static GColor prv_pixel(int16_t x, int16_t y) {
+  const GBitmapDataRowInfo row = gbitmap_get_data_row_info(&s_ctx.dest_bitmap, y);
+  cl_assert(x >= row.min_x && x <= row.max_x);
+  return ((const GColor *)row.data)[x];
+}
+
+void test_health_orbit_view__workout_rows_show_beside_the_header(void) {
+  // A row passing behind the line under the banner and the time shows above and below them, what
+  // is behind them left as it is between, not painted over
+  prv_set_run();
+  prv_render_workout();
+  prv_select_click_handler(nullptr, s_view);
+  prv_rerender();
+  const int16_t band_top = HEALTH_WEEK_ROW_TOP - 8 - HEALTH_WORKOUT_STATUS_ROLL / 2;
+  const int16_t band_bottom = HEALTH_WORKOUT_TIME_Y + HEALTH_WORKOUT_TIME_ROLL / 2;
+  MenuRoundShape rows[HEALTH_ORBIT_LIST_MAX_ROWS] = {};
+  rows[0] = (MenuRoundShape){GRect(20, band_top - 6, 40, band_bottom - band_top + 12), 6};
+  graphics_context_set_default_drawing_state(&s_ctx, GContextInitializationMode_App);
+  graphics_context_set_fill_color(&s_ctx, GColorRed);
+  graphics_fill_rect(&s_ctx, &GRect(0, 0, PBL_DISPLAY_WIDTH, PBL_DISPLAY_HEIGHT));
+  health_orbit_workout_draw(&s_ctx, &s_view->workout, rows, 0, s_view);
+  const int16_t x = 40;
+  cl_assert(!gcolor_equal(prv_pixel(x, band_top - 3), GColorRed));
+  for (int16_t y = band_top; y < band_bottom; y++) {
+    cl_assert(gcolor_equal(prv_pixel(x, y), GColorRed));
+  }
+  cl_assert(!gcolor_equal(prv_pixel(x, band_bottom + 2), GColorRed));
+}
+
 void test_health_orbit_view__render_workout_end(void) {
   // Paused, Down asks whether to end it
   prv_set_run();

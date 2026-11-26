@@ -42,7 +42,6 @@
 #define END_COLOR      GColorRed
 
 #define ROW_COLOR        GColorDarkGray
-#define BACKGROUND_COLOR GColorBlack
 
 static void prv_fill_round_rect(GContext *ctx, GRect box, int16_t radius, GColor color) {
   graphics_context_set_fill_color(ctx, color);
@@ -155,16 +154,50 @@ static void prv_draw_time(GContext *ctx, const HealthOrbitWorkoutScreen *screen,
   graphics_context_set_drawing_state(ctx, state);
 }
 
-//! The line under the banner, and the time below it when \a with_time, over the rows passing
-//! behind them on their way to and from the notch
-static void prv_draw_header(GContext *ctx, const HealthOrbitWorkoutScreen *screen, int16_t offset_y,
-                            bool with_time, void *i18n_owner) {
+//! The rows the line under the banner takes, with the time below it when \a with_time: the rows
+//! passing behind them on their way to and from the notch show above and below it
+static GRangeVertical prv_header_band(int16_t offset_y, bool with_time) {
   const int16_t top = STATUS_Y - HEALTH_WORKOUT_STATUS_ROLL / 2 + offset_y;
   const int16_t bottom = (with_time ? (TIME_Y + HEALTH_WORKOUT_TIME_ROLL / 2)
                                     : (STATUS_Y + HEALTH_WORKOUT_STATUS_ROLL / 2)) +
                          offset_y;
-  graphics_context_set_fill_color(ctx, BACKGROUND_COLOR);
-  graphics_fill_rect(ctx, &GRect(0, top, PBL_DISPLAY_WIDTH, bottom - top));
+  return (GRangeVertical){.origin_y = top, .size_h = bottom - top};
+}
+
+//! The box round \a box and \a other, or the other if \a box is empty
+static GRect prv_union(GRect box, GRect other) {
+  if (box.size.w <= 0 || box.size.h <= 0) {
+    return other;
+  }
+  if (other.size.w <= 0 || other.size.h <= 0) {
+    return box;
+  }
+  const int16_t x0 = PBL_MIN(box.origin.x, other.origin.x);
+  const int16_t y0 = PBL_MIN(box.origin.y, other.origin.y);
+  const int16_t x1 = PBL_MAX(grect_get_max_x(&box), grect_get_max_x(&other));
+  const int16_t y1 = PBL_MAX(grect_get_max_y(&box), grect_get_max_y(&other));
+  return GRect(x0, y0, x1 - x0, y1 - y0);
+}
+
+//! Clips drawing to the part of the display above the header's \a band, or below it if
+//! \a below, if what is drawn there, within \a extent, shows in it
+//! @return Whether it shows, the drawing state to restore in \a state_out if so
+static bool prv_clip_beside_header(GContext *ctx, GRangeVertical band, bool below, GRect extent,
+                                   GDrawState *state_out) {
+  const int16_t band_bottom = band.origin_y + band.size_h;
+  const GRect part =
+      below ? GRect(0, band_bottom, PBL_DISPLAY_WIDTH, PBL_DISPLAY_HEIGHT - band_bottom)
+            : GRect(0, 0, PBL_DISPLAY_WIDTH, band.origin_y);
+  if (part.size.h <= 0 || extent.size.w <= 0 || !grect_overlaps_grect(&extent, &part)) {
+    return false;
+  }
+  *state_out = health_orbit_clip(ctx, part);
+  return true;
+}
+
+//! The line under the banner, and the time below it when \a with_time
+static void prv_draw_header(GContext *ctx, const HealthOrbitWorkoutScreen *screen, int16_t offset_y,
+                            bool with_time, void *i18n_owner) {
   prv_draw_status(ctx, screen, offset_y, i18n_owner);
   if (with_time) {
     prv_draw_time(ctx, screen, offset_y);
@@ -273,11 +306,11 @@ static void prv_draw_measure_row(GContext *ctx, const HealthOrbitWorkoutScreen *
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 // API Functions
 
-void health_orbit_workout_draw_kinds(GContext *ctx, const HealthOrbitWorkoutScreen *screen,
-                                     const MenuRoundShape rows[HEALTH_ORBIT_LIST_MAX_ROWS],
-                                     int16_t header_offset_y, const MenuRoundShape *highlight,
-                                     GDrawCommandImage *const *icons, void *i18n_owner) {
-  graphics_context_set_antialiased(ctx, true);
+//! Draws the kinds' pills and the ring round the selected one, over the pills wherever it is on its
+//! way between them
+static void prv_draw_kind_rows(GContext *ctx, const MenuRoundShape *rows,
+                               const MenuRoundShape *highlight, GDrawCommandImage *const *icons,
+                               void *i18n_owner) {
   for (int i = HEALTH_WORKOUT_NUM_KINDS - 1; i >= 0; i--) {
     const MenuRoundShape *pill = &rows[i];
     if (pill->box.size.w <= 0) {
@@ -306,13 +339,34 @@ void health_orbit_workout_draw_kinds(GContext *ctx, const HealthOrbitWorkoutScre
                            mid_y);
     graphics_context_set_drawing_state(ctx, state);
   }
-  // The ring round the selected kind, over the pills wherever it is on its way between them
   if (highlight && highlight->box.size.w > 0) {
     health_orbit_fill_outline(ctx, highlight->box, highlight->radius, KIND_RING_WIDTH,
                               KIND_RING_COLOR);
   }
+}
+
+void health_orbit_workout_draw_kinds(GContext *ctx, const HealthOrbitWorkoutScreen *screen,
+                                     const MenuRoundShape rows[HEALTH_ORBIT_LIST_MAX_ROWS],
+                                     int16_t header_offset_y, const MenuRoundShape *highlight,
+                                     GDrawCommandImage *const *icons, void *i18n_owner) {
+  graphics_context_set_antialiased(ctx, true);
   // Counting down to the kind chosen, as the rows fold away behind it
   const bool counting_down = (screen->countdown > 0) || (screen->countdown_from > 0);
+  const GRangeVertical band = prv_header_band(header_offset_y, counting_down);
+  GRect extent = GRectZero;
+  for (int i = 0; i < HEALTH_WORKOUT_NUM_KINDS; i++) {
+    extent = prv_union(extent, rows[i].box);
+  }
+  if (highlight && highlight->box.size.w > 0) {
+    extent = prv_union(extent, grect_inset(highlight->box, GEdgeInsets(-KIND_RING_WIDTH)));
+  }
+  for (int below = 0; below <= 1; below++) {
+    GDrawState state;
+    if (prv_clip_beside_header(ctx, band, below, extent, &state)) {
+      prv_draw_kind_rows(ctx, rows, highlight, icons, i18n_owner);
+      graphics_context_set_drawing_state(ctx, state);
+    }
+  }
   prv_draw_header(ctx, screen, header_offset_y, counting_down, i18n_owner);
   graphics_context_set_antialiased(ctx, false);
 }
@@ -419,11 +473,23 @@ void health_orbit_workout_draw(GContext *ctx, const HealthOrbitWorkoutScreen *sc
   const bool open = (screen->type == ActivitySessionType_Open);
   const WorkoutMeasure *measures = open ? s_open_measures : s_paced_measures;
   const int num_rows = health_orbit_workout_num_rows(screen->type);
-  // The lowest first, so a row coming out of the notch passes under the rows already out
-  for (int i = num_rows - 1; i >= 0; i--) {
-    if (rows[i].box.size.w > 0) {
-      prv_draw_measure_row(ctx, screen, measures[i], &rows[i], i18n_owner);
+  const GRangeVertical band = prv_header_band(header_offset_y, true /* with_time */);
+  GRect extent = GRectZero;
+  for (int i = 0; i < num_rows; i++) {
+    extent = prv_union(extent, rows[i].box);
+  }
+  for (int below = 0; below <= 1; below++) {
+    GDrawState state;
+    if (!prv_clip_beside_header(ctx, band, below, extent, &state)) {
+      continue;
     }
+    // The lowest first, so a row coming out of the notch passes under the rows already out
+    for (int i = num_rows - 1; i >= 0; i--) {
+      if (rows[i].box.size.w > 0) {
+        prv_draw_measure_row(ctx, screen, measures[i], &rows[i], i18n_owner);
+      }
+    }
+    graphics_context_set_drawing_state(ctx, state);
   }
   prv_draw_header(ctx, screen, header_offset_y, true /* with_time */, i18n_owner);
   prv_draw_button(ctx, screen, false /* down */);
