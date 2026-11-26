@@ -54,8 +54,13 @@ bool notification_sync_check_is_due(time_t now, time_t last_check);
 
 /**
  * @brief Ask the phone to check the watch's notifications, unless it checked recently or is
- * not connected. Returns at once.
+ * not connected. Returns at once. Does nothing without CONFIG_NOTIFICATION_MIRROR.
  */
+#ifdef CONFIG_NOTIFICATION_MIRROR
 void notification_sync_check(void);
+#else
+static inline void notification_sync_check(void) {
+}
+#endif
 
 /** @} */

@@ -21,6 +21,7 @@ pbl_clar_test(test_notification_sync
   SOURCES
     pebble/services/notifications/notification_sync.c
     tests/fakes/fake_rtc.c
+  DEFINES CONFIG_NOTIFICATION_MIRROR=1
 )
 
 pbl_clar_test(test_ancs_notifications
