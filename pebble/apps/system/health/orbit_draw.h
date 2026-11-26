@@ -75,6 +75,11 @@ void health_orbit_day_time(int days_ago, struct pbl_tm *tm_out);
 //! A weekday, 0 for Sunday, in the two letters that fit a bubble, as "Mo"
 const char *health_orbit_short_weekday(int wday, void *i18n_owner);
 
+//! Fills an outline \a width wide round \a box, whose corners are \a radius round, over its edge
+//! and outside it, leaving the rest of the box as it is, so it can be drawn over what is there
+void health_orbit_fill_outline(GContext *ctx, GRect box, int16_t radius, int16_t width,
+                               GColor color);
+
 //! Clips drawing to \a box, in the drawing box's coordinates, within the current clip
 //! @return The drawing state to restore with graphics_context_set_drawing_state()
 GDrawState health_orbit_clip(GContext *ctx, GRect box);

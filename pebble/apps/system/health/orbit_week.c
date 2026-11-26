@@ -229,7 +229,7 @@ void health_orbit_week_get_rest_rows(MenuRoundShape rows_out[HEALTH_ORBIT_WEEK_N
 void health_orbit_week_draw(GContext *ctx, HealthOrbitSection section, HealthData *health_data,
                             const MenuRoundShape rows[HEALTH_ORBIT_WEEK_NUM_ROWS],
                             int16_t header_offset_y, const MenuRoundShape *highlight,
-                            int highlight_row, GDrawCommandImage *crown, void *i18n_owner) {
+                            GDrawCommandImage *crown, void *i18n_owner) {
   const HealthOrbitWeekStyle *style =
       (section == HealthOrbitSectionSleep) ? &s_sleep_style : &s_steps_style;
   HealthOrbitWeek week;
@@ -238,15 +238,14 @@ void health_orbit_week_draw(GContext *ctx, HealthOrbitSection section, HealthDat
   prv_draw_header(ctx, section, health_data, &week, style, header_offset_y, i18n_owner);
   // The oldest first, so a row coming out of the notch passes under the rows already out
   for (int i = HEALTH_ORBIT_WEEK_NUM_ROWS - 1; i >= 0; i--) {
-    // The outline shows round the row it is on, under the rows above it
-    if (i == highlight_row && highlight && highlight->box.size.w > 0) {
-      prv_fill_round_rect(ctx, grect_inset(highlight->box, GEdgeInsets(-OUTLINE_WIDTH)),
-                          highlight->radius + OUTLINE_WIDTH, GColorWhite);
-    }
     if (rows[i].box.size.w > 0) {
       prv_draw_row(ctx, style, &week, i, &rows[i],
                    (section == HealthOrbitSectionSteps) ? crown : nullptr);
     }
+  }
+  // The outline round the selected day, over the rows wherever it is on its way between them
+  if (highlight && highlight->box.size.w > 0) {
+    health_orbit_fill_outline(ctx, highlight->box, highlight->radius, OUTLINE_WIDTH, GColorWhite);
   }
   graphics_context_set_antialiased(ctx, false);
 }

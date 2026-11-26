@@ -645,12 +645,11 @@ static void prv_layer_update_proc(Layer *layer, GContext *ctx) {
     switch (view->list) {
       case HealthOrbitListWeek:
         health_orbit_week_draw(ctx, view->section, view->health_data, rows,
-                               view->week_header_offset_y, &highlight, view->week_selection,
-                               view->crown, view);
+                               view->week_header_offset_y, &highlight, view->crown, view);
         break;
       case HealthOrbitListWorkoutKinds:
         health_orbit_workout_draw_kinds(ctx, &view->workout, rows, view->week_header_offset_y,
-                                        &highlight, view->week_selection, view->kind_icons, view);
+                                        &highlight, view->kind_icons, view);
         break;
       case HealthOrbitListWorkout:
         health_orbit_workout_draw(ctx, &view->workout, rows, view->week_header_offset_y, view);

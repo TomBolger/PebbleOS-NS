@@ -276,14 +276,9 @@ static void prv_draw_measure_row(GContext *ctx, const HealthOrbitWorkoutScreen *
 void health_orbit_workout_draw_kinds(GContext *ctx, const HealthOrbitWorkoutScreen *screen,
                                      const MenuRoundShape rows[HEALTH_ORBIT_LIST_MAX_ROWS],
                                      int16_t header_offset_y, const MenuRoundShape *highlight,
-                                     int highlight_row, GDrawCommandImage *const *icons,
-                                     void *i18n_owner) {
+                                     GDrawCommandImage *const *icons, void *i18n_owner) {
   graphics_context_set_antialiased(ctx, true);
   for (int i = HEALTH_WORKOUT_NUM_KINDS - 1; i >= 0; i--) {
-    if (i == highlight_row && highlight && highlight->box.size.w > 0) {
-      prv_fill_round_rect(ctx, grect_inset(highlight->box, GEdgeInsets(-KIND_RING_WIDTH)),
-                          highlight->radius + KIND_RING_WIDTH, KIND_RING_COLOR);
-    }
     const MenuRoundShape *pill = &rows[i];
     if (pill->box.size.w <= 0) {
       continue;
@@ -310,6 +305,11 @@ void health_orbit_workout_draw_kinds(GContext *ctx, const HealthOrbitWorkoutScre
     health_orbit_draw_runs(ctx, &name, 1, 0, left + icon_size.w + KIND_ICON_GAP + name_w / 2,
                            mid_y);
     graphics_context_set_drawing_state(ctx, state);
+  }
+  // The ring round the selected kind, over the pills wherever it is on its way between them
+  if (highlight && highlight->box.size.w > 0) {
+    health_orbit_fill_outline(ctx, highlight->box, highlight->radius, KIND_RING_WIDTH,
+                              KIND_RING_COLOR);
   }
   // Counting down to the kind chosen, as the rows fold away behind it
   const bool counting_down = (screen->countdown > 0) || (screen->countdown_from > 0);

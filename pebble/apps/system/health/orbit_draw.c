@@ -9,9 +9,11 @@
 #include <pbl/i18n/i18n.h>
 #include <pbl/services/clock.h>
 #include <pbl/util/math.h>
+#include <pbl/util/trig.h>
 #include <pbl/util/units.h>
 
 #include <applib/fonts/fonts.h>
+#include <applib/graphics/graphics_circle.h>
 #include <applib/graphics/text.h>
 
 #if PBL_ROUND
@@ -141,6 +143,42 @@ const char *health_orbit_short_weekday(int wday, void *i18n_owner) {
       return pbl_i18n_get("Sa", i18n_owner);
   }
   return "";
+}
+
+void health_orbit_fill_outline(GContext *ctx, GRect box, int16_t radius, int16_t width,
+                               GColor color) {
+  // A pixel of it over the box's edge, for its edge to blend with the box rather than with what is
+  // behind it
+  const int16_t out = width - 1;
+  const GRect outer = grect_inset(box, GEdgeInsets(-out));
+  const int16_t r = PBL_MIN(radius + out, PBL_MIN(outer.size.w, outer.size.h) / 2);
+  if (r <= 0) {
+    return;
+  }
+  const int16_t thickness = PBL_MIN(width, r);
+  const int16_t x0 = outer.origin.x;
+  const int16_t y0 = outer.origin.y;
+  const int16_t x1 = grect_get_max_x(&outer) - 2 * r;
+  const int16_t y1 = grect_get_max_y(&outer) - 2 * r;
+  graphics_context_set_fill_color(ctx, color);
+  // The corners, clockwise from the top left's, each a quarter of a ring
+  const GPoint corners[] = {GPoint(x0, y0), GPoint(x1, y0), GPoint(x1, y1), GPoint(x0, y1)};
+  for (int i = 0; i < 4; i++) {
+    const int32_t start = TRIG_MAX_ANGLE * (3 + i) / 4;
+    graphics_fill_radial(ctx, (GRect){corners[i], GSize(2 * r, 2 * r)}, GOvalScaleModeFitCircle,
+                         thickness, start, start + TRIG_MAX_ANGLE / 4);
+  }
+  // The straight sides between them
+  const int16_t straight_w = outer.size.w - 2 * r;
+  const int16_t straight_h = outer.size.h - 2 * r;
+  if (straight_w > 0) {
+    graphics_fill_rect(ctx, &GRect(x0 + r, y0, straight_w, width));
+    graphics_fill_rect(ctx, &GRect(x0 + r, grect_get_max_y(&outer) - width, straight_w, width));
+  }
+  if (straight_h > 0) {
+    graphics_fill_rect(ctx, &GRect(x0, y0 + r, width, straight_h));
+    graphics_fill_rect(ctx, &GRect(grect_get_max_x(&outer) - width, y0 + r, width, straight_h));
+  }
 }
 
 GDrawState health_orbit_clip(GContext *ctx, GRect box) {

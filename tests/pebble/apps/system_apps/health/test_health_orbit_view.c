@@ -755,6 +755,48 @@ void test_health_orbit_view__render_workout_kinds(void) {
   cl_check(gbitmap_pbi_eq(&s_ctx.dest_bitmap, TEST_PBI_FILE));
 }
 
+//! Renders the list with its selection's outline \a eighths of the way from row \a from to row
+//! \a to
+static void prv_render_selection_moving(int from, int to, int eighths) {
+  s_view->selection_from = from;
+  s_view->week_selection = to;
+  s_view->selection_travel = (to - from) * prv_list_pitch(s_view) * eighths / 8;
+  window_render(&s_view->window, &s_ctx);
+}
+
+//! The selection's outline halfway between rows \a from and \a to is drawn alike going either
+//! way, over the rows
+static void prv_check_selection_moves_alike(int from, int to) {
+  static uint8_t s_one_way[PBL_DISPLAY_HEIGHT * PBL_DISPLAY_WIDTH];
+  const size_t size = s_ctx.dest_bitmap.row_size_bytes * s_ctx.dest_bitmap.bounds.size.h;
+  cl_assert(size <= sizeof(s_one_way));
+  for (int eighths = 1; eighths < 8; eighths++) {
+    prv_render_selection_moving(from, to, eighths);
+    memcpy(s_one_way, s_ctx.dest_bitmap.addr, size);
+    prv_render_selection_moving(to, from, 8 - eighths);
+    cl_assert(memcmp(s_one_way, s_ctx.dest_bitmap.addr, size) == 0);
+  }
+  prv_render_selection_moving(from, to, 4);
+}
+
+void test_health_orbit_view__render_workout_kinds_moving(void) {
+  // The ring between Run and Walk, over both pills, the same going Up as Down
+  prv_render_workout();
+  prv_select_click_handler(nullptr, s_view);
+  prv_rest(s_view);
+  prv_check_selection_moves_alike(0, 1);
+  cl_check(gbitmap_pbi_eq(&s_ctx.dest_bitmap, TEST_PBI_FILE));
+}
+
+void test_health_orbit_view__render_steps_week_moving(void) {
+  // The outline between today and the day before, over both rows, the same going Up as Down
+  s_data = prv_sample_data();
+  prv_render(&s_data, HealthOrbitSectionSteps);
+  prv_show_week(s_view);
+  prv_check_selection_moves_alike(0, 1);
+  cl_check(gbitmap_pbi_eq(&s_ctx.dest_bitmap, TEST_PBI_FILE));
+}
+
 void test_health_orbit_view__render_workout_active(void) {
   // Select with a run going on: the run, its time over its measures
   prv_set_run();

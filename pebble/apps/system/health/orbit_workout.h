@@ -65,13 +65,11 @@ int health_orbit_workout_num_rows(ActivitySessionType type);
 //! them
 //! \a header_offset_y below where it rests
 //! @param icons Icons of the kinds of workout, in their deeper colors to read on white
-//! @param highlight The pill the selection's outline goes round, or nullptr
-//! @param highlight_row The row the outline is drawn with
+//! @param highlight The pill the selection's ring goes round, over the rows, or nullptr
 void health_orbit_workout_draw_kinds(GContext *ctx, const HealthOrbitWorkoutScreen *screen,
                                      const MenuRoundShape rows[HEALTH_ORBIT_LIST_MAX_ROWS],
                                      int16_t header_offset_y, const MenuRoundShape *highlight,
-                                     int highlight_row, GDrawCommandImage *const *icons,
-                                     void *i18n_owner);
+                                     GDrawCommandImage *const *icons, void *i18n_owner);
 
 //! Draws the workout: the line saying how it is going and its time, \a header_offset_y below where
 //! they rest, over its measures, each in the pill \a rows has for it, and the bubbles of the
