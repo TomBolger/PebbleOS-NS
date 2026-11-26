@@ -169,8 +169,11 @@ void test_health_orbit_layout__swap_keeps_each_set_out_of_sight_of_the_other(voi
   for (int16_t offset = -sections_span; offset <= sections_span; offset++) {
     cl_assert(prv_bubble_out_of_sight(offset - HEALTH_ORBIT_SWAP, HEALTH_ORBIT_SELECTED_RADIUS));
   }
-  // On the way, the days in reach a step after the last section, as the sections are apart
-  cl_assert_equal_i(HEALTH_ORBIT_SWAP - HEALTH_ORBIT_DAY_REACH - sections_span, HEALTH_ORBIT_STEP);
+  // On the way from Today, the days in reach a step after the last section below it, as the
+  // sections are apart
+  const int16_t below_today =
+      (HEALTH_ORBIT_NUM_SECTIONS - 1 - HEALTH_ORBIT_TODAY_INDEX) * HEALTH_ORBIT_STEP;
+  cl_assert_equal_i(HEALTH_ORBIT_SWAP - HEALTH_ORBIT_DAY_REACH - below_today, HEALTH_ORBIT_STEP);
 }
 
 void test_health_orbit_layout__sidebar_reach(void) {

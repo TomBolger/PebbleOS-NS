@@ -674,19 +674,38 @@ void test_health_orbit_view__day_reads_all_the_history_kept(void) {
 
 void test_health_orbit_view__wrap_keeps_turning_the_same_way(void) {
   s_data = prv_sample_data();
-  prv_render(&s_data, HealthOrbitSectionToday);
-  // Up on the first section turns on round counterclockwise to the last
-  prv_animate_section(s_view, HealthOrbitSectionSleep, false /* down */);
+  prv_render(&s_data, HealthOrbitSectionWorkout);
+  // Up on the first section, Workout, turns on round counterclockwise to the last, Sleep
+  prv_up_down(s_view, false /* down */);
+  cl_assert_equal_i(s_view->section, HealthOrbitSectionSleep);
   cl_assert(s_view->orbit_target < s_view->orbit_from);
   cl_assert_equal_i(s_view->orbit_target + HEALTH_ORBIT_LENGTH,
                     HealthOrbitSectionSleep * HEALTH_ORBIT_STEP);
   prv_rest(s_view);
   // Down on the last turns on round clockwise to the first
-  prv_animate_section(s_view, HealthOrbitSectionToday, true /* down */);
+  prv_up_down(s_view, true /* down */);
+  cl_assert_equal_i(s_view->section, HealthOrbitSectionWorkout);
   cl_assert(s_view->orbit_target > s_view->orbit_from);
   cl_assert_equal_i(s_view->orbit_target - HEALTH_ORBIT_LENGTH, 0);
   prv_rest(s_view);
   cl_assert_equal_i(s_view->orbit_offset, 0);
+}
+
+void test_health_orbit_view__quick_launch_stops_at_workout(void) {
+  // Opened with Up or Down, the sections stop at either end: Workout at the top
+  s_data = prv_sample_data();
+  prv_render(&s_data, HealthOrbitSectionToday);
+  s_view->wrap = false;
+  prv_up_down(s_view, false /* down */);
+  prv_rest(s_view);
+  cl_assert_equal_i(s_view->section, HealthOrbitSectionWorkout);
+  prv_up_down(s_view, false /* down */);
+  cl_assert_equal_i(s_view->section, HealthOrbitSectionWorkout);
+  cl_assert_equal_i(s_view->orbit_offset, 0);
+  // and Sleep at the bottom
+  prv_show_section(s_view, HealthOrbitSectionSleep);
+  prv_up_down(s_view, true /* down */);
+  cl_assert_equal_i(s_view->section, HealthOrbitSectionSleep);
 }
 
 void test_health_orbit_view__launch_on_sleep(void) {
@@ -942,16 +961,23 @@ void test_health_orbit_view__render_workout_complete(void) {
   cl_check(gbitmap_pbi_eq(&s_ctx.dest_bitmap, TEST_PBI_FILE));
 }
 
-void test_health_orbit_view__workout_is_after_sleep_and_wraps(void) {
+void test_health_orbit_view__workout_is_above_today(void) {
+  // The app opens on Today, Workout's bubble a step above it and Steps' a step below
   s_data = prv_sample_data();
-  prv_render(&s_data, HealthOrbitSectionToday);
-  cl_assert_equal_i(HealthOrbitSectionCount, 4);
-  // Up on Today turns on round counterclockwise to Workout
-  prv_animate_section(s_view, HealthOrbitSectionWorkout, false /* down */);
+  s_view = health_orbit_view_create(&s_data);
+  cl_assert_equal_i(s_view->section, HealthOrbitSectionToday);
+  cl_assert_equal_i(s_view->orbit_offset, HEALTH_ORBIT_STEP);
+  cl_assert_equal_i(HealthOrbitSectionWorkout * HEALTH_ORBIT_STEP - s_view->orbit_offset,
+                    -HEALTH_ORBIT_STEP);
+  cl_assert_equal_i(HealthOrbitSectionSteps * HEALTH_ORBIT_STEP - s_view->orbit_offset,
+                    HEALTH_ORBIT_STEP);
+  // Up on Today turns a step counterclockwise to Workout, and Down back
+  prv_up_down(s_view, false /* down */);
+  cl_assert_equal_i(s_view->section, HealthOrbitSectionWorkout);
   cl_assert(!s_view->orbit_down);
-  cl_assert_equal_i(s_view->orbit_target + HEALTH_ORBIT_LENGTH,
-                    HealthOrbitSectionWorkout * HEALTH_ORBIT_STEP);
+  cl_assert_equal_i(s_view->orbit_target, s_view->orbit_from - HEALTH_ORBIT_STEP);
   prv_rest(s_view);
+  cl_assert_equal_i(s_view->orbit_offset, 0);
   // Its card has the large run shoe, and the kinds to start their icons
   cl_assert(s_view->card.run_icon == s_view->run_icon);
   cl_assert(s_view->run_icon);

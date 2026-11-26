@@ -139,6 +139,7 @@ struct HealthOrbitView {
 #define ROW_AT_REST INT16_MAX
 
 _Static_assert(HealthOrbitSectionCount == HEALTH_ORBIT_NUM_SECTIONS, "orbit sections");
+_Static_assert(HealthOrbitSectionToday == HEALTH_ORBIT_TODAY_INDEX, "Today's place on the orbit");
 _Static_assert(HEALTH_ORBIT_WEEK_NUM_ROWS <= HEALTH_ORBIT_LIST_MAX_ROWS, "week rows");
 
 //! A section's card at rest

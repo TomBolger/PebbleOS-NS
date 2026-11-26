@@ -12,12 +12,12 @@
 #include <applib/graphics/gdraw_command_image.h>
 #include <applib/graphics/graphics.h>
 
-//! The sections on the orbit, from the top
+//! The sections on the orbit, from the top: Workout above Today, where the app opens
 typedef enum HealthOrbitSection {
+  HealthOrbitSectionWorkout,
   HealthOrbitSectionToday,
   HealthOrbitSectionSteps,
   HealthOrbitSectionSleep,
-  HealthOrbitSectionWorkout,
   HealthOrbitSectionCount,
 } HealthOrbitSection;
 
