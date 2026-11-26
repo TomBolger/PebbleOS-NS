@@ -25,6 +25,7 @@
 #include <applib/graphics/gpath.h>
 #include <applib/graphics/graphics.h>
 #include <applib/ui/animation_interpolate.h>
+#include <applib/ui/animation_timing.h>
 #include <applib/ui/app_window_stack.h>
 #include <applib/ui/property_animation.h>
 #include <applib/ui/ui.h>
@@ -752,6 +753,13 @@ static int64_t prv_retract_curve(int32_t normalized, int64_t from, int64_t to) {
   return interpolate_moook_custom(normalized, from, to, &s_retract);
 }
 
+//! A bubble shrinks away easing in, all the way: Moook's anticipation would take it past nothing
+//! in one frame
+static int64_t prv_shrink_curve(int32_t normalized, int64_t from, int64_t to) {
+  return interpolate_int64_linear(animation_timing_curve(normalized, AnimationCurveEaseIn), from,
+                                  to);
+}
+
 static int64_t prv_moook_curve(int32_t normalized, int64_t from, int64_t to) {
   return interpolate_moook(normalized, from, to);
 }
@@ -822,6 +830,12 @@ static void prv_add_uint32(Transition *transition, uint32_t *field, uint32_t to,
 
 static void prv_schedule_workout_tick(HealthOrbitView *view);
 
+//! Whether the bubbles of the buttons show: on the workout going on, after its countdown
+static bool prv_buttons_shown(const HealthOrbitView *view) {
+  return view->week && (view->list == HealthOrbitListWorkout) && (view->workout.countdown <= 0) &&
+         (view->workout.status != HealthOrbitWorkoutStatusComplete);
+}
+
 //! Sets everything where it rests for the section, and the week or its card, or the day
 static void prv_rest(HealthOrbitView *view) {
   view->animation = nullptr;
@@ -858,6 +872,7 @@ static void prv_rest(HealthOrbitView *view) {
   view->workout.status_roll = 0;
   view->workout.countdown_from = view->workout.countdown;
   view->workout.time_roll = 0;
+  view->workout.button_radius = prv_buttons_shown(view) ? HEALTH_WORKOUT_BUTTON_RADIUS : 0;
   prv_schedule_workout_tick(view);
   layer_mark_dirty(&view->layer);
 }
@@ -1054,6 +1069,17 @@ static int16_t prv_header_hidden_offset(HealthOrbitView *view) {
              : HEADER_HIDDEN_OFFSET;
 }
 
+//! On the workout going on, the bubbles of its buttons pop up after \a delay, as a card's do
+static void prv_add_buttons_in(HealthOrbitView *view, Transition *transition, uint32_t delay) {
+  if (view->list != HealthOrbitListWorkout || view->workout.countdown > 0 ||
+      view->workout.status == HealthOrbitWorkoutStatusComplete) {
+    return;
+  }
+  view->workout.button_radius = 0;
+  prv_add_int16(transition, &view->workout.button_radius, HEALTH_WORKOUT_BUTTON_RADIUS, delay,
+                interpolate_moook_duration(), prv_moook_curve);
+}
+
 //! The line under the banner, with the workout's time below it, slides out from under the banner
 //! and back as cards slide, through the middle frames, rather than coming or leaving at once
 static void prv_add_header_slide(HealthOrbitView *view, Transition *transition, int16_t to,
@@ -1135,6 +1161,7 @@ static void prv_animate_week_in(HealthOrbitView *view) {
   // The line above the rows comes out from under the banner as the first rows land
   view->week_header_offset_y = prv_header_hidden_offset(view);
   prv_add_header_slide(view, &transition, 0, prv_row_out_delay(0) + FRAMES(3));
+  prv_add_buttons_in(view, &transition, prv_row_out_delay(0) + FRAMES(5));
   prv_play(view, &transition);
 }
 
@@ -1163,6 +1190,9 @@ static void prv_animate_week_out(HealthOrbitView *view, bool to_day) {
                   prv_moook_curve);
   }
   prv_add_header_slide(view, &transition, prv_header_hidden_offset(view), 0);
+  // The bubbles of the buttons shrink away
+  prv_add_int16(&transition, &view->workout.button_radius, 0, 0, interpolate_moook_duration(),
+                prv_shrink_curve);
 
   const uint32_t turn_delay = FRAMES(3);
   prv_add_int16(&transition, &view->turn, 0, turn_delay,
@@ -1277,6 +1307,11 @@ static void prv_roll_status(HealthOrbitView *view, HealthOrbitWorkoutStatus stat
   view->workout.status_roll = HEALTH_WORKOUT_STATUS_ROLL;
   prv_add_int16(&transition, &view->workout.status_roll, 0, 0, interpolate_moook_duration(),
                 prv_moook_curve);
+  if (status == HealthOrbitWorkoutStatusComplete) {
+    // Its buttons are done with: their bubbles shrink away
+    prv_add_int16(&transition, &view->workout.button_radius, 0, 0, interpolate_moook_duration(),
+                  prv_shrink_curve);
+  }
   prv_play(view, &transition);
 }
 
@@ -1316,8 +1351,7 @@ static void prv_workout_tick(void *context) {
       prv_show_workout_data(view);
       // Paused or resumed elsewhere
       const HealthOrbitWorkoutStatus now = prv_workout_status(workout);
-      if (now != status &&
-          !(status == HealthOrbitWorkoutStatusEnd && now == HealthOrbitWorkoutStatusPaused)) {
+      if (now != status && status != HealthOrbitWorkoutStatusEnd) {
         prv_roll_status(view, now);
       }
     } else {
@@ -1360,6 +1394,7 @@ static void prv_count_down(HealthOrbitView *view) {
       prv_add_int16(&transition, &view->row_travel[i], prv_row_path_length(view, i),
                     FRAMES(2 + i / 2), interpolate_moook_duration(), prv_moook_curve);
     }
+    prv_add_buttons_in(view, &transition, FRAMES(6));
   }
   prv_play(view, &transition);
 }
@@ -1453,8 +1488,14 @@ static void prv_workout_select(HealthOrbitView *view) {
   }
 }
 
-//! Up or Down on the kinds of workout moves the selection; on the workout, paused, Down asks
-//! whether to end it, and Up or Down takes that back
+//! Up or Down on the kinds of workout moves the selection; on the workout, Down, by the End bubble,
+//! asks whether to end it, paused or not, and Up or Down takes that back
+//! Takes back asking whether to end the workout: the line rolls back to how it is going
+static void prv_cancel_end(HealthOrbitView *view) {
+  health_data_update_workout(view->health_data);
+  prv_roll_status(view, prv_workout_status(health_data_workout_get(view->health_data)));
+}
+
 static void prv_workout_up_down(HealthOrbitView *view, bool down) {
   if (view->workout.countdown > 0) {
     return;
@@ -1463,9 +1504,11 @@ static void prv_workout_up_down(HealthOrbitView *view, bool down) {
     prv_move_selection(view, down);
     return;
   }
-  if (view->workout.status == HealthOrbitWorkoutStatusEnd) {
-    prv_roll_status(view, HealthOrbitWorkoutStatusPaused);
-  } else if (down && view->workout.status == HealthOrbitWorkoutStatusPaused) {
+  const HealthOrbitWorkoutStatus status = view->workout.status;
+  if (status == HealthOrbitWorkoutStatusEnd) {
+    prv_cancel_end(view);
+  } else if (down && (status == HealthOrbitWorkoutStatusRunning ||
+                      status == HealthOrbitWorkoutStatusPaused)) {
     prv_roll_status(view, HealthOrbitWorkoutStatusEnd);
   }
 }
@@ -1474,7 +1517,7 @@ static void prv_workout_up_down(HealthOrbitView *view, bool down) {
 //! called off
 static void prv_workout_back(HealthOrbitView *view) {
   if (view->workout.status == HealthOrbitWorkoutStatusEnd) {
-    prv_roll_status(view, HealthOrbitWorkoutStatusPaused);
+    prv_cancel_end(view);
     return;
   }
   if (view->workout.countdown > 0) {

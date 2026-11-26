@@ -16,6 +16,8 @@
 #include <pbl/util/math.h>
 #include <pbl/util/size.h>
 
+#include <applib/graphics/gpath.h>
+
 #if PBL_ROUND
 
 //! The line under the banner, and the middle of the time below it
@@ -126,7 +128,11 @@ static void prv_draw_time_at(GContext *ctx, const HealthOrbitWorkoutScreen *scre
     const HealthOrbitWorkoutStatus status = (screen->status_roll > HEALTH_WORKOUT_STATUS_ROLL / 2)
                                                 ? screen->status_from
                                                 : screen->status;
-    if (status == HealthOrbitWorkoutStatusPaused || status == HealthOrbitWorkoutStatusEnd) {
+    // Asked whether to end it, it keeps the color of how it is going
+    const bool paused = (status == HealthOrbitWorkoutStatusPaused) ||
+                        (status == HealthOrbitWorkoutStatusEnd &&
+                         screen->workout.state == HealthWorkoutStatePaused);
+    if (paused) {
       color = PAUSED_COLOR;
     } else if (status == HealthOrbitWorkoutStatusComplete) {
       color = health_orbit_workout_color(screen->type);
@@ -311,6 +317,101 @@ void health_orbit_workout_draw_kinds(GContext *ctx, const HealthOrbitWorkoutScre
   graphics_context_set_antialiased(ctx, false);
 }
 
+////////////////////////////////////////////////////////////////////////////////////////////////////
+// Buttons
+
+typedef enum ButtonGlyph {
+  ButtonGlyphNone,
+  ButtonGlyphPause,
+  ButtonGlyphPlay,
+  ButtonGlyphStop,
+  ButtonGlyphConfirm,
+  ButtonGlyphCancel,
+} ButtonGlyph;
+
+//! What the button by Select, or by Down, does while the line under the banner says \a status
+static ButtonGlyph prv_button_glyph(HealthOrbitWorkoutStatus status, bool down) {
+  switch (status) {
+    case HealthOrbitWorkoutStatusRunning:
+      return down ? ButtonGlyphStop : ButtonGlyphPause;
+    case HealthOrbitWorkoutStatusPaused:
+      return down ? ButtonGlyphStop : ButtonGlyphPlay;
+    case HealthOrbitWorkoutStatusEnd:
+      return down ? ButtonGlyphCancel : ButtonGlyphConfirm;
+    case HealthOrbitWorkoutStatusKinds:
+    case HealthOrbitWorkoutStatusComplete:
+      break;
+  }
+  return ButtonGlyphNone;
+}
+
+//! Draws \a glyph in white centered on \a center, as the Workout app's action bar icons are
+static void prv_draw_glyph(GContext *ctx, ButtonGlyph glyph, GPoint center) {
+  graphics_context_set_fill_color(ctx, GColorWhite);
+  graphics_context_set_stroke_color(ctx, GColorWhite);
+  switch (glyph) {
+    case ButtonGlyphPause:
+      graphics_fill_rect(ctx, &GRect(center.x - 5, center.y - 6, 4, 12));
+      graphics_fill_rect(ctx, &GRect(center.x + 2, center.y - 6, 4, 12));
+      break;
+    case ButtonGlyphPlay: {
+      GPoint points[] = {
+        GPoint(center.x - 4, center.y - 7),
+        GPoint(center.x + 7, center.y),
+        GPoint(center.x - 4, center.y + 7),
+      };
+      GPath play = {.num_points = PBL_ARRAY_SIZE(points), .points = points};
+      gpath_draw_filled(ctx, &play);
+      break;
+    }
+    case ButtonGlyphStop:
+      graphics_fill_rect(ctx, &GRect(center.x - 5, center.y - 5, 11, 11));
+      break;
+    case ButtonGlyphConfirm:
+      graphics_context_set_stroke_width(ctx, 3);
+      graphics_draw_line(ctx, GPoint(center.x - 6, center.y), GPoint(center.x - 2, center.y + 4));
+      graphics_draw_line(ctx, GPoint(center.x - 2, center.y + 4),
+                         GPoint(center.x + 6, center.y - 5));
+      graphics_context_set_stroke_width(ctx, 1);
+      break;
+    case ButtonGlyphCancel:
+      graphics_context_set_stroke_width(ctx, 3);
+      graphics_draw_line(ctx, GPoint(center.x - 5, center.y - 5),
+                         GPoint(center.x + 5, center.y + 5));
+      graphics_draw_line(ctx, GPoint(center.x - 5, center.y + 5),
+                         GPoint(center.x + 5, center.y - 5));
+      graphics_context_set_stroke_width(ctx, 1);
+      break;
+    case ButtonGlyphNone:
+      break;
+  }
+}
+
+//! The bubble of the button by Select or Down, its glyph rolling up with the line under the banner
+//! when what the button does changes
+static void prv_draw_button(GContext *ctx, const HealthOrbitWorkoutScreen *screen, bool down) {
+  const int16_t radius = screen->button_radius;
+  if (radius <= 0) {
+    return;
+  }
+  const GSize display = GSize(PBL_DISPLAY_WIDTH, PBL_DISPLAY_HEIGHT);
+  const GPoint center = health_orbit_workout_button_center(display, down);
+  graphics_context_set_fill_color(ctx, health_orbit_workout_ink(screen->type));
+  graphics_fill_circle(ctx, center, radius);
+  // The glyph shows as far as the bubble has grown
+  const int16_t inner = (radius * 3) / 4;
+  const GDrawState state =
+      health_orbit_clip(ctx, GRect(center.x - inner, center.y - inner, 2 * inner, 2 * inner));
+  const ButtonGlyph glyph = prv_button_glyph(screen->status, down);
+  const ButtonGlyph glyph_from = prv_button_glyph(screen->status_from, down);
+  const int16_t roll = (glyph == glyph_from) ? 0 : screen->status_roll;
+  if (roll != 0) {
+    prv_draw_glyph(ctx, glyph_from, GPoint(center.x, center.y + roll - HEALTH_WORKOUT_STATUS_ROLL));
+  }
+  prv_draw_glyph(ctx, glyph, GPoint(center.x, center.y + roll));
+  graphics_context_set_drawing_state(ctx, state);
+}
+
 void health_orbit_workout_draw(GContext *ctx, const HealthOrbitWorkoutScreen *screen,
                                const MenuRoundShape rows[HEALTH_ORBIT_LIST_MAX_ROWS],
                                int16_t header_offset_y, void *i18n_owner) {
@@ -325,6 +426,8 @@ void health_orbit_workout_draw(GContext *ctx, const HealthOrbitWorkoutScreen *sc
     }
   }
   prv_draw_header(ctx, screen, header_offset_y, true /* with_time */, i18n_owner);
+  prv_draw_button(ctx, screen, false /* down */);
+  prv_draw_button(ctx, screen, true /* down */);
   graphics_context_set_antialiased(ctx, false);
 }
 

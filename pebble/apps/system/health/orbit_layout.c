@@ -165,6 +165,21 @@ bool health_orbit_week_row(GSize display, int index, MenuRoundShape *pill) {
   return prv_pill(display, health_orbit_week_row_center_y(index), HEALTH_WEEK_ROW_HEIGHT, pill);
 }
 
+GPoint health_orbit_workout_button_center(GSize display, bool down) {
+  // In half pixels from the middle of the display, on a circle keeping the gap from the bezel
+  const int32_t distance =
+      2 * (display.w / 2 - HEALTH_WORKOUT_BUTTON_BEZEL_GAP - HEALTH_WORKOUT_BUTTON_RADIUS);
+  const int32_t dy = down ? 2 * HEALTH_WORKOUT_BUTTON_PITCH : 0;
+  const int32_t dx = integer_sqrt(distance * distance - dy * dy);
+  return GPoint(prv_round_div(display.w - 1 + dx, 2), display.h / 2 + dy / 2);
+}
+
+int16_t health_orbit_workout_rows_right(GSize display) {
+  const int16_t select_x = health_orbit_workout_button_center(display, false).x;
+  const int16_t down_x = health_orbit_workout_button_center(display, true).x;
+  return PBL_MIN(select_x, down_x) - HEALTH_WORKOUT_BUTTON_RADIUS - HEALTH_WORKOUT_BUTTON_ROWS_GAP;
+}
+
 int health_orbit_list_num_rows(HealthOrbitList list) {
   switch (list) {
     case HealthOrbitListWorkoutKinds:
@@ -188,8 +203,15 @@ bool health_orbit_list_row(GSize display, HealthOrbitList list, int index, MenuR
                       HEALTH_WORKOUT_KIND_ROW_TOP + index * HEALTH_WORKOUT_KIND_ROW_PITCH +
                           HEALTH_WORKOUT_KIND_ROW_HEIGHT / 2,
                       HEALTH_WORKOUT_KIND_ROW_HEIGHT, pill);
-    case HealthOrbitListWorkout:
-      return health_orbit_week_row(display, index + HEALTH_WORKOUT_FIRST_ROW, pill);
+    case HealthOrbitListWorkout: {
+      // The week's row, ending clear of the buttons' bubbles, centered on what is left of it
+      const bool fits = health_orbit_week_row(display, index + HEALTH_WORKOUT_FIRST_ROW, pill);
+      const int16_t right = health_orbit_workout_rows_right(display);
+      if (grect_get_max_x(&pill->box) > right) {
+        pill->box.size.w = right - pill->box.origin.x;
+      }
+      return fits;
+    }
     case HealthOrbitListWeek:
       break;
   }
