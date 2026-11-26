@@ -36,6 +36,17 @@ config NOTIFICATION_MIRROR
       newest first, stacked as Group by says, and the watch sends no
       sync checks.
 
+config NOTIFICATION_TEXT_BLOCK
+    bool "Read round notifications in a block of one width"
+    depends on PLATFORM_ROUND
+    default y
+    help
+      A round notification's message runs as wide as the display is
+      where it starts, and its lines keep that width down to where the
+      display is as wide again, so lines read there never rewrap as the
+      card scrolls. Text above and below them is rewrapped to fit inside
+      the display as it scrolls into view.
+
 config SERVICE_ALERTS_LOG_LEVEL_RUNTIME
     default y if !RECOVERY_FW
 
