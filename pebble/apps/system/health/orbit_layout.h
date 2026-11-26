@@ -76,9 +76,18 @@ typedef enum HealthOrbitList {
 #define HEALTH_WORKOUT_KIND_ROW_PITCH  46
 #define HEALTH_WORKOUT_KIND_ROW_HEIGHT 38
 
-//! The workout's measures are on the week's rows below the two its time takes
+//! The workout's measures are on the week's rows below the two its time takes, narrowed to keep
+//! clear of the bubbles of the buttons
 #define HEALTH_WORKOUT_FIRST_ROW 2
 #define HEALTH_WORKOUT_MAX_ROWS  (HEALTH_ORBIT_LIST_MAX_ROWS - HEALTH_WORKOUT_FIRST_ROW)
+
+//! The bubbles of the buttons on the workout, by the buttons on the right: pause and resume by
+//! Select, at the middle, and end by Down, as far below it as the Workout app's action bar icons
+//! are; the space they keep from the bezel, and the rows from them
+#define HEALTH_WORKOUT_BUTTON_RADIUS    15
+#define HEALTH_WORKOUT_BUTTON_PITCH     42
+#define HEALTH_WORKOUT_BUTTON_BEZEL_GAP 5
+#define HEALTH_WORKOUT_BUTTON_ROWS_GAP  6
 
 //! The sidebar with a notch \a notch_width deep, as the round timeline fills it a row at a time on
 //! the right of the \a display. Turned a quarter round, the same circle is the banner at the top,
@@ -141,6 +150,12 @@ int16_t health_orbit_week_row_center_y(int index);
 //! The pill of week row \a index, as a round menu's pill on that row, its ends following the bezel.
 //! @return false if the row has no room for a pill
 bool health_orbit_week_row(GSize display, int index, MenuRoundShape *pill);
+
+//! Center of the bubble of the button by Select, or by Down if \a down, on the workout.
+GPoint health_orbit_workout_button_center(GSize display, bool down);
+
+//! Column the workout's rows end at, the bubbles of the buttons' gap to their left.
+int16_t health_orbit_workout_rows_right(GSize display);
 
 //! Number of rows of \a list
 int health_orbit_list_num_rows(HealthOrbitList list);

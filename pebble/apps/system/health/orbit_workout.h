@@ -52,6 +52,8 @@ typedef struct HealthOrbitWorkoutScreen {
   int8_t countdown;
   int8_t countdown_from;
   int16_t time_roll;
+  //! Radius of the bubbles of the buttons, by Select and Down
+  int16_t button_radius;
   //! The measures shown: the workout going on, or the one that ended
   HealthWorkoutData workout;
 } HealthOrbitWorkoutScreen;
@@ -72,7 +74,8 @@ void health_orbit_workout_draw_kinds(GContext *ctx, const HealthOrbitWorkoutScre
                                      void *i18n_owner);
 
 //! Draws the workout: the line saying how it is going and its time, \a header_offset_y below where
-//! they rest, over its measures, each in the pill \a rows has for it
+//! they rest, over its measures, each in the pill \a rows has for it, and the bubbles of the
+//! buttons that pause and resume it, and end it
 void health_orbit_workout_draw(GContext *ctx, const HealthOrbitWorkoutScreen *screen,
                                const MenuRoundShape rows[HEALTH_ORBIT_LIST_MAX_ROWS],
                                int16_t header_offset_y, void *i18n_owner);

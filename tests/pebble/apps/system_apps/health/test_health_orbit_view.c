@@ -871,8 +871,15 @@ void test_health_orbit_view__workout_pauses_ends_and_shows_its_summary(void) {
   prv_render_workout();
   prv_select_click_handler(nullptr, s_view);
   prv_rest(s_view);
-  // Down does nothing while it runs
+  // Its buttons' bubbles show
+  cl_assert_equal_i(s_view->workout.button_radius, HEALTH_WORKOUT_BUTTON_RADIUS);
+  // Down, by the End bubble, asks to end it while it runs too, and Up takes that back, running
   prv_up_down(s_view, true /* down */);
+  prv_rest(s_view);
+  cl_assert_equal_i(s_view->workout.status, HealthOrbitWorkoutStatusEnd);
+  cl_assert(!s_workout.paused);
+  prv_up_down(s_view, false /* down */);
+  prv_rest(s_view);
   cl_assert_equal_i(s_view->workout.status, HealthOrbitWorkoutStatusRunning);
   // Select pauses and resumes
   prv_select_click_handler(nullptr, s_view);
@@ -899,6 +906,8 @@ void test_health_orbit_view__workout_pauses_ends_and_shows_its_summary(void) {
   prv_rest(s_view);
   cl_assert_equal_i(s_workout.stops, 1);
   cl_assert_equal_i(s_view->workout.status, HealthOrbitWorkoutStatusComplete);
+  // Its buttons are done with
+  cl_assert_equal_i(s_view->workout.button_radius, 0);
   cl_assert_equal_i(s_view->workout.workout.steps, 3912);
   // Its summary stays as the ticks go on
   prv_workout_tick(s_view);
@@ -976,4 +985,44 @@ void test_health_orbit_view__workout_card_follows_the_workout_every_second(void)
   prv_workout_tick(s_view);
   cl_assert_equal_i(health_data_workout_get(&s_data)->duration_s, 23 * PBL_SEC_PER_MIN + 46);
   cl_assert(!health_data_workout_get(&s_data)->auto_detected);
+}
+
+void test_health_orbit_view__workout_ends_while_running(void) {
+  // Down then Select ends a running workout, the asking line rolling back if taken back
+  prv_set_run();
+  prv_render_workout();
+  prv_select_click_handler(nullptr, s_view);
+  prv_rest(s_view);
+  prv_up_down(s_view, true /* down */);
+  prv_rest(s_view);
+  prv_back_click_handler(nullptr, s_view);
+  prv_rest(s_view);
+  cl_assert(s_view->week);
+  cl_assert_equal_i(s_view->workout.status, HealthOrbitWorkoutStatusRunning);
+  prv_up_down(s_view, true /* down */);
+  prv_rest(s_view);
+  prv_up_down(s_view, true /* down */);
+  prv_rest(s_view);
+  cl_assert_equal_i(s_view->workout.status, HealthOrbitWorkoutStatusRunning);
+  prv_up_down(s_view, true /* down */);
+  prv_rest(s_view);
+  prv_select_click_handler(nullptr, s_view);
+  prv_rest(s_view);
+  cl_assert(!s_workout.ongoing);
+  cl_assert_equal_i(s_view->workout.status, HealthOrbitWorkoutStatusComplete);
+}
+
+void test_health_orbit_view__workout_buttons_wait_for_the_countdown(void) {
+  prv_render_workout();
+  prv_select_click_handler(nullptr, s_view);
+  prv_rest(s_view);
+  cl_assert_equal_i(s_view->workout.button_radius, 0);
+  prv_select_click_handler(nullptr, s_view);
+  prv_rest(s_view);
+  cl_assert_equal_i(s_view->workout.button_radius, 0);
+  for (int i = 0; i < HEALTH_WORKOUT_COUNTDOWN; i++) {
+    prv_workout_tick(s_view);
+    prv_rest(s_view);
+  }
+  cl_assert_equal_i(s_view->workout.button_radius, HEALTH_WORKOUT_BUTTON_RADIUS);
 }
