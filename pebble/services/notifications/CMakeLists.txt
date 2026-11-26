@@ -15,10 +15,10 @@ set(sources
   do_not_disturb_toggle.c
   notification_image.c
   notification_storage.c
-  notification_sync.c
   notification_style.c
   notifications.c
 )
 pbl_library()
 pbl_library_sources(${sources})
+pbl_library_sources_ifdef(CONFIG_NOTIFICATION_MIRROR notification_sync.c)
 pbl_library_sources_ifdef(CONFIG_SHELL shell.c)

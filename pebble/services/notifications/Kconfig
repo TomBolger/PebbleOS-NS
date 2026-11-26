@@ -21,6 +21,17 @@ config NOTIFICATION_IMAGE_RECENTS
       them other than the one shown are kept, so going back to one
       needs no transfer. Each takes up to 40 KiB of the scratch heap.
 
+config NOTIFICATION_MIRROR
+    bool "Mirror the phone's notification shade"
+    default y
+    help
+      Work with a phone app that mirrors its whole notification shade on
+      the watch: ask the phone to check what the watch holds when the
+      launcher or Notifications opens (the notifSyncRequest preference).
+
+      Say n for a phone app that sends notifications one at a time, such
+      as the stock Core app: the watch then sends no sync checks.
+
 config SERVICE_ALERTS_LOG_LEVEL_RUNTIME
     default y if !RECOVERY_FW
 
