@@ -814,6 +814,24 @@ static GColor prv_pixel(int16_t x, int16_t y) {
   return ((const GColor *)row.data)[x];
 }
 
+void test_health_orbit_view__small_moon_leaves_its_bite_as_it_was(void) {
+  // The crescent is drawn as it is, not as a disc with a disc of the bubble's color over it
+  s_data = prv_sample_data();
+  prv_render(&s_data, HealthOrbitSectionToday);
+  graphics_context_set_default_drawing_state(&s_ctx, GContextInitializationMode_App);
+  graphics_context_set_fill_color(&s_ctx, GColorRed);
+  graphics_fill_rect(&s_ctx, &GRect(0, 0, PBL_DISPLAY_WIDTH, PBL_DISPLAY_HEIGHT));
+  const GPoint center = GPoint(PBL_DISPLAY_WIDTH / 2, PBL_DISPLAY_HEIGHT / 2);
+  const int16_t radius = 24;
+  graphics_context_set_antialiased(&s_ctx, true);
+  prv_draw_small_moon_icon(&s_ctx, center, radius, GColorBlue);
+  // The moon's middle, its bite's, and its outer edge's
+  const int16_t shift = (radius + 6) / 12;
+  cl_assert(gcolor_equal(prv_pixel(center.x - shift - 6, center.y + shift + 6), GColorBlue));
+  cl_assert(gcolor_equal(prv_pixel(center.x + 2 * shift, center.y - 2 * shift), GColorRed));
+  cl_assert(gcolor_equal(prv_pixel(center.x - radius, center.y), GColorRed));
+}
+
 void test_health_orbit_view__workout_rows_show_beside_the_header(void) {
   // A row passing behind the line under the banner and the time shows above and below them, what
   // is behind them left as it is between, not painted over

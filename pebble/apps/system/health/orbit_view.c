@@ -24,6 +24,7 @@
 #include <applib/graphics/gdraw_command_transforms.h>
 #include <applib/graphics/gpath.h>
 #include <applib/graphics/graphics.h>
+#include <applib/graphics/graphics_private.h>
 #include <applib/ui/animation_interpolate.h>
 #include <applib/ui/animation_timing.h>
 #include <applib/ui/app_window_stack.h>
@@ -241,6 +242,44 @@ static GDrawCommandImage *prv_create_kind_icon(ActivitySessionType type, int16_t
   return icon;
 }
 
+//! Fills from \a start to \a end, in eighths of a pixel, along row \a at, or column \a at if
+//! \a columns, in \a color, the pixels at the ends blended with what is there as far as the span
+//! covers them
+static void prv_fill_span(GContext *ctx, bool columns, int16_t at, int32_t start, int32_t end,
+                          GColor color) {
+  if (end - start < 8) {
+    // Less than a pixel: the pixel it is in, as much as it covers
+    if (end <= start) {
+      return;
+    }
+    const int16_t pixel = (start + end) / 16;
+    const GPoint offset = ctx->draw_state.drawing_box.origin;
+    GBitmap *framebuffer = graphics_capture_frame_buffer(ctx);
+    if (framebuffer) {
+      const uint16_t covered = ((end - start) * MAX_PLOT_BRIGHTNESS + 4) / 8;
+      graphics_private_plot_pixel(
+          framebuffer, &ctx->draw_state.clip_box, offset.x + (columns ? at : pixel),
+          offset.y + (columns ? pixel : at), MAX_PLOT_BRIGHTNESS - covered, color);
+      graphics_release_frame_buffer(ctx, framebuffer);
+    }
+    return;
+  }
+  graphics_context_set_stroke_color(ctx, color);
+  // The end is the start of the last pixel, which is covered as far as its fraction
+  const Fixed_S16_3 from = {.raw_value = (int16_t)start};
+  const Fixed_S16_3 to = {.raw_value = (int16_t)(end - 8)};
+  if (columns) {
+    graphics_private_draw_vertical_line(ctx, at, from, to);
+  } else {
+    graphics_private_draw_horizontal_line(ctx, at, from, to);
+  }
+}
+
+//! Half the chord of a circle \a radius8 big, in eighths of a pixel, \a dy8 from its center
+static int32_t prv_half_chord(int32_t radius8, int32_t dy8) {
+  return (PBL_ABS(dy8) < radius8) ? integer_sqrt(radius8 * radius8 - dy8 * dy8) : -1;
+}
+
 //! The section's color sweeping in over the sidebar's as the orbit turns: a line from the sidebar's
 //! center turns across it from the side the bubbles come in from, the new color behind it
 typedef struct SidebarSweep {
@@ -408,16 +447,36 @@ static void prv_draw_small_today_icon(GContext *ctx, GPoint center, int16_t radi
   }
 }
 
-//! The Sleep icon on a neighbour's bubble \a radius big: a crescent moon, a disc with a disc of
-//! the bubble's color taken out of its top right
-static void prv_draw_small_moon_icon(GContext *ctx, GPoint center, int16_t radius, GColor color,
-                                     GColor bubble) {
+//! The Sleep icon on a neighbour's bubble \a radius big: a crescent moon, the part of a disc out of
+//! a smaller one over its top right, filled a row at a time
+static void prv_draw_small_moon_icon(GContext *ctx, GPoint center, int16_t radius, GColor color) {
   const int16_t moon = (radius * 7) / 12;
   const int16_t shift = (radius + 6) / 12;
-  graphics_context_set_fill_color(ctx, color);
-  graphics_fill_circle(ctx, GPoint(center.x - shift, center.y + shift), moon);
-  graphics_context_set_fill_color(ctx, bubble);
-  graphics_fill_circle(ctx, GPoint(center.x + 2 * shift, center.y - 2 * shift), moon - shift);
+  // In eighths of a pixel, centered in their pixels and reaching half a pixel past their radius,
+  // as filled circles do
+  const int32_t moon_x = 8 * (center.x - shift) + 4;
+  const int32_t moon_y = 8 * (center.y + shift) + 4;
+  const int32_t moon_r = 8 * moon + 4;
+  const int32_t bite_x = 8 * (center.x + 2 * shift) + 4;
+  const int32_t bite_y = 8 * (center.y - 2 * shift) + 4;
+  const int32_t bite_r = 8 * (moon - shift) + 4;
+  for (int16_t y = center.y + shift - moon; y <= center.y + shift + moon; y++) {
+    const int32_t y8 = 8 * y + 4;
+    const int32_t moon_half = prv_half_chord(moon_r, y8 - moon_y);
+    if (moon_half < 0) {
+      continue;
+    }
+    const int32_t left = moon_x - moon_half;
+    const int32_t right = moon_x + moon_half;
+    const int32_t bite_half = prv_half_chord(bite_r, y8 - bite_y);
+    if (bite_half < 0) {
+      prv_fill_span(ctx, false /* columns */, y, left, right, color);
+      continue;
+    }
+    // What the bite leaves of the row, either side of it
+    prv_fill_span(ctx, false /* columns */, y, left, PBL_MIN(right, bite_x - bite_half), color);
+    prv_fill_span(ctx, false /* columns */, y, PBL_MAX(left, bite_x + bite_half), right, color);
+  }
 }
 
 //! The Workout icon on a bubble \a radius big: a stopwatch, a ring with its button on top and its
@@ -459,7 +518,7 @@ static void prv_draw_bubble(GContext *ctx, HealthOrbitView *view, HealthOrbitSec
     return;
   }
   if (section == HealthOrbitSectionSleep && !selected) {
-    prv_draw_small_moon_icon(ctx, center, radius, color, GColorBlack);
+    prv_draw_small_moon_icon(ctx, center, radius, color);
     return;
   }
   if (section == HealthOrbitSectionWorkout) {
