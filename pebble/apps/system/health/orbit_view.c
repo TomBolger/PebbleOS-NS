@@ -1385,6 +1385,10 @@ static void prv_animate_week_in(HealthOrbitView *view) {
   if (view->section != HealthOrbitSectionWorkout) {
     view->list = HealthOrbitListWeek;
   }
+  if (view->section == HealthOrbitSectionSteps) {
+    // Its rows shade the walks and runs from their first frame
+    health_data_read_week_walks(view->health_data);
+  }
   const GSize display = view->layer.bounds.size;
   Transition transition = {};
   if (view->days) {

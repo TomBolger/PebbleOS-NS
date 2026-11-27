@@ -81,6 +81,11 @@ static const GPoint s_bubble_offsets[HEALTH_ORBIT_CARD_MAX_BUBBLES] = {
 
 #define TYPICAL_COLOR GColorYellow
 
+//! The steps of the walks and runs shade the steps ring a step deeper, in the Steps section's
+//! color, and deep sleep the sleep ring in the color the Sleep card's deep sleep bubble has
+#define WALK_SHADE_COLOR       GColorIslamicGreen
+#define DEEP_SLEEP_SHADE_COLOR GColorVeryLightBlue
+
 //! The Workout ring fills over an hour
 #define WORKOUT_RING_FULL_S      PBL_SEC_PER_HOUR
 #define WORKOUT_IDLE_TRACK_COLOR GColorWindsorTan
@@ -183,12 +188,14 @@ typedef struct OrbitRing {
   int32_t full;
   //! Where the typical tick is, none if 0
   int32_t typical;
-  //! How far a second fill reaches from the start, over the first, none if 0
-  int32_t inner_value;
-  GColor inner_color;
+  //! Stretches of the value shaded where they came along the fill, in units of \a span_unit of it
+  const HealthSpans *spans;
+  int32_t span_unit;
+  GColor span_color;
 } OrbitRing;
 
-//! The Steps ring: toward the typical steps of a whole day, with a tick at the typical steps by now
+//! The Steps ring: toward the typical steps of a whole day, with a tick at the typical steps by
+//! now, the steps of the walks and runs shaded
 static OrbitRing prv_steps_ring(const HealthDayData *day, int16_t outer_radius, int16_t thickness) {
   return (OrbitRing){
     .outer_radius = outer_radius,
@@ -198,11 +205,14 @@ static OrbitRing prv_steps_ring(const HealthDayData *day, int16_t outer_radius, 
     .value = day->steps,
     .full = PBL_MAX(day->typical_steps, day->steps),
     .typical = day->typical_steps_by_now,
+    .spans = &day->walks,
+    .span_unit = 1,
+    .span_color = WALK_SHADE_COLOR,
   };
 }
 
-//! The Sleep ring: the night's sleep toward the typical sleep, which it has a tick at, with the
-//! deep sleep from its start
+//! The Sleep ring: the night's sleep toward the typical sleep, which it has a tick at, the deep
+//! sleep shaded
 static OrbitRing prv_sleep_ring(const HealthDayData *day, int16_t outer_radius, int16_t thickness,
                                 bool typical_tick) {
   const int32_t target = (day->typical_sleep > 0) ? day->typical_sleep : SLEEP_RING_FALLBACK_TARGET;
@@ -214,8 +224,9 @@ static OrbitRing prv_sleep_ring(const HealthDayData *day, int16_t outer_radius, 
     .value = day->sleep,
     .full = PBL_MAX(target, day->sleep),
     .typical = typical_tick ? day->typical_sleep : 0,
-    .inner_value = day->deep_sleep,
-    .inner_color = GColorVeryLightBlue,
+    .spans = &day->deep_sleep_spans,
+    .span_unit = PBL_SEC_PER_MIN,
+    .span_color = DEEP_SLEEP_SHADE_COLOR,
   };
 }
 
@@ -251,7 +262,7 @@ static bool prv_is_day_card(const HealthOrbitCard *card) {
   return (card->section == HealthOrbitSectionToday) || card->day;
 }
 
-//! The day a card shows: its own, or today
+//! The day a card shows: its own, or today, read into \a today
 static const HealthDayData *prv_get_day(const HealthOrbitCard *card, HealthData *health_data,
                                         HealthDayData *today) {
   if (card->day) {
@@ -261,10 +272,10 @@ static const HealthDayData *prv_get_day(const HealthOrbitCard *card, HealthData 
   return today;
 }
 
-static int prv_get_rings(const HealthOrbitCard *card, HealthData *health_data,
+//! A card's rings, which point into \a today for today's
+static int prv_get_rings(const HealthOrbitCard *card, HealthData *health_data, HealthDayData *today,
                          OrbitRing rings_out[HEALTH_ORBIT_CARD_MAX_RINGS]) {
-  HealthDayData today;
-  const HealthDayData *day = prv_get_day(card, health_data, &today);
+  const HealthDayData *day = prv_get_day(card, health_data, today);
   if (prv_is_day_card(card)) {
     rings_out[0] = prv_steps_ring(day, TODAY_STEPS_RING_OUTER, TODAY_RING_THICKNESS);
     rings_out[1] =
@@ -295,6 +306,34 @@ static void prv_fill_band(GContext *ctx, GPoint center, const OrbitRing *ring, i
                                        ring->outer_radius, from, to);
 }
 
+//! Shades the stretches of the value along the fill, as far as it has swept from \a start: square
+//! across the band, round where the fill's own ends are
+static void prv_fill_spans(GContext *ctx, GPoint center, const OrbitRing *ring, int32_t start,
+                           int32_t end, int32_t sweep) {
+  if (!ring->spans) {
+    return;
+  }
+  const uint16_t inner = ring->outer_radius - ring->thickness;
+  graphics_context_set_fill_color(ctx, ring->span_color);
+  for (int i = 0; i < ring->spans->count; i++) {
+    const HealthSpan *span = &ring->spans->spans[i];
+    int32_t from;
+    int32_t to;
+    if (!health_orbit_ring_span(start, end, ring->full, sweep, span->from * ring->span_unit,
+                                span->to * ring->span_unit, &from, &to)) {
+      continue;
+    }
+    graphics_fill_radial_internal(ctx, center, inner, ring->outer_radius, start + from, start + to);
+    // An end of the fill is the stretch's: its round cap, a disc at that end, in its color
+    if (from == 0) {
+      prv_fill_band(ctx, center, ring, start, start);
+    }
+    if (to == sweep) {
+      prv_fill_band(ctx, center, ring, start + sweep, start + sweep);
+    }
+  }
+}
+
 //! The angle swept by a fill or track, as far as \a rest at rest
 static int32_t prv_sweep(uint32_t state, int32_t rest) {
   return (state == HEALTH_ORBIT_CARD_SWEEP_REST) ? rest : (int32_t)state;
@@ -317,11 +356,7 @@ static void prv_draw_ring(GContext *ctx, GSize display, const OrbitRing *ring, u
   if (sweep > 0) {
     graphics_context_set_fill_color(ctx, ring->color);
     prv_fill_band(ctx, center, ring, start, start + sweep);
-    const int32_t inner = health_orbit_ring_sweep(start, end, ring->inner_value, ring->full);
-    if (inner > 0) {
-      graphics_context_set_fill_color(ctx, ring->inner_color);
-      prv_fill_band(ctx, center, ring, start, start + PBL_MIN(inner, sweep));
-    }
+    prv_fill_spans(ctx, center, ring, start, end, sweep);
   }
   const int32_t typical = health_orbit_ring_sweep(start, end, ring->typical, ring->full);
   if (ring->typical > 0 && track > 0 && typical <= track) {
@@ -906,8 +941,9 @@ void health_orbit_card_init(HealthOrbitCard *card, HealthOrbitSection section,
 int health_orbit_card_get_sweeps(const HealthOrbitCard *card, HealthData *health_data,
                                  uint32_t sweeps_out[HEALTH_ORBIT_CARD_MAX_RINGS],
                                  uint32_t spans_out[HEALTH_ORBIT_CARD_MAX_RINGS]) {
+  HealthDayData today;
   OrbitRing rings[HEALTH_ORBIT_CARD_MAX_RINGS];
-  const int num_rings = prv_get_rings(card, health_data, rings);
+  const int num_rings = prv_get_rings(card, health_data, &today, rings);
   const GSize display = GSize(PBL_DISPLAY_WIDTH, PBL_DISPLAY_HEIGHT);
   for (int i = 0; i < num_rings; i++) {
     int32_t start;
@@ -952,8 +988,9 @@ void health_orbit_card_draw_content(GContext *ctx, const HealthOrbitCard *card,
 void health_orbit_card_draw_rings(GContext *ctx, const HealthOrbitCard *card,
                                   HealthData *health_data, bool tracks) {
   const GSize display = GSize(PBL_DISPLAY_WIDTH, PBL_DISPLAY_HEIGHT);
+  HealthDayData today;
   OrbitRing rings[HEALTH_ORBIT_CARD_MAX_RINGS];
-  const int num_rings = prv_get_rings(card, health_data, rings);
+  const int num_rings = prv_get_rings(card, health_data, &today, rings);
   graphics_context_set_antialiased(ctx, true);
   for (int i = 0; i < num_rings; i++) {
     prv_draw_ring(ctx, display, &rings[i], card->sweep[i], card->track[i], tracks);

@@ -32,7 +32,8 @@ typedef struct HealthOrbitWeekStyle {
   GColor track;
   GColor fill;
   GColor recent_fill;
-  GColor inner;
+  //! Shade of the stretches of the value where they came along the fill
+  GColor span;
   GColor header_label;
 } HealthOrbitWeekStyle;
 
@@ -40,6 +41,8 @@ static const HealthOrbitWeekStyle s_steps_style = {
   .track = GColorDarkGray,
   .fill = GColorIslamicGreen,
   .recent_fill = GColorIslamicGreen,
+  // The walks and runs a step deeper than the fill, as on the steps ring
+  .span = GColorDarkGreen,
   .header_label = GColorLightGray,
 };
 
@@ -47,7 +50,8 @@ static const HealthOrbitWeekStyle s_sleep_style = {
   .track = GColorDukeBlue,
   .fill = GColorCobaltBlue,
   .recent_fill = GColorBlueMoon,
-  .inner = GColorVeryLightBlue,
+  // Only last night's row, on its recent fill, has the times of its deep sleep: a step deeper
+  .span = GColorBlue,
   .header_label = GColorBabyBlueEyes,
 };
 
@@ -55,8 +59,10 @@ typedef struct HealthOrbitWeekDay {
   char label[16];
   char value_text[16];
   int32_t value;
-  //! Second fill from the start, over the first, as the deep sleep is
-  int32_t inner;
+  //! Stretches of the value, in units of \a span_unit of it: the walks and runs in steps, the
+  //! deep sleep in minutes
+  const HealthSpans *spans;
+  int32_t span_unit;
 } HealthOrbitWeekDay;
 
 typedef struct HealthOrbitWeek {
@@ -80,11 +86,17 @@ static void prv_load_week(HealthOrbitSection section, HealthData *health_data,
   const bool sleep = (section == HealthOrbitSectionSleep);
   const int32_t *values =
       sleep ? health_data_sleep_get(health_data) : health_data_steps_get(health_data);
-  const int32_t *inner = sleep ? health_data_deep_sleep_get(health_data) : nullptr;
   for (int i = 0; i < HEALTH_ORBIT_WEEK_NUM_ROWS; i++) {
     HealthOrbitWeekDay *day = &week->days[i];
     day->value = PBL_MAX(values[i], 0);
-    day->inner = inner ? PBL_MIN(PBL_MAX(inner[i], 0), day->value) : 0;
+    // Only last night still has the times of its deep sleep
+    if (sleep) {
+      day->spans = (i == 0) ? health_data_deep_sleep_spans_get(health_data) : nullptr;
+      day->span_unit = PBL_SEC_PER_MIN;
+    } else {
+      day->spans = health_data_walks_get(health_data, i);
+      day->span_unit = 1;
+    }
     if (i == 0) {
       strncpy(day->label,
               sleep ? pbl_i18n_get("Last night", i18n_owner) : pbl_i18n_get("Today", i18n_owner),
@@ -145,12 +157,21 @@ static void prv_draw_row(GContext *ctx, const HealthOrbitWeekStyle *style,
     const int16_t fill = (day->value >= week->full)
                              ? box.size.w
                              : PBL_MAX(h, (int32_t)usable * day->value / week->full);
-    prv_fill_round_rect(ctx, GRect(box.origin.x, box.origin.y, fill, h), pill->radius,
+    const GRect fill_box = GRect(box.origin.x, box.origin.y, fill, h);
+    prv_fill_round_rect(ctx, fill_box, pill->radius,
                         (index == 0) ? style->recent_fill : style->fill);
-    if (day->inner > 0) {
-      const int16_t inner = PBL_MAX(h, (int32_t)usable * day->inner / week->full);
-      prv_fill_round_rect(ctx, GRect(box.origin.x, box.origin.y, inner, h), pill->radius,
-                          style->inner);
+    // Each stretch is the fill's shape across its columns, so it is round where the fill is
+    for (int i = 0; day->spans && i < day->spans->count; i++) {
+      const HealthSpan *span = &day->spans->spans[i];
+      int16_t from;
+      int16_t to;
+      if (health_orbit_bar_span(fill, day->value, span->from * day->span_unit,
+                                span->to * day->span_unit, &from, &to)) {
+        const GDrawState state =
+            health_orbit_clip(ctx, GRect(box.origin.x + from, box.origin.y, to - from, h));
+        prv_fill_round_rect(ctx, fill_box, pill->radius, style->span);
+        graphics_context_set_drawing_state(ctx, state);
+      }
     }
   }
 

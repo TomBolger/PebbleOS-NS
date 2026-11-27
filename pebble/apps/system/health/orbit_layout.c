@@ -149,6 +149,23 @@ int32_t health_orbit_ring_sweep(int32_t start, int32_t end, int32_t value, int32
   return (int32_t)((span * PBL_MIN(value, full)) / full);
 }
 
+bool health_orbit_ring_span(int32_t start, int32_t end, int32_t full, int32_t sweep, int32_t from,
+                            int32_t to, int32_t *from_out, int32_t *to_out) {
+  *from_out = health_orbit_ring_sweep(start, end, from, full);
+  *to_out = PBL_MIN(health_orbit_ring_sweep(start, end, to, full), sweep);
+  return *to_out > *from_out;
+}
+
+bool health_orbit_bar_span(int16_t fill_width, int32_t value, int32_t from, int32_t to,
+                           int16_t *from_out, int16_t *to_out) {
+  if (value <= 0 || fill_width <= 0) {
+    return false;
+  }
+  *from_out = (int64_t)fill_width * PBL_CLAMP(from, 0, value) / value;
+  *to_out = (int64_t)fill_width * PBL_CLAMP(to, 0, value) / value;
+  return *to_out > *from_out;
+}
+
 int16_t health_orbit_week_row_center_y(int index) {
   return HEALTH_WEEK_ROW_TOP + index * HEALTH_WEEK_ROW_PITCH + HEALTH_WEEK_ROW_PITCH / 2;
 }

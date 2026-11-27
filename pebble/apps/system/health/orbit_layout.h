@@ -143,6 +143,20 @@ void health_orbit_ring_angles(GSize display, int16_t outer_radius, int16_t thick
 //! Angle a ring from \a start to \a end sweeps for \a value of \a full, from none to all of it.
 int32_t health_orbit_ring_sweep(int32_t start, int32_t end, int32_t value, int32_t full);
 
+//! Angles from a ring's start a stretch of its value from \a from to \a to covers, of \a full, as
+//! far as the ring has swept, to \a sweep: a ring of progress has the value in the order it came,
+//! the steps of a walk where the day's steps were at as it went, so the stretch is where it
+//! happened along the fill.
+//! @return Whether any of it shows
+bool health_orbit_ring_span(int32_t start, int32_t end, int32_t full, int32_t sweep, int32_t from,
+                            int32_t to, int32_t *from_out, int32_t *to_out);
+
+//! Columns from a bar's start a stretch of its value from \a from to \a to covers, the bar's fill
+//! \a fill_width wide for \a value, as for a ring.
+//! @return Whether any of it shows
+bool health_orbit_bar_span(int16_t fill_width, int32_t value, int32_t from, int32_t to,
+                           int16_t *from_out, int16_t *to_out);
+
 //! Center row of week row \a index, counted from the top.
 int16_t health_orbit_week_row_center_y(int index);
 

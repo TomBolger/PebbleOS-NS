@@ -327,8 +327,11 @@ static void prv_render(HealthData *health_data, HealthOrbitSection section) {
   window_render(&s_view->window, &s_ctx);
 }
 
-//! Shows the week at rest
+//! Shows the week at rest, with what it reads as it comes in
 static void prv_show_week(HealthOrbitView *view) {
+  if (view->section == HealthOrbitSectionSteps) {
+    health_data_read_week_walks(view->health_data);
+  }
   view->week = true;
   prv_rest(view);
 }
@@ -341,6 +344,17 @@ static HealthData s_data;
 void test_health_orbit_view__render_today(void) {
   s_data = prv_sample_data();
   prv_render(&s_data, HealthOrbitSectionToday);
+  cl_check(gbitmap_pbi_eq(&s_ctx.dest_bitmap, TEST_PBI_FILE));
+}
+
+void test_health_orbit_view__render_today_sweeping(void) {
+  // As the rings sweep in, the walks and the deep sleep show as far as the fills have come, the
+  // fills' ends round in the color of the stretch they are in
+  s_data = prv_sample_data();
+  prv_render(&s_data, HealthOrbitSectionToday);
+  s_view->card.sweep[0] = TRIG_MAX_ANGLE / 5;
+  s_view->card.sweep[1] = TRIG_MAX_ANGLE / 8;
+  window_render(&s_view->window, &s_ctx);
   cl_check(gbitmap_pbi_eq(&s_ctx.dest_bitmap, TEST_PBI_FILE));
 }
 
@@ -428,6 +442,7 @@ void test_health_orbit_view__render_sleep_long(void) {
   s_data.monthly_sleep_average = HOURS(10, 48);
   s_data.sleep_start = HOURS(20, 58);
   s_data.sleep_end = HOURS(8, 56);
+  s_data.deep_sleep_spans = (HealthSpans){1, {{30, 30 + 10 * 60 + 59}}};
   prv_render(&s_data, HealthOrbitSectionSleep);
   cl_check(gbitmap_pbi_eq(&s_ctx.dest_bitmap, TEST_PBI_FILE));
 }
@@ -439,6 +454,7 @@ void test_health_orbit_view__render_sleep_nap(void) {
   s_data.deep_sleep = HOURS(0, 9);
   s_data.sleep_start = HOURS(13, 5);
   s_data.sleep_end = HOURS(13, 47);
+  s_data.deep_sleep_spans = (HealthSpans){1, {{18, 27}}};
   prv_render(&s_data, HealthOrbitSectionSleep);
   cl_check(gbitmap_pbi_eq(&s_ctx.dest_bitmap, TEST_PBI_FILE));
 }

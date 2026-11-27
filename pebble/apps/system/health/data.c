@@ -519,10 +519,6 @@ int32_t health_data_current_deep_sleep_get(HealthData *health_data) {
   return health_data->deep_sleep;
 }
 
-int32_t *health_data_deep_sleep_get(HealthData *health_data) {
-  return health_data->deep_sleep_data;
-}
-
 //! A metric's value on the day \a days_ago days before today, 0 if it has none
 static PBL_NOINLINE int32_t prv_metric_on_day(ActivityMetric metric, int days_ago) {
   int32_t history[HEALTH_DATA_NUM_DAYS] = {};

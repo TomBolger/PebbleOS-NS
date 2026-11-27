@@ -423,3 +423,52 @@ void test_health_orbit_layout__workout_buttons_are_by_their_buttons(void) {
     cl_assert(pill.box.size.w >= 140);
   }
 }
+
+void test_health_orbit_layout__ring_span_is_where_its_value_came_along_the_fill(void) {
+  // A ring from 1000 to 4000 for a value of 0 to 300, filled to 240
+  const int32_t start = 1000;
+  const int32_t end = 4000;
+  const int32_t full = 300;
+  const int32_t rest = health_orbit_ring_sweep(start, end, 240, full);
+  cl_assert_equal_i(rest, 2400);
+  int32_t from;
+  int32_t to;
+  // The steps of a walk from 60 to 150 of the day's are a fifth to a half of the way round
+  cl_assert(health_orbit_ring_span(start, end, full, rest, 60, 150, &from, &to));
+  cl_assert_equal_i(from, 600);
+  cl_assert_equal_i(to, 1500);
+  // As the ring sweeps in, the stretch shows as far as the fill has come
+  cl_assert(health_orbit_ring_span(start, end, full, 1000, 60, 150, &from, &to));
+  cl_assert_equal_i(from, 600);
+  cl_assert_equal_i(to, 1000);
+  cl_assert(!health_orbit_ring_span(start, end, full, 600, 60, 150, &from, &to));
+  cl_assert(!health_orbit_ring_span(start, end, full, 0, 60, 150, &from, &to));
+  // From the very start, and past a full ring, it keeps to the ring
+  cl_assert(health_orbit_ring_span(start, end, full, 3000, 0, 450, &from, &to));
+  cl_assert_equal_i(from, 0);
+  cl_assert_equal_i(to, 3000);
+  // Nothing of nothing
+  cl_assert(!health_orbit_ring_span(start, end, full, rest, 100, 100, &from, &to));
+  cl_assert(!health_orbit_ring_span(start, end, 0, rest, 10, 100, &from, &to));
+}
+
+void test_health_orbit_layout__bar_span_is_where_its_value_came_along_the_fill(void) {
+  int16_t from;
+  int16_t to;
+  // 7h of sleep filling 140 columns, deep from 1h 30m to 2h 15m of it
+  cl_assert(health_orbit_bar_span(140, 420, 90, 135, &from, &to));
+  cl_assert_equal_i(from, 30);
+  cl_assert_equal_i(to, 45);
+  // As the row grows from the notch, the stretch keeps its share of the fill
+  cl_assert(health_orbit_bar_span(28, 420, 90, 135, &from, &to));
+  cl_assert_equal_i(from, 6);
+  cl_assert_equal_i(to, 9);
+  // Clamped to the fill, and none for nothing
+  cl_assert(health_orbit_bar_span(140, 420, -10, 500, &from, &to));
+  cl_assert_equal_i(from, 0);
+  cl_assert_equal_i(to, 140);
+  cl_assert(!health_orbit_bar_span(140, 0, 0, 10, &from, &to));
+  cl_assert(!health_orbit_bar_span(0, 420, 0, 10, &from, &to));
+  // Under a column, nothing
+  cl_assert(!health_orbit_bar_span(140, 420, 300, 302, &from, &to));
+}

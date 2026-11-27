@@ -236,11 +236,6 @@ void health_data_update_workout(HealthData *health_data);
 //! @return The workout, its state none if there is none
 const HealthWorkoutData *health_data_workout_get(HealthData *health_data);
 
-//! Get the historical deep sleep data
-//! @param health_data A pointer to the health data to use
-//! @return A pointer to the deep sleep of each night, as health_data_sleep_get() has its sleep
-int32_t *health_data_deep_sleep_get(HealthData *health_data);
-
 //! Get the sleep average over the past month
 //! @param health_data A pointer to the health data to use
 //! @return The average daily sleep over the past month
