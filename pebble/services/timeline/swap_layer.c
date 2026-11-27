@@ -64,6 +64,10 @@
 // Steepest end slope (x1000) of the hold swap curve
 #define HOLD_SWAP_MAX_SLOPE 2500
 
+// Content laid out for where it rests steps a press at a time, each step starting as the last
+// one lands: a press only repeats once it is held well past its own step.
+#define HOLD_SNAP_START_MS 400
+
 typedef enum {
   ScrollAnimationCurveKind_Interpolator,
   ScrollAnimationCurveKind_Curve
@@ -535,10 +539,97 @@ static void prv_scroll_stopped(Animation *animation, bool finished, void *contex
   }
 }
 
+//! A step shorter than this cuts straight over to its end: a Moook's lead-in would come within
+//! its overshoot of it, or pass it.
+#define SNAP_MOOOK_IN_PX 24
+
+static void prv_snap_update(Animation *animation, const AnimationProgress progress) {
+  SwapLayer *swap_layer = animation_get_context(animation);
+  if (!swap_layer->current) {
+    return;
+  }
+  const int16_t from = swap_layer->scroll_from;
+  const int16_t to = swap_layer->scroll_target;
+  const int64_t offset = (PBL_ABS(to - from) > SNAP_MOOOK_IN_PX)
+                             ? interpolate_moook(progress, from, to)
+                             : interpolate_moook_out(progress, from, to, 0, true /* bounce */);
+  prv_set_offset(swap_layer, (int16_t)offset);
+  // The content takes the layout it will rest in where the motion cuts over to its end, settling
+  // from its overshoot
+  if (!swap_layer->snap_cut && (PBL_ABS(to - offset) <= INTERPOLATE_MOOOK_BOUNCE_BACK)) {
+    swap_layer->snap_cut = true;
+    layout_set_scroll(swap_layer->current, to, true /* show */);
+  }
+}
+
+static void prv_snap_stopped(Animation *animation, bool finished, void *context) {
+  SwapLayer *swap_layer = context;
+  if (animation != swap_layer->animation) {
+    return;
+  }
+  swap_layer->scrolling = false;
+  if (finished && !swap_layer->is_deiniting) {
+    if (swap_layer->current) {
+      layout_set_scroll(swap_layer->current, swap_layer->scroll_target, true /* show */);
+    }
+    prv_hold_step(swap_layer);
+  }
+}
+
+static bool prv_is_snapping(SwapLayer *swap_layer) {
+  return swap_layer->scrolling && swap_layer->snapping &&
+         animation_is_scheduled(swap_layer->animation);
+}
+
+//! Content laid out for where it rests moves there in one Moook from wherever it is: as it is
+//! for the first frames, then cut over to its new layout, settling into place. A step under way
+//! is taken over from where it has got to.
+static void prv_snap_to(SwapLayer *swap_layer, int16_t target) {
+  const int16_t from = prv_get_current_notification_offset(swap_layer);
+  if (prv_is_snapping(swap_layer)) {
+    animation_unschedule(swap_layer->animation);
+  }
+  static const AnimationImplementation s_snap_implementation = {
+    .update = prv_snap_update,
+  };
+  Animation *animation = animation_create();
+  if (!animation) {
+    prv_set_offset(swap_layer, target);
+    layout_set_scroll(swap_layer->current, target, true /* show */);
+    return;
+  }
+  swap_layer->scroll_from = from;
+  swap_layer->scroll_target = target;
+  swap_layer->snap_cut = false;
+  const uint32_t duration_ms = (PBL_ABS(target - from) > SNAP_MOOOK_IN_PX)
+                                   ? interpolate_moook_duration()
+                                   : interpolate_moook_out_duration();
+  animation_set_implementation(animation, &s_snap_implementation);
+  animation_set_duration(animation, duration_ms);
+  animation_set_curve(animation, AnimationCurveLinear);
+  animation_set_handlers(animation,
+                         (AnimationHandlers){
+                           .stopped = prv_snap_stopped,
+                         },
+                         swap_layer);
+  swap_layer->animation = animation;
+  swap_layer->scrolling = true;
+  swap_layer->snapping = true;
+  animation_schedule(animation);
+}
+
 //! Scroll the current (and next) layout by dy, in origin.y units, over duration_ms.
 static void prv_scroll_for(SwapLayer *swap_layer, int16_t dy, AnimationCurve curve,
                            uint32_t duration_ms) {
-  if (dy == 0 || !swap_layer->current) {
+  if (!swap_layer->current) {
+    return;
+  }
+  const int16_t target = prv_get_current_notification_offset(swap_layer) - dy;
+  if (layout_set_scroll(swap_layer->current, target, false /* show */)) {
+    prv_snap_to(swap_layer, target);
+    return;
+  }
+  if (dy == 0) {
     return;
   }
   static const AnimationImplementation s_scroll_implementation = {
@@ -560,6 +651,7 @@ static void prv_scroll_for(SwapLayer *swap_layer, int16_t dy, AnimationCurve cur
                          swap_layer);
   swap_layer->animation = animation;
   swap_layer->scrolling = true;
+  swap_layer->snapping = false;
   animation_schedule(animation);
 }
 
@@ -573,7 +665,8 @@ static bool prv_is_scrolling(SwapLayer *swap_layer) {
 
 //! Stop a running scroll where it has got to (finishing a swap instead).
 static void prv_stop_scroll_in_place(SwapLayer *swap_layer) {
-  if (!prv_is_scrolling(swap_layer)) {
+  // Content laid out for where it rests can only stop there: let it land
+  if (!prv_is_scrolling(swap_layer) || prv_is_snapping(swap_layer)) {
     prv_finish_animation(swap_layer);
     return;
   }
@@ -797,10 +890,15 @@ static void prv_banners_update_proc(Layer *layer, GContext *ctx) {
 #endif
 
 PBL_T_STATIC void prv_attempt_scroll(SwapLayer *swap_layer, ScrollDirection direction) {
-  // Never drop a press because something is still moving: jump to its end and act on that.
-  prv_finish_animation(swap_layer);
-
-  int16_t offset = prv_get_current_notification_offset(swap_layer);
+  // Never drop a press because something is still moving: act on where it is heading, carrying
+  // a step of content laid out for where it rests on from where it has got to, else jumping to
+  // its end.
+  const bool snapping = prv_is_snapping(swap_layer);
+  if (!snapping) {
+    prv_finish_animation(swap_layer);
+  }
+  const int16_t current = prv_get_current_notification_offset(swap_layer);
+  int16_t offset = snapping ? swap_layer->scroll_target : current;
   int16_t max_dy = prv_get_max_scroll_dy(swap_layer);
 
   // distance to scroll
@@ -845,7 +943,7 @@ PBL_T_STATIC void prv_attempt_scroll(SwapLayer *swap_layer, ScrollDirection dire
       return;
   }
 
-  prv_scroll(swap_layer, dy, AnimationCurveEaseOut);
+  prv_scroll(swap_layer, dy + (current - offset), AnimationCurveEaseOut);
 }
 
 ///////////////////////
@@ -881,8 +979,10 @@ static void prv_hold_step(SwapLayer *swap_layer) {
   if (!swap_layer->hold.active || swap_layer->hold.in_step || !swap_layer->current) {
     return;
   }
-  if (animation_is_scheduled(swap_layer->animation) && !swap_layer->scrolling) {
-    // A swap is playing: carry on once it lands.
+  if ((animation_is_scheduled(swap_layer->animation) && !swap_layer->scrolling) ||
+      prv_is_snapping(swap_layer)) {
+    // A swap, or a step of content laid out for where it rests, is playing: carry on once it
+    // lands.
     return;
   }
 
@@ -895,8 +995,14 @@ static void prv_hold_step(SwapLayer *swap_layer) {
   const int16_t end = (direction > 0) ? prv_get_max_scroll_dy(swap_layer) : 0;
   if (offset != end) {
     swap_layer->hold.bumped = false;
-    const uint32_t duration_ms = PBL_MAX((PBL_ABS(end - offset) * 1000) / HOLD_SPEED_PX_S, 1);
-    prv_scroll_for(swap_layer, offset - end, AnimationCurveLinear, duration_ms);
+    if (layout_set_scroll(swap_layer->current, offset, false /* show */)) {
+      // Content laid out for where it rests can't move on evenly: it steps there a press at a time
+      const int16_t step = PBL_MIN(SCROLL_PX, PBL_ABS(end - offset));
+      prv_scroll_for(swap_layer, -direction * step, AnimationCurveLinear, 0);
+    } else {
+      const uint32_t duration_ms = PBL_MAX((PBL_ABS(end - offset) * 1000) / HOLD_SPEED_PX_S, 1);
+      prv_scroll_for(swap_layer, offset - end, AnimationCurveLinear, duration_ms);
+    }
   } else if (!swap_layer->hold.bumped) {
     // Rest at the end of the layout for a moment, so it can be read or acted on.
     swap_layer->hold.bumped = true;
@@ -928,8 +1034,9 @@ static void prv_hold_release(SwapLayer *swap_layer) {
   const bool was_active = swap_layer->hold.active;
   const int8_t direction = swap_layer->hold.direction;
   swap_layer_stop_hold(swap_layer);
-  if (!was_active || !swap_layer->current || !prv_is_scrolling(swap_layer)) {
-    // A plain press, or a swap that finishes on its own.
+  if (!was_active || !swap_layer->current || !prv_is_scrolling(swap_layer) ||
+      prv_is_snapping(swap_layer)) {
+    // A plain press, or a swap or step that finishes on its own.
     return;
   }
 
@@ -981,7 +1088,7 @@ static void prv_down_multi_click_handler(ClickRecognizerRef recognizer, void *co
   }
 }
 
-static void prv_raw_down_handler(ClickRecognizerRef recognizer, void *context) {
+PBL_T_STATIC void prv_raw_down_handler(ClickRecognizerRef recognizer, void *context) {
   SwapLayer *swap_layer = (SwapLayer *)context;
   // Ignore any press that isn't the start of a new click pattern
   if (click_number_of_clicks_counted(recognizer) >= 1 || !swap_layer->current) {
@@ -992,10 +1099,11 @@ static void prv_raw_down_handler(ClickRecognizerRef recognizer, void *context) {
   const ScrollDirection direction = prv_direction_for_recognizer(recognizer);
   prv_attempt_scroll(swap_layer, direction);
   swap_layer->hold.direction = (direction == ScrollDirectionUp) ? -1 : 1;
-  swap_layer->hold.timer = evented_timer_register(HOLD_START_MS, false, prv_hold_begin, swap_layer);
+  const uint32_t hold_ms = prv_is_snapping(swap_layer) ? HOLD_SNAP_START_MS : HOLD_START_MS;
+  swap_layer->hold.timer = evented_timer_register(hold_ms, false, prv_hold_begin, swap_layer);
 }
 
-static void prv_raw_up_handler(ClickRecognizerRef recognizer, void *context) {
+PBL_T_STATIC void prv_raw_up_handler(ClickRecognizerRef recognizer, void *context) {
   prv_hold_release((SwapLayer *)context);
 }
 

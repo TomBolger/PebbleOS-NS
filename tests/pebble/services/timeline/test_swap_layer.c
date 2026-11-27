@@ -8,6 +8,7 @@
 #include <pbl/services/timeline/notification_layout.h>
 #include <pbl/services/timeline/swap_layer.h>
 
+#include <applib/ui/animation_interpolate.h>
 #include <applib/ui/animation_private.h>
 #include <applib/ui/layer.h>
 #include <applib/ui/property_animation.h>
@@ -15,6 +16,9 @@
 #include <clar.h>
 
 // Stubs
+InterpolateInt64Function animation_private_current_interpolate_override(void) {
+  return nullptr;
+}
 ///////////////////////////////////////////////////////////
 
 GContext *graphics_context_get_current_context(void) {
@@ -32,11 +36,27 @@ void *applib_malloc(size_t bytes) {
 void applib_free(void *ptr) {
 }
 
+// The last timer registered, fired by the tests
+static void (*s_timer_callback)(void *);
+static void *s_timer_data;
+static uint32_t s_timer_ms;
+
 uintptr_t evented_timer_register(uint32_t timeout_ms, bool repeating, void (*callback)(void *),
                                  void *data) {
+  s_timer_callback = callback;
+  s_timer_data = data;
+  s_timer_ms = timeout_ms;
   return 1;
 }
 void evented_timer_cancel(uintptr_t timer) {
+  s_timer_callback = nullptr;
+}
+
+static void prv_fire_timer(void) {
+  void (*callback)(void *) = s_timer_callback;
+  s_timer_callback = nullptr;
+  cl_assert(callback);
+  callback(s_timer_data);
 }
 
 void window_schedule_render(Window *window) {
@@ -152,9 +172,13 @@ int16_t notification_layout_get_banner_icon_top_round(int16_t below_rest) {
 
 extern void fake_animation_cleanup(void);
 extern void fake_animation_complete(Animation *animation);
+extern void fake_animation_update(Animation *animation, AnimationProgress progress);
 
 //! The swap layer's static scroll, called for a button press.
 void prv_attempt_scroll(SwapLayer *swap_layer, ScrollDirection direction);
+//! The swap layer's raw button handlers.
+void prv_raw_down_handler(ClickRecognizerRef recognizer, void *context);
+void prv_raw_up_handler(ClickRecognizerRef recognizer, void *context);
 
 // A list of layouts of the given heights, shown from s_index.
 static int16_t s_heights[MAX_LAYOUTS];
@@ -176,6 +200,24 @@ static LayoutLayer *prv_get_layout(SwapLayer *swap_layer, int8_t rel_position, v
 
 GSize layout_get_size(GContext *ctx, LayoutLayer *layout) {
   return layout->layer.frame.size;
+}
+
+// Whether the layouts lay their content out by how far they are scrolled, and where they last
+// were asked to lay it out, and to show it
+static bool s_snaps;
+static int16_t s_prepared;
+static int16_t s_shown;
+
+bool layout_set_scroll(LayoutLayer *layout, int16_t offset, bool show) {
+  if (!s_snaps) {
+    return false;
+  }
+  if (show) {
+    s_shown = offset;
+  } else {
+    s_prepared = offset;
+  }
+  return true;
 }
 
 static void prv_layout_did_appear(SwapLayer *swap_layer, LayoutLayer *layout, int8_t rel_change,
@@ -222,6 +264,10 @@ static void prv_press(ScrollDirection direction) {
 ///////////////////////////////////////////////////////////
 
 void test_swap_layer__initialize(void) {
+  s_snaps = false;
+  s_prepared = -1;
+  s_shown = -1;
+  s_timer_callback = nullptr;
   s_num_frame_animations = 0;
   s_count = 0;
   s_index = 0;
@@ -263,6 +309,100 @@ void test_swap_layer__scrolls_to_the_end_then_swaps(void) {
   prv_press(ScrollDirectionDown);
   cl_assert_equal_i(s_index, 1);
   cl_assert_equal_i(prv_offset(), 0);
+}
+
+// Content laid out by how far it is scrolled moves in Moook steps.
+
+static AnimationProgress prv_progress_of_frame(int frame, int num_frames) {
+  return (AnimationProgress)((ANIMATION_NORMALIZED_MAX * frame) / num_frames);
+}
+
+void test_swap_layer__snap_step_cuts_over_once(void) {
+  s_snaps = true;
+  prv_load(1, (int16_t[]){600});
+  prv_attempt_scroll(&s_swap_layer, ScrollDirectionDown);
+  Animation *step = s_swap_layer.animation;
+  const int16_t target = s_swap_layer.scroll_target;
+  cl_assert(target > 0);
+  // Laid out for where it will rest as it starts, shown as it was
+  cl_assert_equal_i(s_prepared, target);
+  cl_assert_equal_i(s_shown, -1);
+  cl_assert_equal_i(animation_get_duration(step, false, false), interpolate_moook_duration());
+
+  // The lead-in moves it as it is
+  const int num_frames = 7;
+  fake_animation_update(step, prv_progress_of_frame(2, num_frames));
+  cl_assert(prv_offset() > 0 && prv_offset() < target);
+  cl_assert_equal_i(s_shown, -1);
+  // Then it cuts over to its new layout, overshooting, and settles there
+  fake_animation_update(step, prv_progress_of_frame(3, num_frames));
+  cl_assert_equal_i(s_shown, target);
+  cl_assert(prv_offset() > target);
+  fake_animation_complete(step);
+  cl_assert_equal_i(prv_offset(), target);
+  cl_assert_equal_i(s_shown, target);
+}
+
+void test_swap_layer__snap_press_mid_step_carries_on(void) {
+  s_snaps = true;
+  prv_load(1, (int16_t[]){800});
+  prv_press(ScrollDirectionDown);
+  const int16_t first = prv_offset();
+  prv_attempt_scroll(&s_swap_layer, ScrollDirectionDown);
+  Animation *step = s_swap_layer.animation;
+  const int16_t second = s_swap_layer.scroll_target;
+  cl_assert(second > first);
+  fake_animation_update(step, prv_progress_of_frame(1, 7));
+  // A press during the lead-in heads on from where it is to a step past where it was heading
+  const int16_t where = prv_offset();
+  prv_attempt_scroll(&s_swap_layer, ScrollDirectionDown);
+  cl_assert_equal_i(s_swap_layer.scroll_from, where);
+  cl_assert(s_swap_layer.scroll_target > second);
+  const int16_t third = s_swap_layer.scroll_target;
+  cl_assert_equal_i(s_prepared, third);
+  fake_animation_complete(s_swap_layer.animation);
+  cl_assert_equal_i(prv_offset(), third);
+  cl_assert_equal_i(s_shown, third);
+}
+
+void test_swap_layer__snap_hold_steps_to_the_end(void) {
+  s_snaps = true;
+  prv_load(1, (int16_t[]){600});
+  const int16_t end = 600 - FRAME_H;
+  prv_raw_down_handler(nullptr, &s_swap_layer);
+  // A press only repeats once held well past its own step
+  cl_assert(s_timer_ms > interpolate_moook_duration());
+  fake_animation_complete(s_swap_layer.animation);
+  const int16_t first = prv_offset();
+  prv_fire_timer();
+  // Held, it steps on a press at a time, each step starting as the last one lands
+  int steps = 0;
+  int16_t prev = first;
+  while (s_swap_layer.scrolling && steps < 20) {
+    cl_assert(s_swap_layer.scroll_target > prev);
+    cl_assert(s_swap_layer.scroll_target - prev <= 48);
+    prev = s_swap_layer.scroll_target;
+    fake_animation_complete(s_swap_layer.animation);
+    steps++;
+  }
+  cl_assert_equal_i(prv_offset(), end);
+  cl_assert(steps > 1);
+  prv_raw_up_handler(nullptr, &s_swap_layer);
+}
+
+void test_swap_layer__snap_release_lets_the_step_land(void) {
+  s_snaps = true;
+  prv_load(1, (int16_t[]){600});
+  prv_raw_down_handler(nullptr, &s_swap_layer);
+  fake_animation_complete(s_swap_layer.animation);
+  prv_fire_timer();
+  const int16_t target = s_swap_layer.scroll_target;
+  prv_raw_up_handler(nullptr, &s_swap_layer);
+  // Released mid-step: that step lands, and nothing follows it
+  cl_assert(s_swap_layer.scrolling);
+  fake_animation_complete(s_swap_layer.animation);
+  cl_assert_equal_i(prv_offset(), target);
+  cl_assert(!s_swap_layer.scrolling);
 }
 
 // Round only: the banners.

@@ -178,6 +178,10 @@ typedef struct SwapLayer {
   } hold;
   /* The running animation is a scroll (not a swap), from scroll_from to scroll_target. */
   bool scrolling;
+  /* The scroll is a Moook step of content laid out for where it rests (see layout_set_scroll()),
+   * and whether it has cut over to where it ends. */
+  bool snapping;
+  bool snap_cut;
   int16_t scroll_from;
   int16_t scroll_target;
 #if PBL_ROUND

@@ -149,6 +149,7 @@ pbl_clar_test(test_swap_layer_touch
 pbl_clar_test(test_swap_layer
   MODULES gtypes
   SOURCES
+    pebble/applib/ui/animation_interpolate.c
     pebble/applib/ui/layer.c
     pebble/services/timeline/swap_layer.c
     tests/fakes/fake_animation.c
