@@ -59,6 +59,10 @@ static void prv_mark_dirty(HealthAppData *health_app_data) {
 static void prv_tick_timer_handler(struct pbl_tm *tick_time, TimeUnits units_changed) {
   HealthAppData *health_app_data = app_state_get_user_data();
   health_data_update_step_derived_metrics(health_app_data->health_data);
+#if PBL_ROUND
+  // A walk going on shades more of the steps rings
+  health_data_update_walks(health_app_data->health_data);
+#endif
   prv_mark_dirty(health_app_data);
 }
 

@@ -11,6 +11,9 @@
 // The view's sections are chosen by its buttons, so the test drives it from the inside
 #include <apps/system/health/orbit_view.c>
 
+//! Wednesday 25 November 2026, 15:45
+#define NOW_UTC 1795621500
+
 // Fakes
 ////////////////////////////////////
 
@@ -179,6 +182,57 @@ bool activity_get_sessions(uint32_t *session_entries, ActivitySession *sessions)
   return true;
 }
 
+//! Days of minutes the watch keeps, about as many as its minute file holds
+#define MINUTE_HISTORY_DAYS 5
+
+//! Steps of a minute of the sample days: about the house from 7:00 to 22:00, a walk each morning,
+//! one at lunch with a stop at the shop, and a run every other evening
+static uint8_t prv_minute_steps(time_t utc) {
+  const int day = utc / PBL_SEC_PER_DAY;
+  const int minute = (utc % PBL_SEC_PER_DAY) / PBL_SEC_PER_MIN;
+  const int walk_start = 7 * PBL_MIN_PER_HOUR + 50 + (day % 3) * 25;
+  const int walk_length = 30 + (day % 4) * 8;
+  if (minute >= walk_start && minute < walk_start + walk_length) {
+    return 104;
+  }
+  if ((minute >= 12 * PBL_MIN_PER_HOUR + 30 && minute < 12 * PBL_MIN_PER_HOUR + 45) ||
+      (minute >= 12 * PBL_MIN_PER_HOUR + 50 && minute < 13 * PBL_MIN_PER_HOUR + 5)) {
+    return 96;
+  }
+  if (day % 2 == 0 && minute >= 18 * PBL_MIN_PER_HOUR + 5 && minute < 18 * PBL_MIN_PER_HOUR + 35) {
+    return 152;
+  }
+  if (minute >= 7 * PBL_MIN_PER_HOUR && minute < 22 * PBL_MIN_PER_HOUR && minute % 4 == 0) {
+    return 25;
+  }
+  return 0;
+}
+
+static int s_minute_steps_reads;
+
+bool activity_get_minute_steps(uint8_t *steps, uint32_t num_minutes, time_t utc_start) {
+  s_minute_steps_reads++;
+  cl_assert(num_minutes <= ACTIVITY_MINUTE_STEPS_MAX_MINUTES);
+  utc_start -= utc_start % PBL_SEC_PER_MIN;
+  const time_t oldest = pbl_realtime() - MINUTE_HISTORY_DAYS * PBL_SEC_PER_DAY;
+  for (uint32_t i = 0; i < num_minutes; i++) {
+    const time_t utc = utc_start + i * PBL_SEC_PER_MIN;
+    steps[i] = (utc < oldest || utc > pbl_realtime()) ? 0 : prv_minute_steps(utc);
+  }
+  return true;
+}
+
+#define HOURS(h, m) (((h) * PBL_MIN_PER_HOUR + (m)) * PBL_SEC_PER_MIN)
+
+//! Last night's sessions, from 23:48 to 6:40, 6h 52m of sleep with 1h 40m of it deep
+#define NIGHT_UTC(h, m) (NOW_UTC - HOURS(15, 45) + HOURS(h, m))
+static const ActivitySession s_night[] = {
+  {.start_utc = NIGHT_UTC(-1, 48), .length_min = 412, .type = ActivitySessionType_Sleep},
+  {.start_utc = NIGHT_UTC(0, 40), .length_min = 45, .type = ActivitySessionType_RestfulSleep},
+  {.start_utc = NIGHT_UTC(2, 30), .length_min = 35, .type = ActivitySessionType_RestfulSleep},
+  {.start_utc = NIGHT_UTC(4, 10), .length_min = 20, .type = ActivitySessionType_RestfulSleep},
+};
+
 // Setup and Teardown
 ////////////////////////////////////
 
@@ -189,8 +243,6 @@ GContext *graphics_context_get_current_context(void) {
   return &s_ctx;
 }
 
-//! Wednesday 25 November 2026, 15:45
-#define NOW_UTC 1795621500
 
 void test_health_orbit_view__initialize(void) {
   pbl_realtime_set(NOW_UTC);
@@ -201,6 +253,7 @@ void test_health_orbit_view__initialize(void) {
   s_num_pops = 0;
   s_workout = (typeof(s_workout)){};
   s_num_sessions = 0;
+  s_minute_steps_reads = 0;
 
   framebuffer_init(&s_fb, &(GSize){PBL_DISPLAY_WIDTH, PBL_DISPLAY_HEIGHT});
   framebuffer_clear(&s_fb);
@@ -238,8 +291,6 @@ static void prv_set_typical_steps(HealthData *data, int32_t by_now, int32_t whol
   data->step_averages.average[now_quarter] += (whole_day - by_now) % rest;
 }
 
-#define HOURS(h, m) (((h) * PBL_MIN_PER_HOUR + (m)) * PBL_SEC_PER_MIN)
-
 //! A Wednesday afternoon's data: steps ahead of typical, a night shorter than typical
 static HealthData prv_sample_data(void) {
   HealthData data = {
@@ -263,6 +314,9 @@ static HealthData prv_sample_data(void) {
     .monthly_sleep_average = HOURS(7, 10),
   };
   prv_set_typical_steps(&data, 6910, 9120);
+  // Where the deep sleep and today's walks were, as the data is read
+  health_data_find_deep_sleep(s_night, PBL_ARRAY_SIZE(s_night), &data.deep_sleep_spans);
+  health_data_update_walks(&data);
   return data;
 }
 
@@ -694,6 +748,160 @@ void test_health_orbit_view__day_reads_all_the_history_kept(void) {
     cl_assert_equal_i(day.active_seconds, prv_active_seconds_on(HEALTH_DATA_NUM_DAYS - 1));
     cl_assert_equal_i(day.typical_steps, 9120);
   }
+}
+
+//! Checks stretches are \a count of the pairs in \a expected
+static void prv_check_spans(const HealthSpans *spans, const uint16_t expected[][2], int count) {
+  cl_assert_equal_i(spans->count, count);
+  for (int i = 0; i < count; i++) {
+    cl_assert_equal_i(spans->spans[i].from, expected[i][0]);
+    cl_assert_equal_i(spans->spans[i].to, expected[i][1]);
+  }
+}
+
+void test_health_orbit_view__spans_keep_their_order_and_merge_the_closest(void) {
+  HealthSpans spans = {};
+  health_data_spans_add(&spans, 500, 600);
+  health_data_spans_add(&spans, 100, 200);
+  // Touching and overlapping stretches become one
+  health_data_spans_add(&spans, 200, 250);
+  health_data_spans_add(&spans, 550, 700);
+  // Nothing, and backwards, add nothing; values past what a span holds are clamped
+  health_data_spans_add(&spans, 300, 300);
+  health_data_spans_add(&spans, 400, 350);
+  health_data_spans_add(&spans, 70000, 80000);
+  prv_check_spans(&spans, (const uint16_t[][2]){{100, 250}, {500, 700}}, 2);
+
+  // Past the most kept, the two closest together are merged, wherever they are
+  spans = (HealthSpans){};
+  const uint16_t apart[][2] = {{0, 10}, {100, 110}, {200, 210}, {300, 310}, {400, 410}, {500, 510}};
+  for (size_t i = 0; i < PBL_ARRAY_SIZE(apart); i++) {
+    health_data_spans_add(&spans, apart[i][0], apart[i][1]);
+  }
+  health_data_spans_add(&spans, 215, 220);
+  prv_check_spans(
+      &spans,
+      (const uint16_t[][2]){{0, 10}, {100, 110}, {200, 220}, {300, 310}, {400, 410}, {500, 510}},
+      HEALTH_DATA_MAX_SPANS);
+  health_data_spans_add(&spans, 600, 650);
+  prv_check_spans(
+      &spans,
+      (const uint16_t[][2]){{0, 10}, {100, 110}, {200, 310}, {400, 410}, {500, 510}, {600, 650}},
+      HEALTH_DATA_MAX_SPANS);
+}
+
+//! Sets minutes from \a start to \a end to \a steps a minute
+static void prv_set_minutes(uint8_t *minutes, int start, int end, uint8_t steps) {
+  memset(&minutes[start], steps, end - start);
+}
+
+void test_health_orbit_view__walks_are_found_as_the_activity_algorithm_detects_them(void) {
+  uint8_t minutes[200] = {};
+  HealthSpans walks;
+  // 9 minutes of walking is no walk, 10 is
+  prv_set_minutes(minutes, 20, 29, 100);
+  health_data_find_walks(minutes, PBL_ARRAY_SIZE(minutes), 900, &walks);
+  cl_assert_equal_i(walks.count, 0);
+  prv_set_minutes(minutes, 20, 30, 100);
+  health_data_find_walks(minutes, PBL_ARRAY_SIZE(minutes), 1000, &walks);
+  prv_check_spans(&walks, (const uint16_t[][2]){{0, 1000}}, 1);
+
+  // Slow minutes, under 40 steps, are not walking but count toward the steps before and after
+  memset(minutes, 10, sizeof(minutes));
+  prv_set_minutes(minutes, 0, 20, 39);
+  prv_set_minutes(minutes, 20, 40, 40);
+  // A stop of 7 minutes goes on with the walk, one of 8 ends it
+  prv_set_minutes(minutes, 47, 60, 130);
+  prv_set_minutes(minutes, 68, 80, 120);
+  // A run, faster than 130 a minute, right after a walk, is one stretch with it
+  prv_set_minutes(minutes, 80, 95, 160);
+  // Still going on at the end of the minutes, as the algorithm reports it
+  prv_set_minutes(minutes, 189, 200, 50);
+  const int32_t total =
+      20 * 39 + 20 * 40 + 7 * 10 + 13 * 130 + 8 * 10 + 12 * 120 + 15 * 160 + 94 * 10 + 11 * 50;
+  cl_assert_equal_i(total, 8750);
+  health_data_find_walks(minutes, PBL_ARRAY_SIZE(minutes), total, &walks);
+  prv_check_spans(&walks, (const uint16_t[][2]){{780, 3340}, {3420, 7260}, {8200, 8750}}, 3);
+
+  // The minutes' steps are scaled to the day's, which counts them all
+  health_data_find_walks(minutes, PBL_ARRAY_SIZE(minutes), total / 2, &walks);
+  prv_check_spans(&walks, (const uint16_t[][2]){{390, 1670}, {1710, 3630}, {4100, 4375}}, 3);
+
+  // Without steps, or minutes, there are none
+  health_data_find_walks(minutes, PBL_ARRAY_SIZE(minutes), 0, &walks);
+  cl_assert_equal_i(walks.count, 0);
+  memset(minutes, 0, sizeof(minutes));
+  health_data_find_walks(minutes, PBL_ARRAY_SIZE(minutes), 1000, &walks);
+  cl_assert_equal_i(walks.count, 0);
+}
+
+void test_health_orbit_view__deep_sleep_is_placed_in_minutes_of_sleep(void) {
+  // Asleep from 22:00 to 1:00, awake half an hour, asleep again to 6:30, then a nap at 14:00
+  const time_t night = NOW_UTC;
+  const ActivitySession sessions[] = {
+    {.start_utc = night, .length_min = 180, .type = ActivitySessionType_Sleep},
+    {.start_utc = night + HOURS(1, 0), .length_min = 30, .type = ActivitySessionType_RestfulSleep},
+    {.start_utc = night + HOURS(3, 30), .length_min = 300, .type = ActivitySessionType_Sleep},
+    {.start_utc = night + HOURS(4, 0), .length_min = 40, .type = ActivitySessionType_RestfulSleep},
+    // Merged away into the one before it
+    {.start_utc = night + HOURS(4, 40), .length_min = 0, .type = ActivitySessionType_None},
+    {.start_utc = night + HOURS(5, 0), .length_min = 30, .type = ActivitySessionType_Walk},
+    {.start_utc = night + HOURS(16, 0), .length_min = 40, .type = ActivitySessionType_Nap},
+    {.start_utc = night + HOURS(16, 10), .length_min = 15, .type = ActivitySessionType_RestfulNap},
+  };
+  HealthSpans deep;
+  health_data_find_deep_sleep(sessions, PBL_ARRAY_SIZE(sessions), &deep);
+  // The awake half hour and the walk are not sleep, so they take up none of the ring
+  prv_check_spans(&deep, (const uint16_t[][2]){{60, 90}, {210, 250}, {490, 505}}, 3);
+}
+
+void test_health_orbit_view__days_have_their_walks_and_last_night_its_deep_sleep(void) {
+  s_data = prv_sample_data();
+  // Today's walks were read with the data, last night's deep sleep found in its sessions
+  HealthDayData day;
+  health_data_day_get(&s_data, 0, &day);
+  cl_assert_equal_i(s_minute_steps_reads, 1);
+  cl_assert_equal_i(day.walks.count, 2);
+  cl_assert(day.walks.spans[0].to <= day.walks.spans[1].from);
+  cl_assert(day.walks.spans[1].to <= day.steps);
+  prv_check_spans(&day.deep_sleep_spans, (const uint16_t[][2]){{52, 97}, {162, 197}, {262, 282}},
+                  3);
+
+  // Read again only once there are new steps
+  health_data_update_walks(&s_data);
+  cl_assert_equal_i(s_minute_steps_reads, 1);
+  s_data.step_data[0] += 100;
+  health_data_update_walks(&s_data);
+  cl_assert_equal_i(s_minute_steps_reads, 2);
+
+  // A day of the week reads its walks once, as the week does; the nights before last night have
+  // no sessions left, so no times for their deep sleep
+  health_data_day_get(&s_data, 2, &day);
+  cl_assert_equal_i(s_minute_steps_reads, 3);
+  cl_assert(day.walks.count >= 2);
+  cl_assert(day.walks.spans[day.walks.count - 1].to <= day.steps);
+  cl_assert_equal_i(day.deep_sleep_spans.count, 0);
+  cl_assert(health_data_walks_get(&s_data, 2));
+  cl_assert(!health_data_walks_get(&s_data, 3));
+  health_data_read_week_walks(&s_data);
+  cl_assert_equal_i(s_minute_steps_reads, 3 + HEALTH_DATA_WALK_DAYS - 2);
+  health_data_day_get(&s_data, 2, &day);
+  cl_assert_equal_i(s_minute_steps_reads, 3 + HEALTH_DATA_WALK_DAYS - 2);
+
+  // A day of the week before the minutes the watch keeps has none, nor is one before the week read
+  health_data_day_get(&s_data, MINUTE_HISTORY_DAYS + 1, &day);
+  cl_assert_equal_i(day.walks.count, 0);
+  s_data.step_data[8] = 6000;
+  health_data_day_get(&s_data, 8, &day);
+  cl_assert_equal_i(day.walks.count, 0);
+  cl_assert_equal_i(s_minute_steps_reads, 3 + HEALTH_DATA_WALK_DAYS - 2);
+
+  // A new day forgets the days the walks were read for
+  pbl_realtime_set(NOW_UTC + PBL_SEC_PER_DAY);
+  cl_assert(health_data_walks_get(&s_data, 2));
+  health_data_update_walks(&s_data);
+  cl_assert(!health_data_walks_get(&s_data, 2));
+  cl_assert(health_data_walks_get(&s_data, 0));
 }
 
 void test_health_orbit_view__wrap_keeps_turning_the_same_way(void) {

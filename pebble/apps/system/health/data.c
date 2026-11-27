@@ -14,6 +14,7 @@
 #include <pbl/services/activity/workout_service.h>
 #include <pbl/services/time.h>
 #include <pbl/util/math.h>
+#include <pbl/util/size.h>
 #include <pbl/util/testing.h>
 #include <pbl/util/units.h>
 
@@ -45,6 +46,224 @@ PBL_T_STATIC void prv_merge_adjacent_sessions(ActivitySession *current, Activity
     previous->type = ActivitySessionType_None;
   }
 }
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+// Walks and deep sleep
+
+//! The activity algorithm's walk and run detectors: the steps a minute each counts as active, how
+//! long a walk or run lasts at least, and how many minutes below that it goes on through
+#define WALK_MIN_STEPS_PER_MIN             40
+#define RUN_MIN_STEPS_PER_MIN              130
+#define STEP_ACTIVITY_MIN_MINUTES          10
+#define STEP_ACTIVITY_MAX_INACTIVE_MINUTES 7
+
+void health_data_spans_add(HealthSpans *spans, int32_t from, int32_t to) {
+  from = PBL_CLAMP(from, 0, UINT16_MAX);
+  to = PBL_CLAMP(to, from, UINT16_MAX);
+  if (to <= from) {
+    return;
+  }
+  // The stretch takes in those it touches, the others keep their order round it
+  HealthSpan span = {from, to};
+  HealthSpan kept[HEALTH_DATA_MAX_SPANS + 1];
+  int count = 0;
+  for (int i = 0; i < spans->count; i++) {
+    const HealthSpan *other = &spans->spans[i];
+    if (other->to < span.from || other->from > span.to) {
+      kept[count++] = *other;
+    } else {
+      span.from = PBL_MIN(span.from, other->from);
+      span.to = PBL_MAX(span.to, other->to);
+    }
+  }
+  int at = count;
+  while (at > 0 && kept[at - 1].from > span.from) {
+    kept[at] = kept[at - 1];
+    at--;
+  }
+  kept[at] = span;
+  count++;
+  if (count > HEALTH_DATA_MAX_SPANS) {
+    // The two closest together become one
+    int closest = 0;
+    for (int i = 1; i < count - 1; i++) {
+      if (kept[i + 1].from - kept[i].to < kept[closest + 1].from - kept[closest].to) {
+        closest = i;
+      }
+    }
+    kept[closest].to = kept[closest + 1].to;
+    count--;
+    memmove(&kept[closest + 1], &kept[closest + 2], (count - closest - 1) * sizeof(HealthSpan));
+  }
+  spans->count = count;
+  memcpy(spans->spans, kept, count * sizeof(HealthSpan));
+}
+
+//! A walk or run detector going through a day's minutes
+typedef struct StepActivity {
+  uint8_t min_steps;
+  uint8_t max_steps;
+  //! First and last active minute of the walk or run going on, start -1 if none
+  int32_t start;
+  int32_t last;
+  uint8_t inactive;
+  //! The day's steps before its first minute and by the end of its last
+  uint32_t steps_before;
+  uint32_t steps_by_end;
+} StepActivity;
+
+static void prv_end_step_activity(StepActivity *activity, uint32_t total, int32_t day_steps,
+                                  HealthSpans *walks) {
+  if (activity->start >= 0 && activity->last + 1 - activity->start >= STEP_ACTIVITY_MIN_MINUTES) {
+    health_data_spans_add(walks, (int64_t)activity->steps_before * day_steps / total,
+                          (int64_t)activity->steps_by_end * day_steps / total);
+  }
+  activity->start = -1;
+  activity->inactive = 0;
+}
+
+void health_data_find_walks(const uint8_t *minute_steps, uint32_t num_minutes, int32_t day_steps,
+                            HealthSpans *walks_out) {
+  *walks_out = (HealthSpans){};
+  uint32_t total = 0;
+  for (uint32_t i = 0; i < num_minutes; i++) {
+    total += minute_steps[i];
+  }
+  if (total == 0 || day_steps <= 0) {
+    return;
+  }
+  // The walk and run detectors run side by side, a minute fast enough for both counting for both
+  StepActivity activities[] = {
+    {.min_steps = WALK_MIN_STEPS_PER_MIN, .max_steps = RUN_MIN_STEPS_PER_MIN, .start = -1},
+    {.min_steps = RUN_MIN_STEPS_PER_MIN, .max_steps = UINT8_MAX, .start = -1},
+  };
+  uint32_t steps = 0;
+  for (uint32_t i = 0; i < num_minutes; i++) {
+    const uint8_t minute = minute_steps[i];
+    const uint32_t before = steps;
+    steps += minute;
+    for (size_t k = 0; k < PBL_ARRAY_SIZE(activities); k++) {
+      StepActivity *activity = &activities[k];
+      if (minute >= activity->min_steps && minute <= activity->max_steps) {
+        if (activity->start < 0) {
+          activity->start = i;
+          activity->steps_before = before;
+        }
+        activity->last = i;
+        activity->inactive = 0;
+        activity->steps_by_end = steps;
+      } else if (activity->start >= 0 &&
+                 ++activity->inactive > STEP_ACTIVITY_MAX_INACTIVE_MINUTES) {
+        prv_end_step_activity(activity, total, day_steps, walks_out);
+      }
+    }
+  }
+  // Those going on at the end of the minutes, as the algorithm reports them going on
+  for (size_t k = 0; k < PBL_ARRAY_SIZE(activities); k++) {
+    prv_end_step_activity(&activities[k], total, day_steps, walks_out);
+  }
+}
+
+//! Minutes of a night's sleep before \a utc
+static int32_t prv_minutes_slept_by(const ActivitySession *sessions, uint32_t num_sessions,
+                                    time_t utc) {
+  int32_t seconds = 0;
+  for (uint32_t i = 0; i < num_sessions; i++) {
+    const ActivitySession *session = &sessions[i];
+    if (session->type == ActivitySessionType_Sleep || session->type == ActivitySessionType_Nap) {
+      seconds += PBL_CLAMP(utc - session->start_utc, 0, session->length_min * PBL_SEC_PER_MIN);
+    }
+  }
+  return seconds / PBL_SEC_PER_MIN;
+}
+
+void health_data_find_deep_sleep(const ActivitySession *sessions, uint32_t num_sessions,
+                                 HealthSpans *deep_out) {
+  *deep_out = (HealthSpans){};
+  for (uint32_t i = 0; i < num_sessions; i++) {
+    const ActivitySession *session = &sessions[i];
+    if (session->type == ActivitySessionType_RestfulSleep ||
+        session->type == ActivitySessionType_RestfulNap) {
+      const time_t end_utc = session->start_utc + session->length_min * PBL_SEC_PER_MIN;
+      health_data_spans_add(deep_out,
+                            prv_minutes_slept_by(sessions, num_sessions, session->start_utc),
+                            prv_minutes_slept_by(sessions, num_sessions, end_utc));
+    }
+  }
+}
+
+#if PBL_ROUND
+//! Reads the walks and runs of the day \a days_ago days before today from its minutes, today's to
+//! now, none if the watch no longer has them
+static PBL_NOINLINE void prv_read_walks(int days_ago, int32_t day_steps, HealthSpans *walks_out) {
+  *walks_out = (HealthSpans){};
+  if (day_steps <= 0) {
+    return;
+  }
+  // From noon, a day away from midnight whichever way the clock changed
+  const time_t noon = time_start_of_today() - days_ago * PBL_SEC_PER_DAY + PBL_SEC_PER_DAY / 2;
+  const time_t start = time_util_get_midnight_of(noon);
+  const time_t end =
+      days_ago ? time_util_get_midnight_of(noon + PBL_SEC_PER_DAY) : pbl_realtime() + 1;
+  const uint32_t num_minutes = PBL_MIN((end - start + PBL_SEC_PER_MIN - 1) / PBL_SEC_PER_MIN,
+                                       ACTIVITY_MINUTE_STEPS_MAX_MINUTES);
+  uint8_t *minute_steps = app_malloc(num_minutes);
+  if (!minute_steps) {
+    return;
+  }
+  if (activity_get_minute_steps(minute_steps, num_minutes, start)) {
+    health_data_find_walks(minute_steps, num_minutes, day_steps, walks_out);
+  }
+  app_free(minute_steps);
+}
+
+//! Forgets the walks read once it is a new day
+static void prv_check_walks_day(HealthData *health_data) {
+  const time_t midnight = time_start_of_today();
+  if (midnight != health_data->walks_midnight) {
+    health_data->walks_read = 0;
+    health_data->walks_midnight = midnight;
+  }
+}
+
+void health_data_update_walks(HealthData *health_data) {
+  prv_check_walks_day(health_data);
+  const int32_t steps = health_data->step_data[0];
+  if ((health_data->walks_read & 1) && steps == health_data->walks_steps) {
+    return;
+  }
+  prv_read_walks(0, steps, &health_data->walks[0]);
+  health_data->walks_read |= 1;
+  health_data->walks_steps = steps;
+}
+
+//! Reads the walks and runs of a day of the week before today if not yet read
+static void prv_read_week_day_walks(HealthData *health_data, int days_ago) {
+  if (!(health_data->walks_read & (1 << days_ago))) {
+    prv_read_walks(days_ago, health_data->step_data[days_ago], &health_data->walks[days_ago]);
+    health_data->walks_read |= (1 << days_ago);
+  }
+}
+
+void health_data_read_week_walks(HealthData *health_data) {
+  prv_check_walks_day(health_data);
+  for (int i = 1; i < HEALTH_DATA_WALK_DAYS; i++) {
+    prv_read_week_day_walks(health_data, i);
+  }
+}
+
+const HealthSpans *health_data_walks_get(HealthData *health_data, int days_ago) {
+  if (days_ago < 0 || days_ago >= HEALTH_DATA_WALK_DAYS ||
+      !(health_data->walks_read & (1 << days_ago))) {
+    return nullptr;
+  }
+  return &health_data->walks[days_ago];
+}
+
+const HealthSpans *health_data_deep_sleep_spans_get(HealthData *health_data) {
+  return &health_data->deep_sleep_spans;
+}
+#endif
 
 // API Functions
 ////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -134,6 +353,17 @@ void health_data_update(HealthData *health_data) {
       previous_session = session;
     }
   }
+
+#if PBL_ROUND
+  // Deep sleep is only drawn where it happened in the night the sessions are of
+  if (health_data->sleep_data[0] > 0) {
+    health_data_find_deep_sleep(health_data->activity_sessions, health_data->num_activity_sessions,
+                                &health_data->deep_sleep_spans);
+  } else {
+    health_data->deep_sleep_spans = (HealthSpans){};
+  }
+  health_data_update_walks(health_data);
+#endif
 
   //! HR related data
   health_data_update_current_bpm(health_data);
@@ -338,6 +568,14 @@ void health_data_day_get(HealthData *health_data, int days_ago, HealthDayData *d
       .deep_sleep = health_data->deep_sleep,
       .typical_sleep = health_data->typical_sleep,
     };
+#if PBL_ROUND
+    if (health_data->walks_read & 1) {
+      day_out->walks = health_data->walks[0];
+    }
+    if (health_data->sleep_data[0] > 0) {
+      day_out->deep_sleep_spans = health_data->deep_sleep_spans;
+    }
+#endif
     return;
   }
   *day_out = (HealthDayData){
@@ -347,6 +585,15 @@ void health_data_day_get(HealthData *health_data, int days_ago, HealthDayData *d
     .deep_sleep = PBL_MAX(health_data->deep_sleep_data[days_ago], 0),
   };
   prv_load_past_day(day_out);
+#if PBL_ROUND
+  // The minute file holds under a week of minutes, so only the days of the week can have walks.
+  // The sessions of the nights before last night are gone, so their deep sleep has no times.
+  if (days_ago < HEALTH_DATA_WALK_DAYS) {
+    prv_check_walks_day(health_data);
+    prv_read_week_day_walks(health_data, days_ago);
+    day_out->walks = health_data->walks[days_ago];
+  }
+#endif
 }
 
 //! The latest walk, run or open workout the watch detected that is still going on

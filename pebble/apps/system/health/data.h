@@ -23,6 +23,26 @@ typedef struct HealthData HealthData;
 //! Days the health data has the history of, today and the days before it: all the watch keeps
 #define HEALTH_DATA_NUM_DAYS ACTIVITY_HISTORY_DAYS
 
+//! A stretch of a day's value, from how much of it there was when the stretch began to how much
+//! there was when it ended
+typedef struct HealthSpan {
+  uint16_t from;
+  uint16_t to;
+} HealthSpan;
+
+//! Most stretches a day keeps of a kind, the closest ones merged past it
+#define HEALTH_DATA_MAX_SPANS 6
+
+//! Stretches of a day's value, in the order they happened
+typedef struct HealthSpans {
+  uint8_t count;
+  HealthSpan spans[HEALTH_DATA_MAX_SPANS];
+} HealthSpans;
+
+//! Days the walks are read for, today and the days of the week before it: the minute file they
+//! are found in holds about five and a half days of minutes
+#define HEALTH_DATA_WALK_DAYS 7
+
 //! What the overview of a day shows
 typedef struct HealthDayData {
   //! How many days before today the day is
@@ -38,6 +58,11 @@ typedef struct HealthDayData {
   int32_t deep_sleep;
   //! Typical sleep of a night ending on the day's weekday
   int32_t typical_sleep;
+  //! The day's walks and runs, in its steps, as far as the watch has its minutes, none for a day
+  //! before the week
+  HealthSpans walks;
+  //! The night's deep sleep, in minutes of its sleep, if the watch still has its sessions
+  HealthSpans deep_sleep_spans;
 } HealthDayData;
 
 //! What the workout going on is at
@@ -180,6 +205,26 @@ int32_t health_data_current_deep_sleep_get(HealthData *health_data);
 //! @param days_ago How many days before today the day is
 //! @param[out] day_out What the overview of the day shows
 void health_data_day_get(HealthData *health_data, int days_ago, HealthDayData *day_out);
+
+//! Reads today's walks and runs again if there have been steps since they were last read, and
+//! forgets those of the days before it once it is a new day
+//! @param health_data A pointer to the health data to use
+void health_data_update_walks(HealthData *health_data);
+
+//! Reads the walks and runs of the days of the week before today not yet read
+//! @param health_data A pointer to the health data to use
+void health_data_read_week_walks(HealthData *health_data);
+
+//! Get the walks and runs of a day of the week as read
+//! @param health_data A pointer to the health data to use
+//! @param days_ago How many days before today the day is, less than HEALTH_DATA_WALK_DAYS
+//! @return The day's walks and runs, nullptr if not read
+const HealthSpans *health_data_walks_get(HealthData *health_data, int days_ago);
+
+//! Get the deep sleep of the night of health_data_sleep_get()'s first entry
+//! @param health_data A pointer to the health data to use
+//! @return Its deep sleep in minutes of its sleep, none if the watch no longer has its sessions
+const HealthSpans *health_data_deep_sleep_spans_get(HealthData *health_data);
 
 //! Read the workout going on from the workout service, or else the walk, run or open workout the
 //! watch has detected and is still going on
