@@ -47,6 +47,9 @@ config NOTIFICATION_TEXT_BLOCK
       the display, and the card scrolls in Moook steps that cut over to
       each new layout.
 
+      Off, the message runs in a column, wrapped once, and its last
+      lines run edge to edge inside the display where the card ends.
+
 config SERVICE_ALERTS_LOG_LEVEL_RUNTIME
     default y if !RECOVERY_FW
 

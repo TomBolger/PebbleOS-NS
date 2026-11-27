@@ -5,6 +5,7 @@
 
 #include <pbl/kernel/assert.h>
 #include <pbl/services/timeline/notification_layout.h>
+#include <pbl/services/timeline/notification_text.h>
 #include <pbl/services/timeline/notification_text_block.h>
 #include <pbl/util/trig.h>
 
@@ -516,6 +517,21 @@ void test_notification_window__long_body(void) {
   FAKE_GRAPHICS_CONTEXT_CHECK_DEST_BITMAP_FILE();
 }
 
+void test_notification_window__one_line_too_long(void) {
+  // As it arrives, without a timestamp, its last rows reach the bottom of the display: a row
+  // more than fits clips at rest, where there is more to scroll to, and fits at the end
+  s_test_data = (NotificationWindowTestData){
+    .icon_id = TIMELINE_RESOURCE_NOTIFICATION_FACEBOOK_MESSENGER,
+    .title = "Alex Morgan",
+    .body =
+        "Running a bit late, be there in ten minutes. Grab us a table by the window if you "
+        "can, and order me a flat white with oat milk and a croissant. I will pay you back!",
+    .background_color = GColorPictonBlue,
+  };
+  prv_prepare_canvas_and_render_notification_windows(1 /* num_down_scrolls */);
+  FAKE_GRAPHICS_CONTEXT_CHECK_DEST_BITMAP_FILE();
+}
+
 void test_notification_window__text_block(void) {
 #if PBL_ROUND
   GContext *ctx = fake_graphics_context_get_context();
@@ -594,6 +610,94 @@ void test_notification_window__text_block(void) {
   cl_assert_equal_p(notification_text_block_shown(tb), next);
   cl_assert_equal_i(next->scroll, 48);
   notification_text_block_destroy(tb);
+#endif
+}
+
+#if PBL_ROUND
+static const char *s_short_body =
+    "Running a bit late, be there in ten. Grab us a table by the window?";
+
+//! Checks a message fitted to the display: its rows hold the message in order, each fits where it
+//! runs, and at the end of scrolling each fits inside the display where it is.
+static void prv_check_fit(NotificationTextFit *fit, GContext *ctx, const char *body,
+                          const NotificationTextFitPlace *place) {
+  const NotificationText *nt = &fit->text;
+  const int16_t end = notification_text_fit_end_scroll(place, notification_text_fit_height(fit));
+  char line[128];
+  for (uint16_t r = 0; r < fit->num_rows; r++) {
+    const uint16_t start = fit->starts[r];
+    const uint16_t stop = (r + 1 < fit->num_rows) ? fit->starts[r + 1] : nt->length;
+    cl_assert(start < stop);
+    cl_assert(stop - start < sizeof(line));
+    memcpy(line, body + start, stop - start);
+    line[stop - start] = '\0';
+    const GSize size = graphics_text_layout_get_max_used_size(
+        ctx, line, nt->font, GRect(0, 0, fit->widths[r], 1000), GTextOverflowModeWordWrap,
+        GTextAlignmentLeft, nullptr);
+    cl_assert(size.h <= nt->line_h);
+    // Where the card ends, the row has room for its width: in its column, or inside the display
+    const int16_t top = place->card_top + place->top + r * nt->line_h - end;
+    const int16_t room = notification_text_row_room(nt, top, 0).size_w;
+    cl_assert(fit->widths[r] <= PBL_MAX(notification_text_fit_row_width(fit, top), room));
+  }
+}
+#endif
+
+void test_notification_window__text_fit(void) {
+#if PBL_ROUND
+  GContext *ctx = fake_graphics_context_get_context();
+  GFont font = fonts_get_system_font(FONT_KEY_GOTHIC_24_BOLD);
+  const GRangeHorizontal column = {30, 200};
+  NotificationTextFit fit;
+  cl_assert(
+      notification_text_fit_init(&fit, ctx, s_long_body, font, 0, GTextAlignmentCenter, column, 8));
+
+  // Rows keep their column above the middle of the display, and below it run edge to edge,
+  // narrowing with the display, never too narrow to hold text
+  cl_assert_equal_i(notification_text_fit_row_width(&fit, 20), 200);
+  cl_assert_equal_i(notification_text_fit_row_width(&fit, 100), 200);
+  cl_assert(notification_text_fit_row_width(&fit, 120) > 200);
+  int16_t prev = INT16_MAX;
+  for (int16_t top = 120; top < PBL_DISPLAY_HEIGHT + 24; top += 4) {
+    const int16_t w = notification_text_fit_row_width(&fit, top);
+    cl_assert(w <= prev);
+    cl_assert(w >= NOTIFICATION_TEXT_MIN_ROW_WIDTH);
+    prev = w;
+  }
+  cl_assert(notification_text_fit_row_width(&fit, 200) < 200);
+
+  // Until laid out, it is wrapped in its column
+  for (uint16_t r = 0; r < fit.num_rows; r++) {
+    cl_assert_equal_i(fit.widths[r], 200);
+  }
+  const int16_t column_h = notification_text_fit_height(&fit);
+
+  // The card scrolls until its end is at the bottom of the frame
+  const NotificationTextFitPlace place = {.card_top = 20, .top = 72, .after = 60, .frame_h = 240};
+  cl_assert_equal_i(notification_text_fit_end_scroll(&place, 100), 0);
+  cl_assert_equal_i(notification_text_fit_end_scroll(&place, 200), 92);
+
+  // A long message: its last lines fit inside the display where the card ends, about as tall as
+  // in its column
+  const int16_t h = notification_text_fit_lay_out(&fit, ctx, &place);
+  cl_assert_equal_i(h, notification_text_fit_height(&fit));
+  cl_assert(h >= column_h - 2 * fit.text.line_h);
+  cl_assert(h <= column_h + 2 * fit.text.line_h);
+  prv_check_fit(&fit, ctx, s_long_body, &place);
+  // With nothing below it, its last rows reach the bottom of the display, narrower than the column
+  const NotificationTextFitPlace bare = {.card_top = 20, .top = 72, .after = 20, .frame_h = 240};
+  notification_text_fit_lay_out(&fit, ctx, &bare);
+  prv_check_fit(&fit, ctx, s_long_body, &bare);
+  cl_assert(fit.widths[fit.num_rows - 1] < 200);
+  notification_text_fit_deinit(&fit);
+
+  // A short message that fits without scrolling fits where it rests
+  cl_assert(notification_text_fit_init(&fit, ctx, s_short_body, font, 0, GTextAlignmentCenter,
+                                       column, 8));
+  const int16_t short_h = notification_text_fit_lay_out(&fit, ctx, &place);
+  cl_assert_equal_i(notification_text_fit_end_scroll(&place, short_h), 0);
+  prv_check_fit(&fit, ctx, s_short_body, &place);
+  notification_text_fit_deinit(&fit);
 #endif
 }
 

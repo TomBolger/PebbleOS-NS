@@ -184,4 +184,128 @@ GRangeHorizontal notification_text_row_room(const NotificationText *nt, int16_t 
   const GRangeVertical rows = {top + nt->font_h / 2, nt->font_h - nt->font_h / 2};
   return g_perimeter_for_display->callback(g_perimeter_for_display, &s_display, rows, inset);
 }
+
+// Fitted to the display where the card ends
+/////////////////////////////////////////////
+
+int16_t notification_text_fit_row_width(const NotificationTextFit *fit, int16_t top) {
+  const NotificationText *nt = &fit->text;
+  // Only the bottom of the message is fitted: above the middle of the display it keeps its column,
+  // and below it runs edge to edge
+  if (top + nt->font_h / 2 <= s_display.h / 2) {
+    return fit->column.size_w;
+  }
+  const int16_t room = notification_text_row_room(nt, top, fit->inset).size_w;
+  return PBL_MAX(room, NOTIFICATION_TEXT_MIN_ROW_WIDTH);
+}
+
+int16_t notification_text_fit_end_scroll(const NotificationTextFitPlace *place, int16_t height) {
+  return PBL_MAX(place->top + height + place->after - place->frame_h, 0);
+}
+
+int16_t notification_text_fit_height(const NotificationTextFit *fit) {
+  return fit->num_rows * fit->text.line_h;
+}
+
+//! Wraps the message into rows whose widths are where they are with its first row's top at
+//! `first_top` on screen, or all in its column for INT16_MAX.
+static bool prv_fit_wrap(NotificationTextFit *fit, GContext *ctx, int16_t first_top) {
+  NotificationText *nt = &fit->text;
+  const uint16_t chunk = 16;
+  uint16_t capacity = 0;
+  fit->num_rows = 0;
+  uint16_t start = 0;
+  while (start < nt->length) {
+    if (fit->num_rows == capacity) {
+      capacity += chunk;
+      uint16_t *starts = applib_realloc(fit->starts, capacity * sizeof(*starts));
+      if (starts) {
+        fit->starts = starts;
+      }
+      int16_t *widths = applib_realloc(fit->widths, capacity * sizeof(*widths));
+      if (widths) {
+        fit->widths = widths;
+      }
+      if (!starts || !widths) {
+        fit->num_rows = 0;
+        return false;
+      }
+    }
+    const int16_t width =
+        (first_top == INT16_MAX)
+            ? fit->column.size_w
+            : notification_text_fit_row_width(fit, first_top + fit->num_rows * nt->line_h);
+    fit->starts[fit->num_rows] = start;
+    fit->widths[fit->num_rows++] = width;
+    start = notification_text_next_row(nt, notification_text_wrap_forward(nt, ctx, start, width));
+  }
+  return true;
+}
+
+bool notification_text_fit_init(NotificationTextFit *fit, GContext *ctx, const char *str,
+                                GFont font, int16_t line_spacing_delta, GTextAlignment alignment,
+                                GRangeHorizontal column, uint8_t inset) {
+  *fit = (NotificationTextFit){.column = column, .inset = inset};
+  if (!notification_text_init(&fit->text, str, font, line_spacing_delta, alignment)) {
+    return false;
+  }
+  if (!prv_fit_wrap(fit, ctx, INT16_MAX)) {
+    notification_text_fit_deinit(fit);
+    return false;
+  }
+  return true;
+}
+
+void notification_text_fit_deinit(NotificationTextFit *fit) {
+  notification_text_deinit(&fit->text);
+  applib_free(fit->starts);
+  applib_free(fit->widths);
+  fit->starts = nullptr;
+  fit->widths = nullptr;
+  fit->num_rows = 0;
+}
+
+int16_t notification_text_fit_lay_out(NotificationTextFit *fit, GContext *ctx,
+                                      const NotificationTextFitPlace *place) {
+  // Where the card ends depends on how tall the message is, which depends on how it is wrapped
+  // there. Rows fitted for an end no lower than where it turns out to be only get more room there,
+  // so the message is wrapped again until its height settles, else as for the last height that
+  // was no taller than it came out.
+  const int16_t first_top = place->card_top + place->top;
+  int16_t assumed = notification_text_fit_height(fit);
+  int16_t fits = assumed;
+  for (int i = 0; i < 4; i++) {
+    prv_fit_wrap(fit, ctx, first_top - notification_text_fit_end_scroll(place, assumed));
+    const int16_t height = notification_text_fit_height(fit);
+    if (height == assumed) {
+      return height;
+    }
+    if (height > assumed) {
+      fits = assumed;
+    }
+    assumed = height;
+  }
+  prv_fit_wrap(fit, ctx, first_top - notification_text_fit_end_scroll(place, fits));
+  return notification_text_fit_height(fit);
+}
+
+void notification_text_fit_draw(NotificationTextFit *fit, GContext *ctx, GPoint origin) {
+  NotificationText *nt = &fit->text;
+  const GRect *clip = &ctx->draw_state.clip_box;
+  const int16_t to_global = ctx->draw_state.drawing_box.origin.y + origin.y;
+  for (uint16_t row = 0; row < fit->num_rows; row++) {
+    const int16_t y = row * nt->line_h;
+    if ((to_global + y + nt->line_h <= clip->origin.y) ||
+        (to_global + y >= clip->origin.y + clip->size.h)) {
+      continue;
+    }
+    const int16_t w = fit->widths[row];
+    const GRect box = {
+      {fit->column.origin_x + (fit->column.size_w - w) / 2, origin.y + y},
+      {w, nt->font_h}
+    };
+    const uint16_t end = (row + 1 < fit->num_rows) ? fit->starts[row + 1] : nt->length;
+    notification_text_draw_row(nt, ctx, fit->starts[row], end, &box);
+  }
+}
 #endif

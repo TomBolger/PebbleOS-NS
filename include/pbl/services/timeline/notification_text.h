@@ -14,7 +14,9 @@
  * @brief A round notification's message, wrapped a row at a time to the shape of the display.
  *
  * Rows are wrapped greedily by word, each as the text engine measures it, so that each can be
- * as wide as the display is where it is, and drawn one by one.
+ * as wide as the display is where it is, and drawn one by one. A message is laid out once for
+ * where its card ends, so that its last lines fit inside the display there: see
+ * notification_text_fit_lay_out().
  * @{
  */
 
@@ -75,6 +77,73 @@ void notification_text_draw_row(NotificationText *text, GContext *ctx, uint16_t 
  */
 GRangeHorizontal notification_text_row_room(const NotificationText *text, int16_t top,
                                             uint8_t inset);
+
+/** @brief A message laid out so that its last lines fit inside the display where its card ends. */
+typedef struct NotificationTextFit {
+  /** The message. */
+  NotificationText text;
+  /** Where its rows run above the middle of the display. */
+  GRangeHorizontal column;
+  /** How far inside the display's edge its last lines run. */
+  uint8_t inset;
+  /** Number of rows. */
+  uint16_t num_rows;
+  /** Where each row starts. */
+  uint16_t *starts;
+  /** How wide each row runs, centered on the column. */
+  int16_t *widths;
+} NotificationTextFit;
+
+/** @brief Where a message is on its card, and where the card is on screen. */
+typedef struct {
+  /** Where the card's top is on screen when it is at rest. */
+  int16_t card_top;
+  /** Where the message's first row is on the card. */
+  int16_t top;
+  /** The height of the card below the message. */
+  int16_t after;
+  /** The height the card scrolls in: it scrolls until its end is at the bottom of that. */
+  int16_t frame_h;
+} NotificationTextFitPlace;
+
+/**
+ * @brief How wide a row of a message fitted to the display runs: its column above the middle of
+ * the display, and below it edge to edge, as wide as the display is there.
+ * @param top Where the row's top is on screen.
+ */
+int16_t notification_text_fit_row_width(const NotificationTextFit *fit, int16_t top);
+
+/** @brief How far the card of a message `height` tall scrolls at most. */
+int16_t notification_text_fit_end_scroll(const NotificationTextFitPlace *place, int16_t height);
+
+/**
+ * @brief Copy a message to fit it; it is wrapped in its column until laid out.
+ * @return false if out of memory.
+ */
+bool notification_text_fit_init(NotificationTextFit *fit, GContext *ctx, const char *str,
+                                GFont font, int16_t line_spacing_delta, GTextAlignment alignment,
+                                GRangeHorizontal column, uint8_t inset);
+
+/** @brief Free a fitted message. */
+void notification_text_fit_deinit(NotificationTextFit *fit);
+
+/**
+ * @brief Wrap the message once for where its card ends: its rows keep that wrapping wherever the
+ * card scrolls, and at the end the rows in the lower half of the display run edge to edge inside
+ * it.
+ * @return The message's height.
+ */
+int16_t notification_text_fit_lay_out(NotificationTextFit *fit, GContext *ctx,
+                                      const NotificationTextFitPlace *place);
+
+/** @brief The message's height as wrapped. */
+int16_t notification_text_fit_height(const NotificationTextFit *fit);
+
+/**
+ * @brief Draw the message's rows.
+ * @param origin Where its first row is in the drawing box.
+ */
+void notification_text_fit_draw(NotificationTextFit *fit, GContext *ctx, GPoint origin);
 
 /** @} */
 #endif

@@ -9,6 +9,7 @@
 #include <pbl/services/notifications/notification_style.h>
 #include <pbl/services/timeline/notification_jumboji_table.h>
 #include <pbl/services/timeline/notification_layout.h>
+#include <pbl/services/timeline/notification_text.h>
 #include <pbl/services/timeline/notification_text_block.h>
 #include <pbl/services/timeline/timeline_resources.h>
 #include <pbl/util/math.h>
@@ -279,23 +280,25 @@ bool notification_layout_get_image_size(const LayoutLayer *layout_ref, GSize *si
 }
 #endif
 
-#if NOTIFICATION_TEXT_BLOCK
+#if PBL_ROUND
 static int16_t prv_notif_status_bar_height(void);
 
 //! How far inside the display's edge the message runs
-#define BLOCK_TEXT_INSET 8
+#define BODY_TEXT_INSET 8
+#endif
 
+#if NOTIFICATION_TEXT_BLOCK
 //! The message laid out as a block, wrapped at the block's width once it is first measured
 static NotificationTextBlock *prv_text_block(NotificationLayout *layout, GContext *ctx,
                                              const GRect *box) {
   if (!layout->text_block) {
-    const GTextNodeText *text = layout->block_text;
+    const GTextNodeText *text = layout->body_text;
     const int16_t status_bar_h = prv_notif_status_bar_height();
     const int16_t rest_top = status_bar_h + box->origin.y;
     // Anchored at the highest row text starts at on the card at rest, below the banner
     const int16_t anchor_top = status_bar_h + LAYOUT_TOP_BANNER_HEIGHT + CARD_HEADER_GAP;
     layout->text_block = notification_text_block_create(
-        ctx, text->text, text->font, text->line_spacing_delta, text->alignment, BLOCK_TEXT_INSET,
+        ctx, text->text, text->font, text->line_spacing_delta, text->alignment, BODY_TEXT_INSET,
         anchor_top, rest_top, status_bar_h);
   }
   return layout->text_block;
@@ -312,7 +315,7 @@ static void prv_block_node_callback(GContext *ctx, const GRect *box,
   NotificationTextBlock *text_block = prv_text_block(layout, ctx, box);
   int16_t height = 0;
   if (text_block && !render) {
-    layout->block_box = *box;
+    layout->body_box = *box;
     height = notification_text_block_measure(text_block, ctx, 0);
   } else if (text_block) {
     // Shown as laid out where it last came to rest, which until it is first scrolled is where it
@@ -324,8 +327,8 @@ static void prv_block_node_callback(GContext *ctx, const GRect *box,
       shown = notification_text_block_lay_out(text_block, ctx, scroll, true /* show */);
     }
     const GColor prev_text_color = ctx->draw_state.text_color;
-    if (!gcolor_is_invisible(layout->block_text->color)) {
-      ctx->draw_state.text_color = layout->block_text->color;
+    if (!gcolor_is_invisible(layout->body_text->color)) {
+      ctx->draw_state.text_color = layout->body_text->color;
     }
     notification_text_block_draw(text_block, ctx, box->origin,
                                  -layout->layout.layer.frame.origin.y);
@@ -351,29 +354,18 @@ static bool prv_block_scroll_setter(LayoutLayer *layout_ref, int16_t offset, boo
   return true;
 }
 
-static GTextNode *prv_create_block_node(const LayoutLayer *layout_ref,
-                                        const LayoutNodeConstructorConfig *config) {
-  NotificationLayout *layout = (NotificationLayout *)layout_ref;
-  GTextNode *text = layout_create_text_node_from_config(layout_ref, config->context);
-  if (!text) {
-    return nullptr;
-  }
-  layout->block_text = (GTextNodeText *)text;
-  return &graphics_text_node_create_custom(prv_block_node_callback, layout)->node;
-}
-
 static bool prv_block_card_fits(NotificationLayout *layout, GContext *ctx, int16_t height,
                                 int16_t after_body) {
   const int16_t scroll = PBL_MAX(height - LAYOUT_HEIGHT, 0);
   const int16_t body_h = notification_text_block_measure(layout->text_block, ctx, scroll);
-  return layout->block_box.origin.y + body_h + after_body <= height;
+  return layout->body_box.origin.y + body_h + after_body <= height;
 }
 
 //! The card's height. Where its message ends depends on how it is laid out, which depends on how
 //! far it is scrolled: the shortest height whose end of scrolling holds it. It is about as long as
 //! at rest, with the most of it below the block, so the search starts from there.
 static int16_t prv_block_card_height(NotificationLayout *layout, GContext *ctx, GSize view_size) {
-  const GRect *box = &layout->block_box;
+  const GRect *box = &layout->body_box;
   const int16_t height = LAYOUT_TOP_BANNER_HEIGHT + view_size.h + CARD_BOTTOM_PADDING;
   const int16_t after_body =
       height - (box->origin.y + notification_text_block_measure(layout->text_block, ctx, 0));
@@ -393,6 +385,79 @@ static int16_t prv_block_card_height(NotificationLayout *layout, GContext *ctx, 
   // Where it ends at the end of scrolling, as laid out there: below that, what follows it
   layout->block_height = fits - after_body - box->origin.y;
   return fits;
+}
+#elif PBL_ROUND
+//! The message, wrapped in its column once it is first measured
+static NotificationTextFit *prv_text_fit(NotificationLayout *layout, GContext *ctx,
+                                         const GRect *box) {
+  if (!layout->text_fit) {
+    const GTextNodeText *text = layout->body_text;
+    NotificationTextFit *fit = applib_zalloc(sizeof(NotificationTextFit));
+    const GRangeHorizontal column = {box->origin.x, box->size.w};
+    if (fit &&
+        !notification_text_fit_init(fit, ctx, text->text, text->font, text->line_spacing_delta,
+                                    text->alignment, column, BODY_TEXT_INSET)) {
+      applib_free(fit);
+      fit = nullptr;
+    }
+    layout->text_fit = fit;
+  }
+  return layout->text_fit;
+}
+
+static void prv_fit_node_callback(GContext *ctx, const GRect *box,
+                                  const GTextNodeDrawConfig *config, bool render, GSize *size_out,
+                                  void *user_data) {
+  NotificationLayout *layout = user_data;
+  NotificationTextFit *fit = prv_text_fit(layout, ctx, box);
+  if (fit && !render) {
+    layout->body_box = *box;
+  } else if (fit) {
+    const GColor prev_text_color = ctx->draw_state.text_color;
+    if (!gcolor_is_invisible(layout->body_text->color)) {
+      ctx->draw_state.text_color = layout->body_text->color;
+    }
+    notification_text_fit_draw(fit, ctx, box->origin);
+    ctx->draw_state.text_color = prev_text_color;
+  }
+  if (size_out) {
+    *size_out = (GSize){box->size.w, fit ? notification_text_fit_height(fit) : 0};
+  }
+}
+
+//! The card's height, with its message wrapped once so that its last lines fit inside the display
+//! where the card ends: snug above what follows it, which leaves room for the next card's peek.
+static int16_t prv_fit_card_height(NotificationLayout *layout, GContext *ctx, GSize view_size) {
+  NotificationTextFit *fit = layout->text_fit;
+  const GRect *box = &layout->body_box;
+  const int16_t height = LAYOUT_TOP_BANNER_HEIGHT + view_size.h + CARD_BOTTOM_PADDING;
+  const NotificationTextFitPlace place = {
+    .card_top = prv_notif_status_bar_height(),
+    .top = box->origin.y,
+    .after = height - (box->origin.y + notification_text_fit_height(fit)),
+    .frame_h = LAYOUT_HEIGHT,
+  };
+  const int16_t body_h = notification_text_fit_lay_out(fit, ctx, &place);
+  return PBL_MAX(box->origin.y + body_h + place.after, LAYOUT_HEIGHT);
+}
+#endif
+
+#if PBL_ROUND
+//! The message, drawn by a custom node: as a block, or fitted to the display at the end
+static GTextNode *prv_create_body_node(const LayoutLayer *layout_ref,
+                                       const LayoutNodeConstructorConfig *config) {
+  NotificationLayout *layout = (NotificationLayout *)layout_ref;
+  GTextNode *text = layout_create_text_node_from_config(layout_ref, config->context);
+  if (!text) {
+    return nullptr;
+  }
+  layout->body_text = (GTextNodeText *)text;
+#if NOTIFICATION_TEXT_BLOCK
+  const GTextNodeDrawCallback callback = prv_block_node_callback;
+#else
+  const GTextNodeDrawCallback callback = prv_fit_node_callback;
+#endif
+  return &graphics_text_node_create_custom(callback, layout)->node;
 }
 #endif
 
@@ -446,11 +511,11 @@ static PBL_NOINLINE GTextNode *prv_create_view(NotificationLayout *layout, bool 
     .text.font_key = s_body_fonts[ns_size],
     .text.extent.margin.h = 3,
   };
-#if NOTIFICATION_TEXT_BLOCK
-  const LayoutNodeConstructorConfig block_config = {
+#if PBL_ROUND
+  const LayoutNodeConstructorConfig round_body_config = {
     .extent.node.type = LayoutNodeType_Constructor,
     .extent.margin.h = 3,
-    .constructor = prv_create_block_node,
+    .constructor = prv_create_body_node,
     .context = (void *)&notification_body_config.text.extent.node,
   };
 #endif
@@ -556,8 +621,8 @@ static PBL_NOINLINE GTextNode *prv_create_view(NotificationLayout *layout, bool 
     &location_config.text.extent.node,
     use_body_icon ? &body_icon_config.extent.node
     : is_reminder ? &body_config.text.extent.node
-#if NOTIFICATION_TEXT_BLOCK
-                  : &block_config.extent.node,
+#if PBL_ROUND
+                  : &round_body_config.extent.node,
 #else
                   : &notification_body_config.text.extent.node,
 #endif
@@ -579,13 +644,21 @@ static PBL_NOINLINE GTextNode *prv_create_view(NotificationLayout *layout, bool 
 static void prv_destroy_view(NotificationLayout *layout) {
   graphics_text_node_destroy(layout->view_node);
   layout->view_node = nullptr;
-#if NOTIFICATION_TEXT_BLOCK
-  if (layout->block_text) {
-    graphics_text_node_destroy(&layout->block_text->node);
-    layout->block_text = nullptr;
+#if PBL_ROUND
+  if (layout->body_text) {
+    graphics_text_node_destroy(&layout->body_text->node);
+    layout->body_text = nullptr;
   }
+#if NOTIFICATION_TEXT_BLOCK
   notification_text_block_destroy(layout->text_block);
   layout->text_block = nullptr;
+#else
+  if (layout->text_fit) {
+    notification_text_fit_deinit(layout->text_fit);
+    applib_free(layout->text_fit);
+    layout->text_fit = nullptr;
+  }
+#endif
 #endif
   kino_layer_destroy(layout->detail_icon_layer);
   layout->detail_icon_layer = nullptr;
@@ -792,6 +865,14 @@ static PBL_NOINLINE void prv_card_render_internal(NotificationLayout *layout, GC
   if (layout->text_block) {
     if (!render) {
       layout->view_size = (GSize){view_size.w, prv_block_card_height(layout, ctx, view_size)};
+    }
+    return;
+  }
+#elif PBL_ROUND
+  // Its message is wrapped for where the card ends, once, as it is measured
+  if (layout->text_fit) {
+    if (!render) {
+      layout->view_size = (GSize){view_size.w, prv_fit_card_height(layout, ctx, view_size)};
     }
     return;
   }

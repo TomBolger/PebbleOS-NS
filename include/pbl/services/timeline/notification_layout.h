@@ -147,15 +147,20 @@ typedef struct {
   GTextNode *view_node;
   /** Size of the card view. */
   GSize view_size;
+#if PBL_ROUND
+  /** The message, drawn by the custom node standing in for it, or nullptr. */
+  GTextNodeText *body_text;
+  /** Where the message is in the card, from measuring it. */
+  GRect body_box;
 #if NOTIFICATION_TEXT_BLOCK
-  /** The message, drawn as a block by the custom node standing in for it, or nullptr. */
-  GTextNodeText *block_text;
   /** The message laid out as a block, once measured. */
   struct NotificationTextBlock *text_block;
-  /** Where the message is in the card, from measuring it. */
-  GRect block_box;
   /** How tall the message is at the end of scrolling, from measuring it. */
   int16_t block_height;
+#else
+  /** The message wrapped so that its last lines fit inside the display, once measured. */
+  struct NotificationTextFit *text_fit;
+#endif
 #endif
 } NotificationLayout;
 
