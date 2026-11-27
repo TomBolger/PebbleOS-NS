@@ -121,7 +121,7 @@ struct HealthOrbitView {
   //! to one
   AppTimer *workout_timer;
   //! Row of the week selected, the one it was on as the selection moves, and how far it has
-  //! moved, down the rows from it
+  //! moved, down the rows from it; for the kinds of workout, how long it has been moving
   int16_t week_selection;
   int16_t selection_from;
   int16_t selection_travel;
@@ -809,6 +809,57 @@ static SidebarSweep prv_get_sidebar_sweep(HealthOrbitView *view, GSize display) 
   };
 }
 
+//! The kinds of workout's selection moves between them as a round MenuLayer's highlight does: the
+//! edge of its frame leaving the row draws in, then it jumps to the row it lands on, reaching past
+//! that row's far edge, and draws back to it
+#define MENU_SELECTION_SHRINK_MS    100
+#define MENU_SELECTION_LAND_MS      250
+#define MENU_SELECTION_MS           (MENU_SELECTION_SHRINK_MS + MENU_SELECTION_LAND_MS)
+#define MENU_SELECTION_SHRINK_PX    7
+#define MENU_SELECTION_OVERSHOOT_PX 10
+
+//! \a from, as far towards \a to as an ease out curve is \a elapsed of \a duration along
+static GRect prv_ease_out_frame(GRect from, GRect to, int32_t elapsed, int32_t duration) {
+  const int32_t normalized =
+      (PBL_CLAMP(elapsed, 0, duration) * ANIMATION_NORMALIZED_MAX) / duration;
+  const int32_t progress = animation_timing_curve(normalized, AnimationCurveEaseOut);
+  return GRect(from.origin.x, interpolate_int16(progress, from.origin.y, to.origin.y), from.size.w,
+               interpolate_int16(progress, from.size.h, to.size.h));
+}
+
+//! The frame of the selection \a elapsed into its move from the frame \a from to the frame \a to,
+//! Up if \a up
+static GRect prv_menu_selection_frame(GRect from, GRect to, bool up, int16_t elapsed) {
+  if (elapsed < MENU_SELECTION_SHRINK_MS) {
+    const GRect shrunk = GRect(from.origin.x, from.origin.y + (up ? 0 : MENU_SELECTION_SHRINK_PX),
+                               from.size.w, from.size.h - MENU_SELECTION_SHRINK_PX);
+    return prv_ease_out_frame(from, shrunk, elapsed, MENU_SELECTION_SHRINK_MS);
+  }
+  const GRect landing = GRect(to.origin.x, to.origin.y - (up ? MENU_SELECTION_OVERSHOOT_PX : 0),
+                              to.size.w, to.size.h + MENU_SELECTION_OVERSHOOT_PX);
+  return prv_ease_out_frame(landing, to, elapsed - MENU_SELECTION_SHRINK_MS,
+                            MENU_SELECTION_LAND_MS);
+}
+
+//! The selection's pill: round its row as it comes and goes with it, and moving between the rows
+//! as the list's selection moves
+static MenuRoundShape prv_selection_pill(HealthOrbitView *view,
+                                         const MenuRoundShape rows[HEALTH_ORBIT_LIST_MAX_ROWS]) {
+  const GSize display = view->layer.bounds.size;
+  if (view->list == HealthOrbitListWorkoutKinds && view->selection_from != view->week_selection) {
+    const GRect to = health_orbit_kind_row_frame(display, view->week_selection);
+    const GRect frame = prv_menu_selection_frame(
+        health_orbit_kind_row_frame(display, view->selection_from), to,
+        view->week_selection < view->selection_from, view->selection_travel);
+    MenuRoundShape pill = {};
+    menu_round_pill(display, GRect(0, 0, display.w, display.h), frame, to.size.h, 0, &pill);
+    return pill;
+  }
+  const int16_t distance = (view->week_selection - view->selection_from) * prv_list_pitch(view);
+  const int32_t progress = distance ? ((int32_t)view->selection_travel * 1000 / distance) : 1000;
+  return menu_round_morph(&rows[view->selection_from], &rows[view->week_selection], progress);
+}
+
 static void prv_layer_update_proc(Layer *layer, GContext *ctx) {
   HealthOrbitView *view = window_get_user_data(layer_get_window(layer));
   const GSize display = layer->bounds.size;
@@ -822,11 +873,7 @@ static void prv_layer_update_proc(Layer *layer, GContext *ctx) {
   if (view->week_shown) {
     MenuRoundShape rows[HEALTH_ORBIT_LIST_MAX_ROWS];
     prv_get_week_rows(view, rows);
-    // The selection's outline goes round its row as it comes and goes, and moves between rows
-    const int16_t distance = (view->week_selection - view->selection_from) * prv_list_pitch(view);
-    const int32_t progress = distance ? ((int32_t)view->selection_travel * 1000 / distance) : 1000;
-    const MenuRoundShape highlight =
-        menu_round_morph(&rows[view->selection_from], &rows[view->week_selection], progress);
+    const MenuRoundShape highlight = prv_selection_pill(view, rows);
     switch (view->list) {
       case HealthOrbitListWeek:
         health_orbit_week_draw(ctx, view->section, view->health_data, rows,
@@ -942,6 +989,11 @@ static int64_t prv_retract_curve(int32_t normalized, int64_t from, int64_t to) {
 static int64_t prv_shrink_curve(int32_t normalized, int64_t from, int64_t to) {
   return interpolate_int64_linear(animation_timing_curve(normalized, AnimationCurveEaseIn), from,
                                   to);
+}
+
+//! Straight from \a from to \a to, for a value the drawing times itself by
+static int64_t prv_linear_curve(int32_t normalized, int64_t from, int64_t to) {
+  return from + ((to - from) * normalized) / ANIMATION_NORMALIZED_MAX;
 }
 
 static int64_t prv_moook_curve(int32_t normalized, int64_t from, int64_t to) {
@@ -1442,9 +1494,15 @@ static void prv_move_selection(HealthOrbitView *view, bool down) {
   view->selection_from = view->week_selection;
   view->week_selection = next;
   view->selection_travel = 0;
-  prv_add_int16(&transition, &view->selection_travel,
-                down ? prv_list_pitch(view) : -prv_list_pitch(view), 0, SLIDE_MS,
-                timeline_animation_interpolate_moook_soft);
+  if (view->list == HealthOrbitListWorkoutKinds) {
+    // As a round MenuLayer moves its selection, timed in the drawing
+    prv_add_int16(&transition, &view->selection_travel, MENU_SELECTION_MS, 0, MENU_SELECTION_MS,
+                  prv_linear_curve);
+  } else {
+    prv_add_int16(&transition, &view->selection_travel,
+                  down ? prv_list_pitch(view) : -prv_list_pitch(view), 0, SLIDE_MS,
+                  timeline_animation_interpolate_moook_soft);
+  }
   prv_play(view, &transition);
 }
 

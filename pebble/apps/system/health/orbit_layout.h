@@ -165,6 +165,10 @@ GPoint health_orbit_workout_button_center(GSize display, bool down);
 //! has room for, clear of the bezel and the rows' gap from the bubbles of the buttons.
 GRangeHorizontal health_orbit_workout_rows_span(GSize display);
 
+//! The frame the round menu insets the pill of the kind of workout \a index from, as a MenuLayer's
+//! row is
+GRect health_orbit_kind_row_frame(GSize display, int index);
+
 //! Number of rows of \a list
 int health_orbit_list_num_rows(HealthOrbitList list);
 

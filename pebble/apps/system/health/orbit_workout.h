@@ -65,7 +65,7 @@ int health_orbit_workout_num_rows(ActivitySessionType type);
 //! them
 //! \a header_offset_y below where it rests
 //! @param icons Icons of the kinds of workout, in their deeper colors to read on white
-//! @param highlight The pill the selection's ring goes round, over the rows, or nullptr
+//! @param highlight The pill the selection's pill is round, under the rows, or nullptr
 void health_orbit_workout_draw_kinds(GContext *ctx, const HealthOrbitWorkoutScreen *screen,
                                      const MenuRoundShape rows[HEALTH_ORBIT_LIST_MAX_ROWS],
                                      int16_t header_offset_y, const MenuRoundShape *highlight,

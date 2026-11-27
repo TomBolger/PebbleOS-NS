@@ -796,6 +796,13 @@ void test_health_orbit_view__render_workout_kinds(void) {
   cl_check(gbitmap_pbi_eq(&s_ctx.dest_bitmap, TEST_PBI_FILE));
 }
 
+//! The color of the pixel at \a x, \a y of the display
+static GColor prv_pixel(int16_t x, int16_t y) {
+  const GBitmapDataRowInfo row = gbitmap_get_data_row_info(&s_ctx.dest_bitmap, y);
+  cl_assert(x >= row.min_x && x <= row.max_x);
+  return ((const GColor *)row.data)[x];
+}
+
 //! Renders the list with its selection's outline \a eighths of the way from row \a from to row
 //! \a to
 static void prv_render_selection_moving(int from, int to, int eighths) {
@@ -805,37 +812,114 @@ static void prv_render_selection_moving(int from, int to, int eighths) {
   window_render(&s_view->window, &s_ctx);
 }
 
-//! The selection's outline halfway between rows \a from and \a to is drawn alike going either
-//! way, over the rows
-static void prv_check_selection_moves_alike(int from, int to) {
-  static uint8_t s_one_way[PBL_DISPLAY_HEIGHT * PBL_DISPLAY_WIDTH];
-  const size_t size = s_ctx.dest_bitmap.row_size_bytes * s_ctx.dest_bitmap.bounds.size.h;
-  cl_assert(size <= sizeof(s_one_way));
-  for (int eighths = 1; eighths < 8; eighths++) {
-    prv_render_selection_moving(from, to, eighths);
-    memcpy(s_one_way, s_ctx.dest_bitmap.addr, size);
-    prv_render_selection_moving(to, from, 8 - eighths);
-    cl_assert(memcmp(s_one_way, s_ctx.dest_bitmap.addr, size) == 0);
-  }
-  prv_render_selection_moving(from, to, 4);
-}
-
-void test_health_orbit_view__render_workout_kinds_moving(void) {
-  // The ring between Run and Walk, over both pills, the same going Up as Down
-  prv_render_workout();
-  prv_select_click_handler(nullptr, s_view);
-  prv_rest(s_view);
-  prv_check_selection_moves_alike(0, 1);
-  cl_check(gbitmap_pbi_eq(&s_ctx.dest_bitmap, TEST_PBI_FILE));
+//! Checks the selection's outline is drawn over the rows, white along the top and bottom of the
+//! shape it is round
+static void prv_check_outline_on_top(void) {
+  MenuRoundShape rows[HEALTH_ORBIT_LIST_MAX_ROWS];
+  prv_get_week_rows(s_view, rows);
+  const MenuRoundShape outline = prv_selection_pill(s_view, rows);
+  const int16_t x = outline.box.origin.x + outline.box.size.w / 2;
+  cl_assert(gcolor_equal(prv_pixel(x, outline.box.origin.y), GColorWhite));
+  cl_assert(gcolor_equal(prv_pixel(x, grect_get_max_y(&outline.box) - 1), GColorWhite));
 }
 
 void test_health_orbit_view__render_steps_week_moving(void) {
-  // The outline between today and the day before, over both rows, the same going Up as Down
+  // The outline between today and the day before, over the rows going Down and going Up
   s_data = prv_sample_data();
   prv_render(&s_data, HealthOrbitSectionSteps);
   prv_show_week(s_view);
-  prv_check_selection_moves_alike(0, 1);
+  for (int eighths = 1; eighths < 8; eighths++) {
+    prv_render_selection_moving(0, 1, eighths);
+    prv_check_outline_on_top();
+    prv_render_selection_moving(1, 0, eighths);
+    prv_check_outline_on_top();
+  }
+  prv_render_selection_moving(0, 1, 4);
   cl_check(gbitmap_pbi_eq(&s_ctx.dest_bitmap, TEST_PBI_FILE));
+}
+
+//! Checks the selection's frame \a elapsed into its move from \a from to \a to is within a row of
+//! \a y and \a h
+static void prv_check_selection_frame(GRect from, GRect to, bool up, int16_t elapsed, int16_t y,
+                                      int16_t h) {
+  const GRect frame = prv_menu_selection_frame(from, to, up, elapsed);
+  cl_assert_equal_i(frame.origin.x, to.origin.x);
+  cl_assert_equal_i(frame.size.w, to.size.w);
+  cl_assert(PBL_ABS(frame.origin.y - y) <= 1);
+  cl_assert(PBL_ABS(frame.size.h - h) <= 1);
+}
+
+void test_health_orbit_view__kinds_selection_moves_as_a_menu_does(void) {
+  // As a round MenuLayer's highlight: the edge leaving draws in, then it lands past the far edge
+  // of the row it moves to and draws back
+  const GRect run = GRect(0, 100, 260, 44);
+  const GRect walk = GRect(0, 146, 260, 44);
+  prv_check_selection_frame(run, walk, false /* up */, 0, 100, 44);
+  prv_check_selection_frame(run, walk, false /* up */, MENU_SELECTION_SHRINK_MS - 1, 107, 37);
+  prv_check_selection_frame(run, walk, false /* up */, MENU_SELECTION_SHRINK_MS, 146, 54);
+  prv_check_selection_frame(run, walk, false /* up */, MENU_SELECTION_MS, 146, 44);
+  // Up, the other way round
+  prv_check_selection_frame(walk, run, true /* up */, 0, 146, 44);
+  prv_check_selection_frame(walk, run, true /* up */, MENU_SELECTION_SHRINK_MS - 1, 146, 37);
+  prv_check_selection_frame(walk, run, true /* up */, MENU_SELECTION_SHRINK_MS, 90, 54);
+  prv_check_selection_frame(walk, run, true /* up */, MENU_SELECTION_MS, 100, 44);
+}
+
+//! Renders the kinds with their selection \a elapsed into its move from \a from to \a to, and
+//! checks the kinds' pills are drawn over it
+static void prv_render_kinds_moving(int from, int to, int16_t elapsed) {
+  s_view->selection_from = from;
+  s_view->week_selection = to;
+  s_view->selection_travel = elapsed;
+  window_render(&s_view->window, &s_ctx);
+  const GSize display = GSize(PBL_DISPLAY_WIDTH, PBL_DISPLAY_HEIGHT);
+  for (int i = 0; i < HEALTH_WORKOUT_NUM_KINDS; i++) {
+    MenuRoundShape pill;
+    health_orbit_list_row(display, HealthOrbitListWorkoutKinds, i, &pill);
+    // Just inside the top and bottom of each pill's left end, where it has no text
+    const int16_t x = pill.box.origin.x + pill.radius + 2;
+    cl_assert(gcolor_equal(prv_pixel(x, pill.box.origin.y + 1), GColorWhite));
+    cl_assert(gcolor_equal(prv_pixel(x, grect_get_max_y(&pill.box) - 2), GColorWhite));
+  }
+}
+
+void test_health_orbit_view__render_workout_kinds_moving_down(void) {
+  // The selection's pill under the kinds' pills, on its way down from Run to Walk
+  prv_render_workout();
+  prv_select_click_handler(nullptr, s_view);
+  prv_rest(s_view);
+  for (int16_t elapsed = 0; elapsed <= MENU_SELECTION_MS; elapsed += 25) {
+    prv_render_kinds_moving(0, 1, elapsed);
+  }
+  prv_render_kinds_moving(0, 1, MENU_SELECTION_SHRINK_MS + 25);
+  cl_check(gbitmap_pbi_eq(&s_ctx.dest_bitmap, TEST_PBI_FILE));
+}
+
+void test_health_orbit_view__render_workout_kinds_moving_up(void) {
+  // and up from Walk to Run
+  prv_render_workout();
+  prv_select_click_handler(nullptr, s_view);
+  prv_rest(s_view);
+  for (int16_t elapsed = 0; elapsed <= MENU_SELECTION_MS; elapsed += 25) {
+    prv_render_kinds_moving(1, 0, elapsed);
+  }
+  prv_render_kinds_moving(1, 0, MENU_SELECTION_SHRINK_MS + 25);
+  cl_check(gbitmap_pbi_eq(&s_ctx.dest_bitmap, TEST_PBI_FILE));
+}
+
+void test_health_orbit_view__kinds_selection_shows_round_the_selected_kind(void) {
+  // At rest, in the Workout section's color just outside the selected kind's pill only
+  prv_render_workout();
+  prv_select_click_handler(nullptr, s_view);
+  prv_up_down(s_view, true /* down */);
+  prv_rerender();
+  const GSize display = GSize(PBL_DISPLAY_WIDTH, PBL_DISPLAY_HEIGHT);
+  for (int i = 0; i < HEALTH_WORKOUT_NUM_KINDS; i++) {
+    MenuRoundShape pill;
+    health_orbit_list_row(display, HealthOrbitListWorkoutKinds, i, &pill);
+    const GColor above = prv_pixel(pill.box.origin.x + pill.box.size.w / 2, pill.box.origin.y - 2);
+    cl_assert_equal_b(gcolor_equal(above, GColorChromeYellow), i == 1);
+  }
 }
 
 void test_health_orbit_view__render_workout_active(void) {
@@ -846,13 +930,6 @@ void test_health_orbit_view__render_workout_active(void) {
   prv_rerender();
   cl_assert_equal_i(s_view->list, HealthOrbitListWorkout);
   cl_check(gbitmap_pbi_eq(&s_ctx.dest_bitmap, TEST_PBI_FILE));
-}
-
-//! The color of the pixel at \a x, \a y of the display
-static GColor prv_pixel(int16_t x, int16_t y) {
-  const GBitmapDataRowInfo row = gbitmap_get_data_row_info(&s_ctx.dest_bitmap, y);
-  cl_assert(x >= row.min_x && x <= row.max_x);
-  return ((const GColor *)row.data)[x];
 }
 
 void test_health_orbit_view__small_moon_leaves_its_bite_as_it_was(void) {

@@ -28,10 +28,11 @@
 #define ROW_TEXT_INSET 2
 #define KIND_ICON_GAP  6
 
-//! The ring round the selected kind of workout, in the Workout section's color
-#define KIND_RING_WIDTH 3
-#define KIND_RING_COLOR GColorChromeYellow
-#define KIND_ROW_COLOR  GColorWhite
+//! The selection, a pill in the Workout section's color under the kinds' white pills, as much
+//! bigger than a kind's pill all round
+#define KIND_SELECTION_GROW  3
+#define KIND_SELECTION_COLOR GColorChromeYellow
+#define KIND_ROW_COLOR       GColorWhite
 
 //! Colors of the measures, as the Workout app labels them
 #define DISTANCE_COLOR GColorCyan
@@ -306,11 +307,15 @@ static void prv_draw_measure_row(GContext *ctx, const HealthOrbitWorkoutScreen *
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 // API Functions
 
-//! Draws the kinds' pills and the ring round the selected one, over the pills wherever it is on its
-//! way between them
+//! Draws the selection's pill, then the kinds' pills over it, so it shows round the one it is
+//! under
 static void prv_draw_kind_rows(GContext *ctx, const MenuRoundShape *rows,
                                const MenuRoundShape *highlight, GDrawCommandImage *const *icons,
                                void *i18n_owner) {
+  if (highlight && highlight->box.size.w > 0) {
+    prv_fill_round_rect(ctx, grect_inset(highlight->box, GEdgeInsets(-KIND_SELECTION_GROW)),
+                        highlight->radius + KIND_SELECTION_GROW, KIND_SELECTION_COLOR);
+  }
   for (int i = HEALTH_WORKOUT_NUM_KINDS - 1; i >= 0; i--) {
     const MenuRoundShape *pill = &rows[i];
     if (pill->box.size.w <= 0) {
@@ -339,10 +344,6 @@ static void prv_draw_kind_rows(GContext *ctx, const MenuRoundShape *rows,
                            mid_y);
     graphics_context_set_drawing_state(ctx, state);
   }
-  if (highlight && highlight->box.size.w > 0) {
-    health_orbit_fill_outline(ctx, highlight->box, highlight->radius, KIND_RING_WIDTH,
-                              KIND_RING_COLOR);
-  }
 }
 
 void health_orbit_workout_draw_kinds(GContext *ctx, const HealthOrbitWorkoutScreen *screen,
@@ -358,7 +359,7 @@ void health_orbit_workout_draw_kinds(GContext *ctx, const HealthOrbitWorkoutScre
     extent = prv_union(extent, rows[i].box);
   }
   if (highlight && highlight->box.size.w > 0) {
-    extent = prv_union(extent, grect_inset(highlight->box, GEdgeInsets(-KIND_RING_WIDTH)));
+    extent = prv_union(extent, grect_inset(highlight->box, GEdgeInsets(-KIND_SELECTION_GROW)));
   }
   for (int below = 0; below <= 1; below++) {
     GDrawState state;
