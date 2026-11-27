@@ -517,7 +517,7 @@ void test_notification_window__long_body(void) {
 }
 
 void test_notification_window__text_block(void) {
-#if NOTIFICATION_TEXT_BLOCK
+#if PBL_ROUND
   GContext *ctx = fake_graphics_context_get_context();
   GFont font = fonts_get_system_font(FONT_KEY_GOTHIC_24_BOLD);
   const int16_t anchor_top = 67;
