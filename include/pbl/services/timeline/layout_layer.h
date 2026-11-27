@@ -175,6 +175,8 @@ typedef const LayoutColors *(*LayoutLayerColorsGetter)(const struct LayoutLayer 
  */
 typedef void *(*LayoutLayerContextGetter)(struct LayoutLayer *layout);
 
+typedef bool (*LayoutLayerScrollSetter)(struct LayoutLayer *layout, int16_t offset, bool show);
+
 /** @brief Methods of a LayoutLayer type. */
 typedef struct {
   /** Content size getter. */
@@ -189,6 +191,11 @@ typedef struct {
 #endif
   /** Context getter, may be NULL. */
   LayoutLayerContextGetter context_getter;
+  /**
+   * Lays the content out as it rests at a scroll offset, and shows it from now on if asked to,
+   * for content that depends on how far it is scrolled; may be NULL. See layout_set_scroll().
+   */
+  LayoutLayerScrollSetter scroll_setter;
 } LayoutLayerImpl;
 
 /** @brief Base of all layouts; can be cast to a Layer. */
@@ -246,6 +253,21 @@ bool layout_verify(bool existing_attributes[], LayoutId id);
  * @return Size of the content.
  */
 GSize layout_get_size(GContext *ctx, LayoutLayer *layout);
+
+/**
+ * @brief Lay a layout's content out as it rests at a scroll offset.
+ *
+ * Content that depends on how far it is scrolled, such as round notification text, is laid out
+ * once for where it rests and moved as it is in between. Whoever scrolls the layout lays it out
+ * for where a motion will end as the motion starts, and shows that layout where the motion cuts
+ * over to it, as a Moook does.
+ *
+ * @param layout Layout.
+ * @param offset How far it is scrolled up from its top.
+ * @param show Whether to show it laid out for that offset from now on.
+ * @return Whether its content depends on how far it is scrolled; if not, this does nothing.
+ */
+bool layout_set_scroll(LayoutLayer *layout, int16_t offset, bool show);
 
 /**
  * @brief Get the colors of a layout.
