@@ -18,6 +18,7 @@ set(sources
   layout_node.c
   metricgroup.c
   notification_layout.c
+  notification_text.c
   peek.c
   reminders.c
   sports_layout.c

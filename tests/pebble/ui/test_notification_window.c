@@ -535,7 +535,7 @@ void test_notification_window__text_block(void) {
   char line[128];
   for (uint16_t i = 0; i < tb->num_lines; i++) {
     const uint16_t start = tb->line_starts[i];
-    const uint16_t end = (i + 1 < tb->num_lines) ? tb->line_starts[i + 1] : tb->length;
+    const uint16_t end = (i + 1 < tb->num_lines) ? tb->line_starts[i + 1] : tb->text.length;
     cl_assert(start < end);
     cl_assert(end - start < sizeof(line));
     memcpy(line, s_long_body + start, end - start);
@@ -543,17 +543,17 @@ void test_notification_window__text_block(void) {
     const GSize size = graphics_text_layout_get_max_used_size(
         ctx, line, font, GRect(0, 0, width, 1000), GTextOverflowModeWordWrap, GTextAlignmentLeft,
         nullptr);
-    cl_assert(size.h <= tb->line_h);
+    cl_assert(size.h <= tb->text.line_h);
   }
 
   // Never shorter than its lines at the block's width, and about as long as at rest, where the
   // most of it is below the block: the card's height starts from there
   const int16_t rest_h = notification_text_block_measure(tb, ctx, 0);
-  cl_assert(rest_h >= tb->num_lines * tb->line_h);
-  for (int16_t scroll = 0; scroll < tb->num_lines * tb->line_h; scroll += 3) {
+  cl_assert(rest_h >= tb->num_lines * tb->text.line_h);
+  for (int16_t scroll = 0; scroll < tb->num_lines * tb->text.line_h; scroll += 3) {
     const int16_t h = notification_text_block_measure(tb, ctx, scroll);
-    cl_assert(h >= tb->num_lines * tb->line_h);
-    cl_assert(h <= rest_h + 2 * tb->line_h);
+    cl_assert(h >= tb->num_lines * tb->text.line_h);
+    cl_assert(h <= rest_h + 2 * tb->text.line_h);
 
     // Laid out where it rests there: rows top first, each holding the text after the last, as
     // much as fits where it runs, and as long as the text engine measures it
@@ -564,7 +564,7 @@ void test_notification_window__text_block(void) {
       const NotificationTextRow *row = &layout->rows[r];
       cl_assert(row->start <= row->end);
       if (r > 0) {
-        cl_assert_equal_i(row->y, layout->rows[r - 1].y + tb->line_h);
+        cl_assert_equal_i(row->y, layout->rows[r - 1].y + tb->text.line_h);
         cl_assert(row->start >= layout->rows[r - 1].end);
         for (uint16_t c = layout->rows[r - 1].end; c < row->start; c++) {
           cl_assert(s_long_body[c] == ' ' || s_long_body[c] == '\n');
@@ -577,7 +577,7 @@ void test_notification_window__text_block(void) {
         const GSize size = graphics_text_layout_get_max_used_size(
             ctx, line, font, GRect(0, 0, row->w, 1000), GTextOverflowModeWordWrap,
             GTextAlignmentLeft, nullptr);
-        cl_assert(size.h <= tb->line_h);
+        cl_assert(size.h <= tb->text.line_h);
       }
     }
     if (layout->height) {

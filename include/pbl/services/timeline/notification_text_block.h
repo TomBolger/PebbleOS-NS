@@ -3,6 +3,8 @@
 
 #pragma once
 
+#include <pbl/services/timeline/notification_text.h>
+
 #include <applib/graphics/gtypes.h>
 #include <applib/graphics/perimeter.h>
 #include <applib/graphics/text.h>
@@ -61,20 +63,8 @@ typedef struct {
 
 /** @brief A message laid out as a block; see notification_text_block_create(). */
 typedef struct NotificationTextBlock {
-  /** Copy of the message, ended at a row while measuring or drawing it. */
-  char *text;
-  /** Length of the message in bytes. */
-  uint16_t length;
-  /** Font of the message. */
-  GFont font;
-  /** Height of the font. */
-  int16_t font_h;
-  /** Distance between lines. */
-  int16_t line_h;
-  /** Line spacing delta, so that line_h is the font's height plus it. */
-  int16_t line_spacing_delta;
-  /** Alignment of each line. */
-  GTextAlignment alignment;
+  /** The message. */
+  NotificationText text;
   /** How far inside the display's edge text runs. */
   uint8_t inset;
   /** The block, on screen. */

@@ -366,6 +366,7 @@ pbl_clar_test(test_notification_window
     pebble/services/timeline/layout_layer.c
     pebble/services/timeline/layout_node.c
     pebble/services/timeline/notification_layout.c
+    pebble/services/timeline/notification_text.c
     pebble/services/timeline/notification_text_block.c
     pebble/services/notifications/notification_style.c
     pebble/services/timeline/swap_layer.c

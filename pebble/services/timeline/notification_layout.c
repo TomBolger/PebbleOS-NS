@@ -379,7 +379,7 @@ static int16_t prv_block_card_height(NotificationLayout *layout, GContext *ctx, 
       height - (box->origin.y + notification_text_block_measure(layout->text_block, ctx, 0));
   int16_t fits = PBL_MAX(height, LAYOUT_HEIGHT);
   for (int i = 0; (i < 4) && !prv_block_card_fits(layout, ctx, fits, after_body); i++) {
-    fits += layout->text_block->line_h;
+    fits += layout->text_block->text.line_h;
   }
   int16_t too_short = LAYOUT_HEIGHT;
   while (fits - too_short > 1) {
