@@ -154,6 +154,8 @@ typedef struct {
   struct NotificationTextBlock *text_block;
   /** Where the message is in the card, from measuring it. */
   GRect block_box;
+  /** How tall the message is at the end of scrolling, from measuring it. */
+  int16_t block_height;
 #endif
 } NotificationLayout;
 

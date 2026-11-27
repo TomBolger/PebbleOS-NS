@@ -522,10 +522,12 @@ void test_notification_window__text_block(void) {
   GFont font = fonts_get_system_font(FONT_KEY_GOTHIC_24_BOLD);
   const int16_t anchor_top = 67;
   const int16_t rest_top = 92;
+  const int16_t top = 20;
   NotificationTextBlock *tb = notification_text_block_create(
-      ctx, s_long_body, font, 0, GTextAlignmentCenter, 8, anchor_top, rest_top);
+      ctx, s_long_body, font, 0, GTextAlignmentCenter, 8, anchor_top, rest_top, top);
   cl_assert(tb);
   cl_assert(tb->num_lines > 8);
+  cl_assert(!notification_text_block_shown(tb));
 
   // Wrapped once at the block's width, as wide as the display is at the anchor
   const int16_t width = tb->block.range.size_w;
@@ -546,23 +548,51 @@ void test_notification_window__text_block(void) {
 
   // Never shorter than its lines at the block's width, and about as long as at rest, where the
   // most of it is below the block: the card's height starts from there
-  const int16_t rest_h = notification_text_block_draw(tb, ctx, GPointZero, 0, 20, false);
+  const int16_t rest_h = notification_text_block_measure(tb, ctx, 0);
   cl_assert(rest_h >= tb->num_lines * tb->line_h);
   for (int16_t scroll = 0; scroll < tb->num_lines * tb->line_h; scroll += 3) {
-    const int16_t h = notification_text_block_draw(tb, ctx, GPointZero, scroll, 20, false);
+    const int16_t h = notification_text_block_measure(tb, ctx, scroll);
     cl_assert(h >= tb->num_lines * tb->line_h);
     cl_assert(h <= rest_h + 2 * tb->line_h);
+
+    // Laid out where it rests there: rows top first, each holding the text after the last, as
+    // much as fits where it runs, and as long as the text engine measures it
+    const NotificationTextLayout *layout = notification_text_block_lay_out(tb, ctx, scroll, true);
+    cl_assert_equal_i(layout->scroll, scroll);
+    cl_assert(layout->num_rows > 0);
+    for (uint8_t r = 0; r < layout->num_rows; r++) {
+      const NotificationTextRow *row = &layout->rows[r];
+      cl_assert(row->start <= row->end);
+      if (r > 0) {
+        cl_assert_equal_i(row->y, layout->rows[r - 1].y + tb->line_h);
+        cl_assert(row->start >= layout->rows[r - 1].end);
+        for (uint16_t c = layout->rows[r - 1].end; c < row->start; c++) {
+          cl_assert(s_long_body[c] == ' ' || s_long_body[c] == '\n');
+        }
+      }
+      cl_assert(row->w > 0);
+      if (row->end > row->start) {
+        memcpy(line, s_long_body + row->start, row->end - row->start);
+        line[row->end - row->start] = '\0';
+        const GSize size = graphics_text_layout_get_max_used_size(
+            ctx, line, font, GRect(0, 0, row->w, 1000), GTextOverflowModeWordWrap,
+            GTextAlignmentLeft, nullptr);
+        cl_assert(size.h <= tb->line_h);
+      }
+    }
+    if (layout->height) {
+      cl_assert_equal_i(layout->height, h);
+    }
   }
 
-  // The text above the block's first line ends where that line starts, rewrapped from its end
-  notification_text_block_draw(tb, ctx, GPointZero, 150, 20, true);
-  cl_assert(tb->above_for > 0);
-  cl_assert(tb->num_above > 0);
-  uint16_t prev = tb->line_starts[tb->above_for];
-  for (uint8_t row = 0; row < tb->num_above; row++) {
-    cl_assert(tb->above_starts[row] < prev);
-    prev = tb->above_starts[row];
-  }
+  // It keeps the layout shown and the one it moves to, and shows that one when asked
+  const NotificationTextLayout *shown = notification_text_block_lay_out(tb, ctx, 0, true);
+  const NotificationTextLayout *next = notification_text_block_lay_out(tb, ctx, 48, false);
+  cl_assert(next != shown);
+  cl_assert_equal_p(notification_text_block_shown(tb), shown);
+  cl_assert_equal_p(notification_text_block_lay_out(tb, ctx, 48, true), next);
+  cl_assert_equal_p(notification_text_block_shown(tb), next);
+  cl_assert_equal_i(next->scroll, 48);
   notification_text_block_destroy(tb);
 #endif
 }

@@ -6,13 +6,15 @@
 
 #include <pbl/services/timeline/notification_text_block.h>
 #include <pbl/util/math.h>
+#include <pbl/util/size.h>
 
 #include <applib/applib_malloc.auto.h>
 #include <applib/fonts/fonts.h>
+#include <applib/graphics/gcontext.h>
 
 #if PBL_ROUND
 
-//! Rows narrower than this are left empty, at the very top of the display
+//! Rows narrower than this, at the very top and bottom of the display, are too narrow to show
 #define MIN_ROW_WIDTH 60
 
 static bool prv_is_break(char c) {
@@ -144,70 +146,46 @@ static uint16_t prv_wrap_backward(NotificationTextBlock *tb, GContext *ctx, uint
   return start;
 }
 
-//! Where a line whose top is at `top` on screen runs, inside the display
-static GRangeHorizontal prv_row_range(const NotificationTextBlock *tb, int16_t top) {
-  static const GSize s_display = {PBL_DISPLAY_WIDTH, PBL_DISPLAY_HEIGHT};
-  // Text flow fits the lower half of each line
-  const GRangeVertical rows = {top + tb->font_h / 2, tb->font_h - tb->font_h / 2};
-  return g_perimeter_for_display->callback(g_perimeter_for_display, &s_display, rows, tb->inset);
+//! Rows a scroll step may still show beyond the screen either way, and that a drag moves into
+//! view before it is laid out again
+#define MARGIN_ROWS 4
+
+static const GSize s_display = {PBL_DISPLAY_WIDTH, PBL_DISPLAY_HEIGHT};
+
+//! Where a line runs, given the part of it that text flow fits: inside the display. A line too
+//! narrow there, at the display's very top or bottom, or past the display runs as wide as the
+//! block, so that the text has a height and can be dragged into view.
+static GRangeHorizontal prv_room(const NotificationTextBlock *tb, GRangeVertical rows) {
+  const GRangeHorizontal room =
+      g_perimeter_for_display->callback(g_perimeter_for_display, &s_display, rows, tb->inset);
+  return (room.size_w >= MIN_ROW_WIDTH) ? room : tb->block.range;
 }
 
-//! Below the block: inside the display, leaving rows too narrow there empty. Past the display the
-//! text runs on as wide as the block, out of sight, so that it has a height.
+//! Where a line whose top is at `top` on screen runs; `hidden` tells whether any of it is on the
+//! display while it is too narrow to show there
+static GRangeHorizontal prv_row_range(const NotificationTextBlock *tb, int16_t top, bool *hidden) {
+  // Text flow fits the lower half of each line
+  const GRangeVertical rows = {top + tb->font_h / 2, tb->font_h - tb->font_h / 2};
+  const GRangeHorizontal room =
+      g_perimeter_for_display->callback(g_perimeter_for_display, &s_display, rows, tb->inset);
+  const bool fits = (room.size_w >= MIN_ROW_WIDTH);
+  *hidden = !fits && (top < s_display.h) && (top + tb->line_h > 0);
+  return fits ? room : tb->block.range;
+}
+
 static GRangeHorizontal prv_below_perimeter(const GPerimeter *perimeter, const GSize *ctx_size,
                                             GRangeVertical rows, uint16_t inset) {
   const NotificationTextBlock *tb =
       (const NotificationTextBlock *)((const char *)perimeter -
                                       offsetof(NotificationTextBlock, below));
-  const GRangeHorizontal room =
-      g_perimeter_for_display->callback(g_perimeter_for_display, ctx_size, rows, inset);
-  if (room.size_w >= MIN_ROW_WIDTH) {
-    return room;
-  }
-  const bool past_display = (rows.origin_y >= ctx_size->h);
-  return past_display ? tb->block.range : (GRangeHorizontal){0, 0};
-}
-
-static int16_t prv_rows_bottom(const GRangeVertical *rows) {
-  return rows->origin_y + rows->size_h;
-}
-
-//! Rewraps the text before line `line` into the rows above it, the first of which has its top at
-//! `top` on screen, down to the row beneath `limit`.
-static void prv_wrap_above(NotificationTextBlock *tb, GContext *ctx, uint16_t line, int16_t top,
-                           int16_t limit) {
-  GRangeHorizontal ranges[NOTIFICATION_TEXT_BLOCK_MAX_ROWS_ABOVE];
-  uint8_t num_rows = 0;
-  for (; (num_rows < NOTIFICATION_TEXT_BLOCK_MAX_ROWS_ABOVE) && (top + tb->line_h > limit);
-       num_rows++, top -= tb->line_h) {
-    ranges[num_rows] = prv_row_range(tb, top);
-    if (ranges[num_rows].size_w < MIN_ROW_WIDTH) {
-      break;
-    }
-  }
-  // The rows only change when the line does or one of them gets wider or narrower
-  const bool exhausted = (tb->num_above == 0) || (tb->above_starts[tb->num_above - 1] == 0);
-  bool same = (tb->above_for == line);
-  for (uint8_t row = 0; same && (row < num_rows); row++) {
-    same = (row < tb->num_above) ? (tb->above_ranges[row].size_w == ranges[row].size_w) : exhausted;
-  }
-  if (same) {
-    return;
-  }
-  tb->above_for = line;
-  tb->num_above = 0;
-  uint16_t end = prv_line_start(tb, line);
-  while ((end > 0) && (tb->num_above < num_rows)) {
-    tb->above_ranges[tb->num_above] = ranges[tb->num_above];
-    end = prv_wrap_backward(tb, ctx, end, ranges[tb->num_above].size_w);
-    tb->above_starts[tb->num_above++] = end;
-  }
+  return prv_room(tb, rows);
 }
 
 NotificationTextBlock *notification_text_block_create(GContext *ctx, const char *text, GFont font,
                                                       int16_t line_spacing_delta,
                                                       GTextAlignment alignment, uint8_t inset,
-                                                      int16_t anchor_top, int16_t rest_top) {
+                                                      int16_t anchor_top, int16_t rest_top,
+                                                      int16_t top) {
   NotificationTextBlock *tb = applib_zalloc(sizeof(NotificationTextBlock));
   const size_t length = strlen(text);
   char *copy = tb ? applib_malloc(length + 1) : nullptr;
@@ -227,10 +205,10 @@ NotificationTextBlock *notification_text_block_create(GContext *ctx, const char 
     .alignment = alignment,
     .inset = inset,
     .rest_top = rest_top,
+    .top = top,
     .below.callback = prv_below_perimeter,
-    .above_for = -1,
+    .layouts = {{.scroll = INT16_MIN}, {.scroll = INT16_MIN}},
   };
-  static const GSize s_display = {PBL_DISPLAY_WIDTH, PBL_DISPLAY_HEIGHT};
   const GRangeVertical anchor = {anchor_top + font_h / 2, font_h - font_h / 2};
   tb->block = perimeter_text_block(&s_display, anchor, inset);
 
@@ -267,84 +245,191 @@ void notification_text_block_destroy(NotificationTextBlock *tb) {
   applib_free(tb);
 }
 
-int16_t notification_text_block_draw(NotificationTextBlock *tb, GContext *ctx, GPoint origin,
-                                     int16_t scroll, int16_t top, bool render) {
-  const uint16_t num_lines = tb->num_lines;
-  const int16_t line_h = tb->line_h;
+//! The block's lines as the message rests at `scroll`: `first` to `below`, those whose part that
+//! text flow fits is inside the block's rows
+static void prv_block_lines(const NotificationTextBlock *tb, int16_t scroll, uint16_t *first,
+                            uint16_t *below) {
   const int16_t first_top = tb->rest_top - scroll;
-  const int16_t rows_top = tb->block.rows.origin_y;
-  const int16_t rows_bottom = prv_rows_bottom(&tb->block.rows);
+  const GRangeVertical *rows = &tb->block.rows;
+  uint16_t line = 0;
+  while ((line < tb->num_lines) &&
+         (first_top + line * tb->line_h + tb->font_h / 2 < rows->origin_y)) {
+    line++;
+  }
+  *first = line;
+  while ((line < tb->num_lines) &&
+         (first_top + line * tb->line_h + tb->font_h <= rows->origin_y + rows->size_h)) {
+    line++;
+  }
+  *below = line;
+}
 
-  // The block's lines: those whose part that text flow fits is inside its rows
-  uint16_t first = 0;
-  while ((first < num_lines) && (first_top + first * line_h + tb->font_h / 2 < rows_top)) {
-    first++;
+int16_t notification_text_block_measure(NotificationTextBlock *tb, GContext *ctx, int16_t scroll) {
+  uint16_t first;
+  uint16_t below;
+  prv_block_lines(tb, scroll, &first, &below);
+  if (below >= tb->num_lines) {
+    return tb->num_lines * tb->line_h;
   }
-  uint16_t below = first;
-  while ((below < num_lines) && (first_top + below * line_h + tb->font_h <= rows_bottom)) {
-    below++;
-  }
-
-  if (render) {
-    prv_wrap_above(tb, ctx, first, first_top + (first - 1) * line_h, top);
-    // While what is above the message shows, the rows above the block can't take more room than
-    // its lines there do: they then keep their width, where it about fits.
-    const bool above_shows = (first_top > top + line_h / 2);
-    const bool rewrap =
-        !above_shows || ((tb->num_above <= first) &&
-                         ((tb->num_above == 0) || (tb->above_starts[tb->num_above - 1] == 0)));
-    const int num_above = rewrap ? tb->num_above : first;
-    for (int row = 0; row < num_above; row++) {
-      const int line = first - 1 - row;
-      // Beneath the status bar, or over what is left of what is above the message
-      if ((first_top + (line + 1) * line_h <= top) || ((line < 0) && (first_top > top))) {
-        break;
-      }
-      const int16_t y = origin.y + line * line_h;
-      if (rewrap) {
-        const GRangeHorizontal range = tb->above_ranges[row];
-        const GRect box = {{range.origin_x, y}, {range.size_w, tb->font_h}};
-        const uint16_t to = row ? tb->above_starts[row - 1] : prv_line_start(tb, first);
-        prv_row(tb, ctx, tb->above_starts[row], to, &box, true /* render */);
-      } else {
-        const GRect box = {{tb->block.range.origin_x, y}, {tb->block.range.size_w, tb->font_h}};
-        prv_row(tb, ctx, prv_line_start(tb, line), prv_line_start(tb, line + 1), &box, true);
-      }
-    }
-    for (uint16_t line = first; line < below; line++) {
-      const GRect box = {
-        {tb->block.range.origin_x, origin.y + line * line_h},
-        {tb->block.range.size_w, tb->font_h}
-      };
-      prv_row(tb, ctx, prv_line_start(tb, line), prv_line_start(tb, line + 1), &box, true);
-    }
-  }
-
-  if (below >= num_lines) {
-    return num_lines * line_h;
-  }
-  // Below the block the text flows inside the display where it is
-  const int16_t flow_top = first_top + below * line_h;
   TextLayoutExtended layout = {
     .line_spacing_delta = tb->line_spacing_delta,
     .flow_data = {
       .perimeter = {.impl = &tb->below, .inset = tb->inset},
       // One page as tall as can be, so that lines are fitted where they are on screen
       .paging = {
-        .origin_on_screen = {0, flow_top},
+        .origin_on_screen = {0, tb->rest_top - scroll + below * tb->line_h},
         .page_on_screen = {INT16_MIN / 2, INT16_MAX},
       },
     },
   };
-  const GRect box = {{0, origin.y + below * line_h}, {PBL_DISPLAY_WIDTH, INT16_MAX / 2}};
-  const char *text = tb->text + prv_line_start(tb, below);
-  if (render) {
-    graphics_draw_text(ctx, text, tb->font, box, GTextOverflowModeWordWrap, tb->alignment,
-                       (TextLayout *)&layout);
-  } else {
-    graphics_text_layout_get_max_used_size(ctx, text, tb->font, box, GTextOverflowModeWordWrap,
-                                           tb->alignment, (TextLayout *)&layout);
+  const GRect box = {GPointZero, {PBL_DISPLAY_WIDTH, INT16_MAX / 2}};
+  graphics_text_layout_get_max_used_size(ctx, tb->text + prv_line_start(tb, below), tb->font, box,
+                                         GTextOverflowModeWordWrap, tb->alignment,
+                                         (TextLayout *)&layout);
+  return below * tb->line_h + layout.max_used_size.h;
+}
+
+static bool prv_add_row(NotificationTextLayout *layout, uint16_t start, uint16_t end, int16_t y,
+                        GRangeHorizontal range, bool hidden) {
+  if (layout->num_rows >= NOTIFICATION_TEXT_BLOCK_MAX_ROWS) {
+    return false;
   }
-  return below * line_h + layout.max_used_size.h;
+  layout->rows[layout->num_rows++] = (NotificationTextRow){
+    .start = start,
+    .end = end,
+    .y = y,
+    .x = range.origin_x,
+    .w = range.size_w,
+    .hidden = hidden,
+  };
+  return true;
+}
+
+//! Rewraps the text before the block's first line into the rows above it, from where it starts
+//! back, up to a few rows above the screen. While what is above the message shows, rows can't
+//! run into it: then the lines above the block keep their width, where they about fit, unless
+//! the text fits below it rewrapped.
+static void prv_lay_out_above(NotificationTextBlock *tb, GContext *ctx,
+                              NotificationTextLayout *layout, uint16_t first, int16_t first_top) {
+  uint16_t starts[NOTIFICATION_TEXT_BLOCK_MAX_ROWS / 2];
+  GRangeHorizontal ranges[NOTIFICATION_TEXT_BLOCK_MAX_ROWS / 2];
+  bool hidden[NOTIFICATION_TEXT_BLOCK_MAX_ROWS / 2];
+  int num_rows = 0;
+  uint16_t end = prv_line_start(tb, first);
+  const bool above_shows = (first_top > tb->top);
+  for (int line = first - 1;
+       (end > 0) && (num_rows < (int)PBL_ARRAY_SIZE(starts)) &&
+       (first_top + (line + 1 + MARGIN_ROWS) * tb->line_h > tb->top) && (!above_shows || line >= 0);
+       line--) {
+    const GRangeHorizontal range =
+        prv_row_range(tb, first_top + line * tb->line_h, &hidden[num_rows]);
+    end = prv_wrap_backward(tb, ctx, end, range.size_w);
+    starts[num_rows] = end;
+    ranges[num_rows++] = range;
+  }
+  if ((end > 0) && above_shows && (first_top > tb->top + tb->line_h / 2)) {
+    for (uint16_t line = 0; line < first; line++) {
+      prv_add_row(layout, prv_line_start(tb, line), prv_line_start(tb, line + 1), line * tb->line_h,
+                  tb->block.range, false /* hidden */);
+    }
+    return;
+  }
+  for (int row = num_rows - 1; row >= 0; row--) {
+    const uint16_t row_end = row ? starts[row - 1] : prv_line_start(tb, first);
+    prv_add_row(layout, starts[row], row_end, (first - 1 - row) * tb->line_h, ranges[row],
+                hidden[row]);
+  }
+}
+
+//! Wraps the text from the first line below the block into rows that fit inside the display, down
+//! to a few rows below the screen.
+static void prv_lay_out_below(NotificationTextBlock *tb, GContext *ctx,
+                              NotificationTextLayout *layout, uint16_t below, int16_t first_top) {
+  uint16_t start = prv_line_start(tb, below);
+  int16_t y = below * tb->line_h;
+  while ((start < tb->length) && (first_top + y < s_display.h + MARGIN_ROWS * tb->line_h)) {
+    bool hidden;
+    const GRangeHorizontal range = prv_row_range(tb, first_top + y, &hidden);
+    const uint16_t end = prv_wrap_forward(tb, ctx, start, range.size_w);
+    if (!prv_add_row(layout, start, end, y, range, hidden)) {
+      return;
+    }
+    y += tb->line_h;
+    start = end;
+    while ((start < tb->length) && (tb->text[start] == ' ')) {
+      start++;
+    }
+    if ((start < tb->length) && (tb->text[start] == '\n')) {
+      start++;
+    }
+  }
+  if (start >= tb->length) {
+    layout->height = y;
+  }
+}
+
+static void prv_lay_out(NotificationTextBlock *tb, GContext *ctx, NotificationTextLayout *layout,
+                        int16_t scroll) {
+  *layout = (NotificationTextLayout){.scroll = scroll};
+  const int16_t first_top = tb->rest_top - scroll;
+  uint16_t first;
+  uint16_t below;
+  prv_block_lines(tb, scroll, &first, &below);
+  prv_lay_out_above(tb, ctx, layout, first, first_top);
+  for (uint16_t line = first; line < below; line++) {
+    prv_add_row(layout, prv_line_start(tb, line), prv_line_start(tb, line + 1), line * tb->line_h,
+                tb->block.range, false /* hidden */);
+  }
+  if (below >= tb->num_lines) {
+    layout->height = tb->num_lines * tb->line_h;
+  } else {
+    prv_lay_out_below(tb, ctx, layout, below, first_top);
+  }
+}
+
+const NotificationTextLayout *notification_text_block_lay_out(NotificationTextBlock *tb,
+                                                              GContext *ctx, int16_t scroll,
+                                                              bool show) {
+  uint8_t slot = tb->shown;
+  if (tb->layouts[slot].scroll != scroll) {
+    // The other slot, unless nothing is shown yet
+    if (tb->layouts[slot].scroll != INT16_MIN) {
+      slot = !slot;
+    }
+    if (tb->layouts[slot].scroll != scroll) {
+      prv_lay_out(tb, ctx, &tb->layouts[slot], scroll);
+    }
+  }
+  if (show) {
+    tb->shown = slot;
+  }
+  return &tb->layouts[slot];
+}
+
+const NotificationTextLayout *notification_text_block_shown(const NotificationTextBlock *tb) {
+  const NotificationTextLayout *layout = &tb->layouts[tb->shown];
+  return (layout->scroll != INT16_MIN) ? layout : nullptr;
+}
+
+void notification_text_block_draw(NotificationTextBlock *tb, GContext *ctx, GPoint origin,
+                                  int16_t scroll) {
+  const NotificationTextLayout *layout = notification_text_block_shown(tb);
+  if (!layout) {
+    return;
+  }
+  // Rows too narrow to show where they rest show once dragged away, not in a step's lead-in
+  const bool dragged = (PBL_ABS(scroll - layout->scroll) > tb->line_h);
+  const GRect *clip = &ctx->draw_state.clip_box;
+  const int16_t to_global = ctx->draw_state.drawing_box.origin.y + origin.y;
+  for (uint8_t i = 0; i < layout->num_rows; i++) {
+    const NotificationTextRow *row = &layout->rows[i];
+    const int16_t y = to_global + row->y;
+    if ((row->hidden && !dragged) || (y + tb->line_h <= clip->origin.y) ||
+        (y >= clip->origin.y + clip->size.h)) {
+      continue;
+    }
+    const GRect box = {{row->x, origin.y + row->y}, {row->w, tb->font_h}};
+    prv_row(tb, ctx, row->start, row->end, &box, true /* render */);
+  }
 }
 #endif
