@@ -81,6 +81,11 @@ GSize layout_get_size(GContext *ctx, LayoutLayer *layout) {
   return layout->impl->size_getter(ctx, layout);
 }
 
+bool layout_set_scroll(LayoutLayer *layout, int16_t offset, bool show) {
+  return layout && layout->impl && layout->impl->scroll_setter &&
+         layout->impl->scroll_setter(layout, offset, show);
+}
+
 const LayoutColors *layout_get_colors(const LayoutLayer *layout) {
 #if PBL_COLOR
   if (layout->impl->color_getter) {
