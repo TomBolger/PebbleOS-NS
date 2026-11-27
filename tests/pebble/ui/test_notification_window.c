@@ -97,6 +97,15 @@ uint32_t interpolate_moook_duration() {
   return 0;
 }
 
+int64_t interpolate_moook_out(int32_t normalized, int64_t from, int64_t to, int32_t num_frames_from,
+                              bool bounce_back) {
+  return to;
+}
+
+uint32_t interpolate_moook_out_duration() {
+  return 0;
+}
+
 int64_t interpolate_moook_soft(int32_t normalized, int64_t from, int64_t to,
                                int32_t num_frames_mid) {
   return to;

@@ -28,6 +28,10 @@ GContext *graphics_context_get_current_context(void) {
   return nullptr;
 }
 
+bool layout_set_scroll(LayoutLayer *layout, int16_t offset, bool show) {
+  return false;
+}
+
 GSize layout_get_size(GContext *ctx, LayoutLayer *layout) {
   return GSizeZero;
 }
@@ -48,6 +52,13 @@ int64_t interpolate_moook(int32_t normalized, int64_t from, int64_t to) {
   return to;
 }
 uint32_t interpolate_moook_duration(void) {
+  return 0;
+}
+int64_t interpolate_moook_out(int32_t normalized, int64_t from, int64_t to, int32_t num_frames_from,
+                              bool bounce_back) {
+  return to;
+}
+uint32_t interpolate_moook_out_duration(void) {
   return 0;
 }
 
