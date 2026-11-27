@@ -12,7 +12,8 @@
 #include <applib/graphics/gdraw_command_image.h>
 #include <applib/graphics/graphics.h>
 
-//! The sections on the orbit, from the top: Workout above Today, where the app opens
+//! The sections, in their order round the orbit from the top when the app is opened from the
+//! launcher: Workout above Today, where the app opens
 typedef enum HealthOrbitSection {
   HealthOrbitSectionWorkout,
   HealthOrbitSectionToday,

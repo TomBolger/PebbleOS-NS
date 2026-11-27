@@ -234,6 +234,12 @@ static int16_t prv_kind_row_center_y(int index) {
          HEALTH_WORKOUT_KIND_ROW_HEIGHT / 2;
 }
 
+int16_t health_orbit_swap(int sections_below) {
+  // The days in reach start out of sight even with no section below to follow
+  const int16_t after = PBL_MAX((sections_below + 1) * HEALTH_ORBIT_STEP, HEALTH_ORBIT_DAY_REACH);
+  return after + HEALTH_ORBIT_DAY_REACH;
+}
+
 GRect health_orbit_kind_row_frame(GSize display, int index) {
   return prv_frame(display, prv_kind_row_center_y(index), HEALTH_WORKOUT_KIND_ROW_HEIGHT);
 }

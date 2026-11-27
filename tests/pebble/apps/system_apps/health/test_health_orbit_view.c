@@ -15,9 +15,29 @@
 ////////////////////////////////////
 
 static uint32_t s_launch_args;
+static AppLaunchReason s_launch_reason;
+static ButtonId s_launch_button;
+static AppQuickLaunchAction s_quick_launch_action;
+static int s_num_pops;
 
 uint32_t app_launch_get_args(void) {
   return s_launch_args;
+}
+
+AppLaunchReason app_launch_reason(void) {
+  return s_launch_reason;
+}
+
+ButtonId app_launch_button(void) {
+  return s_launch_button;
+}
+
+AppQuickLaunchAction app_launch_get_quick_launch_action(void) {
+  return s_quick_launch_action;
+}
+
+void app_window_stack_pop_all(const bool animated) {
+  s_num_pops++;
 }
 
 bool clock_is_24h_style(void) {
@@ -175,6 +195,10 @@ GContext *graphics_context_get_current_context(void) {
 void test_health_orbit_view__initialize(void) {
   pbl_realtime_set(NOW_UTC);
   s_launch_args = 0;
+  s_launch_reason = APP_LAUNCH_SYSTEM;
+  s_launch_button = BUTTON_ID_BACK;
+  s_quick_launch_action = APP_QUICK_LAUNCH_ACTION_NONE;
+  s_num_pops = 0;
   s_workout = (typeof(s_workout)){};
   s_num_sessions = 0;
 
@@ -483,7 +507,7 @@ void test_health_orbit_view__days_open_from_today_and_back(void) {
   prv_press(prv_select_click_handler, 1);
   cl_assert(s_view->days);
   cl_assert_equal_i(s_view->day, 0);
-  cl_assert_equal_i(s_view->swap, HEALTH_ORBIT_SWAP);
+  cl_assert_equal_i(s_view->swap, prv_swap(s_view));
   // Today is the Today card itself
   cl_assert(s_view->card.day == nullptr);
   cl_assert_equal_i(s_view->card.section, HealthOrbitSectionToday);
@@ -518,7 +542,7 @@ void test_health_orbit_view__days_swap_turns_as_the_buttons_say(void) {
   prv_select_click_handler(nullptr, s_view);
   cl_assert(s_view->orbit_motion == &s_view->swap);
   cl_assert(s_view->orbit_down);
-  cl_assert_equal_i(s_view->orbit_target, HEALTH_ORBIT_SWAP);
+  cl_assert_equal_i(s_view->orbit_target, prv_swap(s_view));
   // The card stays today's, so nothing slides
   cl_assert(!s_view->leaving_shown);
   prv_rest(s_view);
@@ -581,7 +605,7 @@ void test_health_orbit_view__day_opens_from_the_week_and_back(void) {
   cl_assert(!s_view->week);
   cl_assert(s_view->days);
   cl_assert_equal_i(s_view->day, 4);
-  cl_assert_equal_i(s_view->swap, HEALTH_ORBIT_SWAP);
+  cl_assert_equal_i(s_view->swap, prv_swap(s_view));
   cl_assert_equal_i(s_view->color_section, HealthOrbitSectionToday);
   cl_assert(s_view->card.day == &s_view->day_data[s_view->day_slot]);
   cl_assert_equal_i(s_view->card.day->days_ago, 4);
@@ -691,21 +715,153 @@ void test_health_orbit_view__wrap_keeps_turning_the_same_way(void) {
   cl_assert_equal_i(s_view->orbit_offset, 0);
 }
 
-void test_health_orbit_view__quick_launch_stops_at_workout(void) {
-  // Opened with Up or Down, the sections stop at either end: Workout at the top
+//! Opens the app as a quick launch with \a button
+static void prv_quick_launch(ButtonId button) {
+  s_launch_reason = APP_LAUNCH_QUICK_LAUNCH;
+  s_launch_button = button;
+  s_quick_launch_action = APP_QUICK_LAUNCH_ACTION_TAP;
   s_data = prv_sample_data();
-  prv_render(&s_data, HealthOrbitSectionToday);
-  s_view->wrap = false;
-  prv_up_down(s_view, false /* down */);
+  s_view = health_orbit_view_create(&s_data);
+}
+
+//! Up or Down to \a section, the orbit turning a step the way the button turns it
+static void prv_check_step(bool down, HealthOrbitSection section) {
+  prv_up_down(s_view, down);
+  cl_assert_equal_i(s_view->section, section);
+  cl_assert_equal_b(s_view->orbit_down, down);
+  cl_assert_equal_i(s_view->orbit_target,
+                    s_view->orbit_from + (down ? HEALTH_ORBIT_STEP : -HEALTH_ORBIT_STEP));
   prv_rest(s_view);
-  cl_assert_equal_i(s_view->section, HealthOrbitSectionWorkout);
+}
+
+void test_health_orbit_view__launch_modes(void) {
+  // From the launcher, and quick launches that are not Up or Down, as the launcher
+  s_data = prv_sample_data();
+  s_view = health_orbit_view_create(&s_data);
+  cl_assert_equal_i(s_view->launch, HealthOrbitLaunchLauncher);
+  s_launch_reason = APP_LAUNCH_QUICK_LAUNCH;
+  s_launch_button = BUTTON_ID_UP;
+  cl_assert_equal_i(prv_launch(), HealthOrbitLaunchLauncher);
+  s_quick_launch_action = APP_QUICK_LAUNCH_ACTION_HOLD;
+  cl_assert_equal_i(prv_launch(), HealthOrbitLaunchQuickUp);
+  s_launch_button = BUTTON_ID_DOWN;
+  cl_assert_equal_i(prv_launch(), HealthOrbitLaunchQuickDown);
+  s_launch_button = BUTTON_ID_SELECT;
+  cl_assert_equal_i(prv_launch(), HealthOrbitLaunchLauncher);
+}
+
+void test_health_orbit_view__quick_launch_up_climbs_from_today(void) {
+  // Opened on Today at the bottom of the orbit, Steps, Sleep and Workout above it
+  prv_quick_launch(BUTTON_ID_UP);
+  cl_assert_equal_i(s_view->launch, HealthOrbitLaunchQuickUp);
+  cl_assert_equal_i(s_view->section, HealthOrbitSectionToday);
+  cl_assert_equal_i(s_view->orbit_offset, (HealthOrbitSectionCount - 1) * HEALTH_ORBIT_STEP);
+  // Up climbs through them, the bubbles coming in from above
+  prv_check_step(false /* down */, HealthOrbitSectionSteps);
+  prv_check_step(false /* down */, HealthOrbitSectionSleep);
+  prv_check_step(false /* down */, HealthOrbitSectionWorkout);
+  // and stops at Workout
   prv_up_down(s_view, false /* down */);
   cl_assert_equal_i(s_view->section, HealthOrbitSectionWorkout);
   cl_assert_equal_i(s_view->orbit_offset, 0);
-  // and Sleep at the bottom
-  prv_show_section(s_view, HealthOrbitSectionSleep);
+  cl_assert_equal_i(s_num_pops, 0);
+  // Down comes back to Today, and Down on Today leaves
+  prv_check_step(true /* down */, HealthOrbitSectionSleep);
+  prv_check_step(true /* down */, HealthOrbitSectionSteps);
+  prv_check_step(true /* down */, HealthOrbitSectionToday);
+  cl_assert_equal_i(s_num_pops, 0);
   prv_up_down(s_view, true /* down */);
-  cl_assert_equal_i(s_view->section, HealthOrbitSectionSleep);
+  cl_assert_equal_i(s_num_pops, 1);
+  cl_assert_equal_i(s_view->section, HealthOrbitSectionToday);
+}
+
+void test_health_orbit_view__quick_launch_down_descends_from_today(void) {
+  // Opened on Today at the top of the orbit, Steps, Sleep and Workout below it
+  prv_quick_launch(BUTTON_ID_DOWN);
+  cl_assert_equal_i(s_view->launch, HealthOrbitLaunchQuickDown);
+  cl_assert_equal_i(s_view->section, HealthOrbitSectionToday);
+  cl_assert_equal_i(s_view->orbit_offset, 0);
+  // Down descends through them, the bubbles coming in from below
+  prv_check_step(true /* down */, HealthOrbitSectionSteps);
+  prv_check_step(true /* down */, HealthOrbitSectionSleep);
+  prv_check_step(true /* down */, HealthOrbitSectionWorkout);
+  // and stops at Workout
+  prv_up_down(s_view, true /* down */);
+  cl_assert_equal_i(s_view->section, HealthOrbitSectionWorkout);
+  cl_assert_equal_i(s_num_pops, 0);
+  // Up comes back to Today, and Up on Today leaves
+  prv_check_step(false /* down */, HealthOrbitSectionSleep);
+  prv_check_step(false /* down */, HealthOrbitSectionSteps);
+  prv_check_step(false /* down */, HealthOrbitSectionToday);
+  cl_assert_equal_i(s_num_pops, 0);
+  prv_up_down(s_view, false /* down */);
+  cl_assert_equal_i(s_num_pops, 1);
+  cl_assert_equal_i(s_view->section, HealthOrbitSectionToday);
+}
+
+void test_health_orbit_view__launcher_never_leaves_on_up_or_down(void) {
+  s_data = prv_sample_data();
+  s_view = health_orbit_view_create(&s_data);
+  for (int i = 0; i < 2 * HealthOrbitSectionCount; i++) {
+    prv_up_down(s_view, i % 3 != 0);
+    prv_rest(s_view);
+  }
+  cl_assert_equal_i(s_num_pops, 0);
+}
+
+//! Opens the days from Today and the week from Steps and goes back from each, landing on the
+//! section each time
+static void prv_check_days_and_week(void) {
+  prv_press(prv_select_click_handler, 1);
+  cl_assert(s_view->days);
+  cl_assert_equal_i(s_view->swap, prv_swap(s_view));
+  prv_press(prv_back_click_handler, 1);
+  cl_assert(!s_view->days);
+  cl_assert_equal_i(s_view->section, HealthOrbitSectionToday);
+  cl_assert_equal_i(s_view->swap, 0);
+  cl_assert_equal_i(s_view->orbit_offset,
+                    prv_position(s_view, HealthOrbitSectionToday) * HEALTH_ORBIT_STEP);
+  prv_show_section(s_view, HealthOrbitSectionSteps);
+  prv_press(prv_select_click_handler, 1);
+  cl_assert(s_view->week);
+  // A day of the week, and back to the week, then to Steps
+  prv_press(prv_select_click_handler, 1);
+  cl_assert(s_view->days);
+  cl_assert_equal_i(s_view->swap, prv_swap(s_view));
+  prv_press(prv_back_click_handler, 1);
+  cl_assert(s_view->week);
+  prv_press(prv_back_click_handler, 1);
+  cl_assert(!s_view->week);
+  cl_assert_equal_i(s_view->section, HealthOrbitSectionSteps);
+  cl_assert_equal_i(s_view->orbit_offset,
+                    prv_position(s_view, HealthOrbitSectionSteps) * HEALTH_ORBIT_STEP);
+  cl_assert_equal_i(s_num_pops, 0);
+}
+
+void test_health_orbit_view__quick_launch_up_keeps_days_and_weeks(void) {
+  prv_quick_launch(BUTTON_ID_UP);
+  prv_check_days_and_week();
+}
+
+void test_health_orbit_view__quick_launch_down_keeps_days_and_weeks(void) {
+  prv_quick_launch(BUTTON_ID_DOWN);
+  prv_check_days_and_week();
+}
+
+void test_health_orbit_view__render_today_quick_launch_up(void) {
+  // Today at the bottom, Steps above it and nothing below
+  prv_quick_launch(BUTTON_ID_UP);
+  window_set_on_screen(&s_view->window, true, true);
+  window_render(&s_view->window, &s_ctx);
+  cl_check(gbitmap_pbi_eq(&s_ctx.dest_bitmap, TEST_PBI_FILE));
+}
+
+void test_health_orbit_view__render_today_quick_launch_down(void) {
+  // Today at the top, Steps below it and nothing above
+  prv_quick_launch(BUTTON_ID_DOWN);
+  window_set_on_screen(&s_view->window, true, true);
+  window_render(&s_view->window, &s_ctx);
+  cl_check(gbitmap_pbi_eq(&s_ctx.dest_bitmap, TEST_PBI_FILE));
 }
 
 void test_health_orbit_view__launch_on_sleep(void) {

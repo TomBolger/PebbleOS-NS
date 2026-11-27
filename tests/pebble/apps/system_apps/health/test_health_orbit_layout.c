@@ -160,20 +160,26 @@ void test_health_orbit_layout__days_without_bubbles_are_out_of_sight(void) {
 }
 
 void test_health_orbit_layout__swap_keeps_each_set_out_of_sight_of_the_other(void) {
-  // Before the swap the days in reach are round the back, and after it the sections, whichever
-  // section is on the notch
-  for (int16_t offset = -HEALTH_ORBIT_DAY_REACH; offset <= HEALTH_ORBIT_DAY_REACH; offset++) {
-    cl_assert(prv_bubble_out_of_sight(offset + HEALTH_ORBIT_SWAP, HEALTH_ORBIT_SELECTED_RADIUS));
+  // Whichever section is on the notch, and however many are below it
+  for (int below = 0; below < HEALTH_ORBIT_NUM_SECTIONS; below++) {
+    const int16_t swap = health_orbit_swap(below);
+    // Before the swap the days in reach are round the back
+    for (int16_t offset = -HEALTH_ORBIT_DAY_REACH; offset <= HEALTH_ORBIT_DAY_REACH; offset++) {
+      cl_assert(prv_bubble_out_of_sight(offset + swap, HEALTH_ORBIT_SELECTED_RADIUS));
+    }
+    // and after it the sections, those above as well as those below
+    const int above = HEALTH_ORBIT_NUM_SECTIONS - 1 - below;
+    for (int16_t offset = -above * HEALTH_ORBIT_STEP; offset <= below * HEALTH_ORBIT_STEP;
+         offset++) {
+      cl_assert(prv_bubble_out_of_sight(offset - swap, HEALTH_ORBIT_SELECTED_RADIUS));
+    }
+    // On the way, the days in reach a step after the last section, as the sections are apart,
+    // once there are sections below to follow
+    if (below > 0) {
+      cl_assert_equal_i(swap - HEALTH_ORBIT_DAY_REACH - below * HEALTH_ORBIT_STEP,
+                        HEALTH_ORBIT_STEP);
+    }
   }
-  const int16_t sections_span = (HEALTH_ORBIT_NUM_SECTIONS - 1) * HEALTH_ORBIT_STEP;
-  for (int16_t offset = -sections_span; offset <= sections_span; offset++) {
-    cl_assert(prv_bubble_out_of_sight(offset - HEALTH_ORBIT_SWAP, HEALTH_ORBIT_SELECTED_RADIUS));
-  }
-  // On the way from Today, the days in reach a step after the last section below it, as the
-  // sections are apart
-  const int16_t below_today =
-      (HEALTH_ORBIT_NUM_SECTIONS - 1 - HEALTH_ORBIT_TODAY_INDEX) * HEALTH_ORBIT_STEP;
-  cl_assert_equal_i(HEALTH_ORBIT_SWAP - HEALTH_ORBIT_DAY_REACH - below_today, HEALTH_ORBIT_STEP);
 }
 
 void test_health_orbit_layout__sidebar_reach(void) {

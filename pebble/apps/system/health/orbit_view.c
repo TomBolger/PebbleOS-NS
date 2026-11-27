@@ -50,6 +50,30 @@
 //! A quarter turn of the sidebar, back from the right to the top
 #define QUARTER_TURN (TRIG_MAX_ANGLE / 4)
 
+//! How the app was opened, which sets the sections' order round the orbit and what Up and Down do
+//! past its ends
+typedef enum HealthOrbitLaunch {
+  //! From the launcher: Workout, Today, Steps and Sleep from the top, wrapping round past the ends
+  HealthOrbitLaunchLauncher,
+  //! A quick launch with Up: Today at the bottom, Steps, Sleep and Workout above it, stopping at
+  //! Workout, and Down on Today leaving the app
+  HealthOrbitLaunchQuickUp,
+  //! A quick launch with Down: Today at the top, Steps, Sleep and Workout below it, stopping at
+  //! Workout, and Up on Today leaving the app
+  HealthOrbitLaunchQuickDown,
+  HealthOrbitLaunchCount,
+} HealthOrbitLaunch;
+
+//! The sections round the orbit from the top, each way the app is opened
+static const HealthOrbitSection s_orbit_order[HealthOrbitLaunchCount][HealthOrbitSectionCount] = {
+  [HealthOrbitLaunchLauncher] = {HealthOrbitSectionWorkout, HealthOrbitSectionToday,
+                                 HealthOrbitSectionSteps, HealthOrbitSectionSleep},
+  [HealthOrbitLaunchQuickUp] = {HealthOrbitSectionWorkout, HealthOrbitSectionSleep,
+                                HealthOrbitSectionSteps, HealthOrbitSectionToday},
+  [HealthOrbitLaunchQuickDown] = {HealthOrbitSectionToday, HealthOrbitSectionSteps,
+                                  HealthOrbitSectionSleep, HealthOrbitSectionWorkout},
+};
+
 typedef struct HealthOrbitIcon {
   GDrawCommandImage *selected;
   GDrawCommandImage *neighbour;
@@ -76,11 +100,11 @@ struct HealthOrbitView {
   uint32_t color_swap_ms;
   bool colors_swapped;
   Animation *animation;
-  //! Whether Up past the first section and Down past the last one wrap round
-  bool wrap;
+  //! How the app was opened: the sections' order, and what Up and Down do past its ends
+  HealthOrbitLaunch launch;
 
   //! How far along the orbit the sections have turned, HEALTH_ORBIT_STEP per section from the
-  //! first, which is past a full turn when it goes on round to wrap
+  //! top one, which is past a full turn when it goes on round to wrap
   int16_t orbit_offset;
   //! The turn of the orbit the sidebar's color sweeps in with: the sections', the days', or the
   //! swap between them, where it turns from and to, and whether as for Down, the bubbles coming up
@@ -105,7 +129,7 @@ struct HealthOrbitView {
   uint8_t day_slot;
   //! How far along the orbit the days have turned, HEALTH_ORBIT_STEP per day from today
   int16_t day_offset;
-  //! How far the orbit has turned clockwise from the sections to the days, to HEALTH_ORBIT_SWAP
+  //! How far the orbit has turned clockwise from the sections to the days, to prv_swap()
   int16_t swap;
 
   //! Whether the week of the section shows, in place of its card, or is coming in, or one of the
@@ -139,8 +163,22 @@ struct HealthOrbitView {
 #define ROW_AT_REST INT16_MAX
 
 _Static_assert(HealthOrbitSectionCount == HEALTH_ORBIT_NUM_SECTIONS, "orbit sections");
-_Static_assert(HealthOrbitSectionToday == HEALTH_ORBIT_TODAY_INDEX, "Today's place on the orbit");
 _Static_assert(HEALTH_ORBIT_WEEK_NUM_ROWS <= HEALTH_ORBIT_LIST_MAX_ROWS, "week rows");
+
+//! Place of \a section round the orbit from the top, as the app was opened
+static int prv_position(const HealthOrbitView *view, HealthOrbitSection section) {
+  for (int i = 0; i < HealthOrbitSectionCount; i++) {
+    if (s_orbit_order[view->launch][i] == section) {
+      return i;
+    }
+  }
+  return 0;
+}
+
+//! How far the orbit turns to swap the sections for the days opened from the section on it
+static int16_t prv_swap(const HealthOrbitView *view) {
+  return health_orbit_swap(HealthOrbitSectionCount - 1 - prv_position(view, view->section));
+}
 
 //! A section's card at rest
 static void prv_init_section_card(HealthOrbitView *view, HealthOrbitCard *card,
@@ -700,17 +738,19 @@ static int16_t prv_bubble_radius(int16_t closeness, int16_t neighbour_radius) {
          (HEALTH_ORBIT_SELECTED_RADIUS - neighbour_radius) * closeness / HEALTH_ORBIT_STEP;
 }
 
-//! The bubbles on the orbit, each growing as it nears the notch: the sections', and the days'
-//! HEALTH_ORBIT_SWAP along from them. As the orbit swaps one set for the other, both turn as they
-//! are, the swap not taking either nearer the notch.
+//! The bubbles on the orbit, each growing as it nears the notch: the sections', in their order as
+//! the app was opened, and the days' prv_swap() along from them. As the orbit swaps one set for the
+//! other, both turn as they are, the swap not taking either nearer the notch.
 static void prv_draw_orbit(GContext *ctx, HealthOrbitView *view, GSize display) {
   graphics_context_set_antialiased(ctx, true);
-  for (int i = 0; view->swap < HEALTH_ORBIT_SWAP && i < HealthOrbitSectionCount; i++) {
+  const int16_t swap = prv_swap(view);
+  for (int i = 0; view->swap < swap && i < HealthOrbitSectionCount; i++) {
     const int16_t offset = health_orbit_wrap_offset(i * HEALTH_ORBIT_STEP - view->orbit_offset);
     const int16_t closeness = prv_closeness(offset);
     const GPoint center = health_orbit_bubble_center(
         display, health_orbit_wrap_offset(offset - view->swap), view->turn);
-    prv_draw_bubble(ctx, view, i, center, prv_bubble_radius(closeness, view->neighbour_radius),
+    prv_draw_bubble(ctx, view, s_orbit_order[view->launch][i], center,
+                    prv_bubble_radius(closeness, view->neighbour_radius),
                     2 * closeness > HEALTH_ORBIT_STEP);
   }
   for (int day = 0; view->swap > 0 && day < HEALTH_DATA_NUM_DAYS; day++) {
@@ -720,7 +760,7 @@ static void prv_draw_orbit(GContext *ctx, HealthOrbitView *view, GSize display) 
     }
     const int16_t closeness = prv_closeness(offset);
     const GPoint center = health_orbit_bubble_center(
-        display, health_orbit_wrap_offset(offset + HEALTH_ORBIT_SWAP - view->swap), view->turn);
+        display, health_orbit_wrap_offset(offset + swap - view->swap), view->turn);
     prv_draw_day_bubble(ctx, view, day, center,
                         prv_bubble_radius(closeness, NEIGHBOUR_BUBBLE_RADIUS),
                         2 * closeness > HEALTH_ORBIT_STEP);
@@ -1085,9 +1125,9 @@ static void prv_rest(HealthOrbitView *view) {
   } else {
     prv_init_section_card(view, &view->card, view->section);
   }
-  view->orbit_offset = view->section * HEALTH_ORBIT_STEP;
+  view->orbit_offset = prv_position(view, view->section) * HEALTH_ORBIT_STEP;
   view->day_offset = view->day * HEALTH_ORBIT_STEP;
-  view->swap = view->days ? HEALTH_ORBIT_SWAP : 0;
+  view->swap = view->days ? prv_swap(view) : 0;
   view->orbit_motion = &view->orbit_offset;
   view->orbit_from = view->orbit_offset;
   view->orbit_target = view->orbit_offset;
@@ -1225,7 +1265,7 @@ static void prv_animate_section(HealthOrbitView *view, HealthOrbitSection sectio
   prv_add_card_slide(view, &transition, &card, down);
 
   // The orbit keeps turning the way the button turns it, on round past the ends to wrap
-  int16_t target = section * HEALTH_ORBIT_STEP;
+  int16_t target = prv_position(view, section) * HEALTH_ORBIT_STEP;
   if (down && target < view->orbit_offset) {
     target += HEALTH_ORBIT_LENGTH;
   } else if (!down && target > view->orbit_offset) {
@@ -1269,7 +1309,7 @@ static void prv_animate_days_in(HealthOrbitView *view) {
   prv_load_day(view, 0);
   prv_init_day_card(view, &view->card);
   view->day_offset = 0;
-  prv_add_orbit_turn(view, &transition, &view->swap, HEALTH_ORBIT_SWAP, 0, view->color_section);
+  prv_add_orbit_turn(view, &transition, &view->swap, prv_swap(view), 0, view->color_section);
   prv_play(view, &transition);
 }
 
@@ -1440,7 +1480,7 @@ static void prv_animate_week_out(HealthOrbitView *view, bool to_day) {
     prv_load_day(view, view->week_selection);
     prv_init_day_card(view, &view->card);
     view->day_offset = view->day * HEALTH_ORBIT_STEP;
-    prv_add_orbit_turn(view, &transition, &view->swap, HEALTH_ORBIT_SWAP, DAYS_FROM_WEEK_DELAY,
+    prv_add_orbit_turn(view, &transition, &view->swap, prv_swap(view), DAYS_FROM_WEEK_DELAY,
                        from_color);
   } else {
     prv_init_section_card(view, &view->card, view->section);
@@ -1803,17 +1843,23 @@ static void prv_up_down(HealthOrbitView *view, bool down) {
     prv_move_day(view, down);
     return;
   }
-  int next = view->section + (down ? 1 : -1);
+  int next = prv_position(view, view->section) + (down ? 1 : -1);
   if (next < 0 || next >= HealthOrbitSectionCount) {
-    if (!view->wrap) {
-      if (next < 0) {
-        app_window_stack_pop_all(true);
-      }
-      return;
+    switch (view->launch) {
+      case HealthOrbitLaunchQuickUp:
+      case HealthOrbitLaunchQuickDown:
+        // Past Today, the way the app came in, it leaves; past Workout it stops
+        if (down == (view->launch == HealthOrbitLaunchQuickUp)) {
+          app_window_stack_pop_all(true);
+        }
+        return;
+      case HealthOrbitLaunchLauncher:
+      case HealthOrbitLaunchCount:
+        break;
     }
     next = (next < 0) ? (HealthOrbitSectionCount - 1) : 0;
   }
-  prv_animate_section(view, next, down);
+  prv_animate_section(view, s_orbit_order[view->launch][next], down);
 }
 
 static void prv_up_down_click_handler(ClickRecognizerRef recognizer, void *context) {
@@ -1863,21 +1909,31 @@ static void prv_click_config_provider(void *context) {
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 // API Functions
 
-HealthOrbitView *health_orbit_view_create(HealthData *health_data) {
-  // Opened with Up or Down, as a quick launch, the sections stop at either end
-  bool directional_quick_launch = false;
-  if (app_launch_reason() == APP_LAUNCH_QUICK_LAUNCH) {
-    const ButtonId button = app_launch_button();
-    const AppQuickLaunchAction action = app_launch_get_quick_launch_action();
-    directional_quick_launch =
-        (button == BUTTON_ID_UP || button == BUTTON_ID_DOWN) &&
-        (action == APP_QUICK_LAUNCH_ACTION_TAP || action == APP_QUICK_LAUNCH_ACTION_HOLD);
+//! How the app was opened: with Up or Down as a quick launch, as the shell tells them apart, or
+//! otherwise as from the launcher
+static HealthOrbitLaunch prv_launch(void) {
+  if (app_launch_reason() != APP_LAUNCH_QUICK_LAUNCH) {
+    return HealthOrbitLaunchLauncher;
   }
+  const AppQuickLaunchAction action = app_launch_get_quick_launch_action();
+  if (action != APP_QUICK_LAUNCH_ACTION_TAP && action != APP_QUICK_LAUNCH_ACTION_HOLD) {
+    return HealthOrbitLaunchLauncher;
+  }
+  switch (app_launch_button()) {
+    case BUTTON_ID_UP:
+      return HealthOrbitLaunchQuickUp;
+    case BUTTON_ID_DOWN:
+      return HealthOrbitLaunchQuickDown;
+    default:
+      return HealthOrbitLaunchLauncher;
+  }
+}
 
+HealthOrbitView *health_orbit_view_create(HealthData *health_data) {
   HealthOrbitView *view = app_zalloc_check(sizeof(HealthOrbitView));
   *view = (HealthOrbitView){
     .health_data = health_data,
-    .wrap = !directional_quick_launch,
+    .launch = prv_launch(),
     .neighbour_radius = NEIGHBOUR_BUBBLE_RADIUS,
   };
   for (int i = 0; i < HealthOrbitSectionCount; i++) {

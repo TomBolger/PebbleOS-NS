@@ -46,16 +46,8 @@
 #define HEALTH_ORBIT_DAY_REACH (2 * HEALTH_ORBIT_STEP)
 //! Number of sections on the orbit
 #define HEALTH_ORBIT_NUM_SECTIONS 4
-//! Place of Today, whose days the orbit swaps the sections for, among the sections from the top
-#define HEALTH_ORBIT_TODAY_INDEX 1
 //! Kinds of workout to start from the Workout section: run, walk and open workout
 #define HEALTH_WORKOUT_NUM_KINDS 3
-//! How far the orbit turns to swap the sections' bubbles for the days' and back: as little as keeps
-//! each set out of sight while the other shows, the days in reach coming a step after the last
-//! section below Today, as if on one string, so they pass the notch as quickly as the sections do
-#define HEALTH_ORBIT_SWAP                                                       \
-  ((HEALTH_ORBIT_NUM_SECTIONS - HEALTH_ORBIT_TODAY_INDEX) * HEALTH_ORBIT_STEP + \
-   HEALTH_ORBIT_DAY_REACH)
 
 //! Space kept between the round end of a ring and the sidebar
 #define HEALTH_RING_GAP 4
@@ -168,6 +160,12 @@ GRangeHorizontal health_orbit_workout_rows_span(GSize display);
 //! The frame the round menu insets the pill of the kind of workout \a index from, as a MenuLayer's
 //! row is
 GRect health_orbit_kind_row_frame(GSize display, int index);
+
+//! How far the orbit turns to swap the sections' bubbles for the days' and back, with
+//! \a sections_below the section on the notch: as little as keeps each set out of sight while the
+//! other shows, the days in reach coming a step after the last section, as if on one string, so
+//! they pass the notch as quickly as the sections do
+int16_t health_orbit_swap(int sections_below);
 
 //! Number of rows of \a list
 int health_orbit_list_num_rows(HealthOrbitList list);
