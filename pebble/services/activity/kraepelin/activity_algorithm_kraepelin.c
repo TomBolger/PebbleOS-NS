@@ -1183,8 +1183,10 @@ void activity_algorithm_enable_activity_tracking(bool enable) {
 // This structure contains the context used by the activity_algorithm_get_minute_history() call
 typedef struct {
   HealthMinuteData *minute_data;
-  //! When set, only heart rates are written here instead of minute_data, indexed from utc_start
-  uint8_t *heart_rate_bpm;
+  //! When set, only one byte a minute is written here instead of minute_data, indexed from
+  //! utc_start: the steps if values_are_steps, else the heart rate
+  uint8_t *minute_values;
+  bool values_are_steps;
   uint32_t array_size;
 
   uint32_t oldest_key;
@@ -1233,8 +1235,9 @@ static bool prv_insert_health_minute_record(AlgReadMinutesContext *context, time
   }
   context->last_record_idx_written = dst_index;
 
-  if (context->heart_rate_bpm) {
-    context->heart_rate_bpm[dst_index] = heart_rate_bpm;
+  if (context->minute_values) {
+    context->minute_values[dst_index] =
+        context->values_are_steps ? base_fields->steps : heart_rate_bpm;
     return false;
   }
 
@@ -1403,18 +1406,29 @@ bool activity_algorithm_get_minute_history(HealthMinuteData *minute_data, uint32
 }
 
 // -------------------------------------------------------------------------------
-bool activity_algorithm_get_minute_heart_rate(uint8_t *heart_rate_bpm, uint32_t num_minutes,
-                                              time_t utc_start) {
+// Reads one byte a minute, indexed from the requested start, 0 for the minutes without data
+static bool prv_read_minute_values(uint8_t *values, bool steps, uint32_t num_minutes,
+                                   time_t utc_start) {
   utc_start -= utc_start % PBL_SEC_PER_MIN;
   AlgReadMinutesContext context = {
-    .heart_rate_bpm = heart_rate_bpm,
+    .minute_values = values,
+    .values_are_steps = steps,
     .array_size = num_minutes,
     // Fixed, so minutes are indexed from the requested start rather than the first record
     .utc_start = utc_start,
   };
 
-  memset(heart_rate_bpm, 0, num_minutes);
+  memset(values, 0, num_minutes);
   return prv_read_minutes(&context, utc_start);
+}
+
+bool activity_algorithm_get_minute_heart_rate(uint8_t *heart_rate_bpm, uint32_t num_minutes,
+                                              time_t utc_start) {
+  return prv_read_minute_values(heart_rate_bpm, false /* steps */, num_minutes, utc_start);
+}
+
+bool activity_algorithm_get_minute_steps(uint8_t *steps, uint32_t num_minutes, time_t utc_start) {
+  return prv_read_minute_values(steps, true /* steps */, num_minutes, utc_start);
 }
 
 // -------------------------------------------------------------------------------

@@ -1476,42 +1476,57 @@ bool activity_get_minute_history(HealthMinuteData *minute_data, uint32_t *num_re
 }
 
 // ------------------------------------------------------------------------------------------------
+//! Reads one byte a minute of the minute data, as activity_algorithm_get_minute_heart_rate()
+typedef bool (*ActivityMinuteValuesReader)(uint8_t *values, uint32_t num_minutes, time_t utc_start);
+
 typedef struct {
   ActivityBgRequest base;
+  ActivityMinuteValuesReader read;
   uint32_t num_minutes;
   time_t utc_start;
-  uint8_t heart_rate_bpm[];
-} ActivityMinuteHeartRateRequest;
+  uint8_t values[];
+} ActivityMinuteValuesRequest;
 
-static bool prv_get_minute_heart_rate_handler(ActivityBgRequest *base) {
-  ActivityMinuteHeartRateRequest *req = (ActivityMinuteHeartRateRequest *)base;
-  return activity_algorithm_get_minute_heart_rate(req->heart_rate_bpm, req->num_minutes,
-                                                  req->utc_start);
+static bool prv_get_minute_values_handler(ActivityBgRequest *base) {
+  ActivityMinuteValuesRequest *req = (ActivityMinuteValuesRequest *)base;
+  return req->read(req->values, req->num_minutes, req->utc_start);
 }
 
-bool activity_get_minute_heart_rate(uint8_t *heart_rate_bpm, uint32_t num_minutes,
-                                    time_t utc_start) {
+//! Reads a byte a minute for a time range in a single request, into a bounded kernel buffer
+static bool prv_get_minute_values(ActivityMinuteValuesReader read, uint8_t *values,
+                                  uint32_t num_minutes, time_t utc_start) {
   if (!s_activity_initialized || num_minutes > ACTIVITY_MINUTE_HEART_RATE_MAX_MINUTES) {
     return false;
   }
 
-  ActivityMinuteHeartRateRequest *req = pbl_zalloc(sizeof(*req) + num_minutes);
+  ActivityMinuteValuesRequest *req = pbl_zalloc(sizeof(*req) + num_minutes);
   if (!req) {
     return false;
   }
+  req->read = read;
   req->num_minutes = num_minutes;
   req->utc_start = utc_start;
 
-  if (!prv_bg_request_run(&req->base, prv_get_minute_heart_rate_handler, 30 /*timeout_sec*/)) {
+  if (!prv_bg_request_run(&req->base, prv_get_minute_values_handler, 30 /*timeout_sec*/)) {
     return false;
   }
 
   const bool success = req->base.success;
   if (success) {
-    memcpy(heart_rate_bpm, req->heart_rate_bpm, num_minutes);
+    memcpy(values, req->values, num_minutes);
   }
   pbl_free(req);
   return success;
+}
+
+bool activity_get_minute_heart_rate(uint8_t *heart_rate_bpm, uint32_t num_minutes,
+                                    time_t utc_start) {
+  return prv_get_minute_values(activity_algorithm_get_minute_heart_rate, heart_rate_bpm,
+                               num_minutes, utc_start);
+}
+
+bool activity_get_minute_steps(uint8_t *steps, uint32_t num_minutes, time_t utc_start) {
+  return prv_get_minute_values(activity_algorithm_get_minute_steps, steps, num_minutes, utc_start);
 }
 
 // ------------------------------------------------------------------------------------------------

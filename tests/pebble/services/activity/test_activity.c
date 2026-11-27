@@ -677,6 +677,17 @@ bool activity_algorithm_get_minute_heart_rate(uint8_t *heart_rate_bpm, uint32_t 
   return true;
 }
 
+// The steps of each minute are (% 150) of its timestamp's minute
+static int s_minute_steps_calls;
+bool activity_algorithm_get_minute_steps(uint8_t *steps, uint32_t num_minutes, time_t utc_start) {
+  s_minute_steps_calls++;
+  utc_start -= utc_start % PBL_SEC_PER_MIN;
+  for (uint32_t i = 0; i < num_minutes; i++) {
+    steps[i] = ((utc_start / PBL_SEC_PER_MIN) + i) % 150;
+  }
+  return true;
+}
+
 time_t activity_algorithm_get_last_sleep_utc(void) {
   return s_test_alg_state.last_sleep_utc;
 }
@@ -1829,6 +1840,30 @@ void test_activity__get_minute_heart_rate(void) {
     cl_assert_equal_i(bpm[i], ((utc_start + i * PBL_SEC_PER_MIN) % 200) + 1);
   }
   cl_assert_equal_i(bpm[num_minutes - 1], 0);
+}
+
+// ---------------------------------------------------------------------------------------
+// A whole day of steps comes back from a single request, as the heart rates do
+void test_activity__get_minute_steps(void) {
+  activity_start_tracking(false /*test_mode*/);
+  fake_sys_work_callbacks_invoke_pending();
+
+  static uint8_t steps[ACTIVITY_MINUTE_STEPS_MAX_MINUTES];
+  const time_t utc_start = pbl_realtime() - PBL_SEC_PER_DAY;
+
+  stub_pebble_tasks_set_current(PebbleTask_App);
+  s_minute_steps_calls = 0;
+  s_minute_heart_rate_calls = 0;
+  cl_assert(activity_get_minute_steps(steps, PBL_ARRAY_SIZE(steps), utc_start));
+  cl_assert_equal_i(s_minute_steps_calls, 1);
+  cl_assert_equal_i(s_minute_heart_rate_calls, 0);
+  for (uint32_t i = 0; i < PBL_ARRAY_SIZE(steps); i++) {
+    cl_assert_equal_i(steps[i], ((utc_start / PBL_SEC_PER_MIN) + i) % 150);
+  }
+
+  static uint8_t too_many[ACTIVITY_MINUTE_STEPS_MAX_MINUTES + 1];
+  cl_assert(!activity_get_minute_steps(too_many, PBL_ARRAY_SIZE(too_many), utc_start));
+  cl_assert_equal_i(s_minute_steps_calls, 1);
 }
 
 // ---------------------------------------------------------------------------------------
